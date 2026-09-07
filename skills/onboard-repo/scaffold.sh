@@ -19,7 +19,7 @@
 #   --override   overwrite existing targets (upgrade). Install mode refuses
 #                when any target already exists.
 # Env:   PLUGIN_MOUNT   installed plugin root (default
-#                       .tessl/plugins/gAmUssA/coding-policy; tests override)
+#                       .tessl/plugins/gamussa/coding-policy; tests override)
 # Out:   one JSON object on stdout:
 #          {"state":"scaffolded|no-op","override":bool,
 #           "files":[{"target":"...","action":"created|overwritten|unchanged"}]}
@@ -39,7 +39,7 @@ done
 command -v jq >/dev/null 2>&1 \
   || { echo "error: jq is not installed; install with 'brew install jq' (macOS) or 'apt install jq' (Debian/Ubuntu) and re-run" >&2; exit 2; }
 
-PLUGIN_MOUNT="${PLUGIN_MOUNT:-.tessl/plugins/gAmUssA/coding-policy}"
+PLUGIN_MOUNT="${PLUGIN_MOUNT:-.tessl/plugins/gamussa/coding-policy}"
 TEMPLATE_DIR="${PLUGIN_MOUNT}/skills/onboard-repo/templates"
 # "<source under TEMPLATE_DIR>:<target in the consumer repo>"
 MANIFEST=(
@@ -84,7 +84,7 @@ main() {
     [[ -e "$target" ]] && present+=("$target")
   done
   if (( ${#missing[@]} > 0 )); then
-    echo "error: template(s) not found: ${missing[*]} — run 'tessl install gAmUssA/coding-policy' first" >&2
+    echo "error: template(s) not found: ${missing[*]} — run 'tessl install gamussa/coding-policy' first" >&2
     exit 1
   fi
   if (( OVERRIDE_MODE == 0 && ${#present[@]} > 0 )); then

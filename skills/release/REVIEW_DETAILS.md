@@ -4,7 +4,7 @@ Reference for Step 4 of the `release` skill — how the two PR reviewers are wir
 
 ## Policy reviewer — one deployment
 
-`.github/workflows/review-codex.yml` runs the OpenAI Codex CLI authenticated by a **ChatGPT subscription** (the `CODEX_AUTH_JSON` secret — no API key) via `codex exec` with the prompt and schema under `skills/onboard-repo/templates/` (this repo) or `.github/codex-review/` (a consumer repo scaffolded by `onboard-repo`). Consumer repos check out `gAmUssA/coding-policy@main` into `.coding-policy/` and review against those rules; this repo reviews against its own `rules/`.
+`.github/workflows/review-codex.yml` runs the OpenAI Codex CLI authenticated by a **ChatGPT subscription** (the `CODEX_AUTH_JSON` secret — no API key) via `codex exec` with the prompt and schema under `skills/onboard-repo/templates/` (this repo) or `.github/codex-review/` (a consumer repo scaffolded by `onboard-repo`). Consumer repos check out `gamussa/coding-policy@main` into `.coding-policy/` and review against those rules; this repo reviews against its own `rules/`.
 
 - **Trigger:** `pull_request` `opened` / `synchronize` / `reopened` — reviews on open and re-reviews each pushed commit. Fork PRs are skipped (no secret access).
 - **Authorship:** submitted with the workflow's `GITHUB_TOKEN`, so the author is `github-actions[bot]` everywhere.

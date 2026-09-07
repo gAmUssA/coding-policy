@@ -1,6 +1,6 @@
 # Agent Rules
 
-This repository **is** the `gAmUssA/coding-policy` plugin. The authoritative policy is the
+This repository **is** the `gamussa/coding-policy` plugin. The authoritative policy is the
 in-tree `rules/*.md`; skills live under `skills/<name>/SKILL.md`; hooks under `hooks/`. Agents
 working here read and edit the live rule files directly (see `.claude/CLAUDE.md`).
 

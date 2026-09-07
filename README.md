@@ -1,6 +1,6 @@
-# gAmUssA/coding-policy
+# gamussa/coding-policy
 
-[![tessl](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2FgAmUssA%2Fcoding-policy)](https://tessl.io/registry/gAmUssA/coding-policy)
+[![tessl](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2Fgamussa%2Fcoding-policy)](https://tessl.io/registry/gamussa/coding-policy)
 
 Coding policy plugin for Viktor Gamov's AI agents. Language-agnostic code quality rules, autonomous shipping discipline, stack defaults for JVM, Swift, TypeScript, and Python, plus the hooks, reviewer, and release workflow that enforce them.
 
@@ -9,7 +9,7 @@ A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-po
 ## Installation
 
 ```
-tessl install gAmUssA/coding-policy
+tessl install gamussa/coding-policy
 ```
 
 To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, Copilot lane, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
@@ -58,7 +58,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 |------|-------|-------------|
 | [check-policy-freshness](hooks/check-policy-freshness.sh) | SessionStart | Warns (throttled once a day) when installed Tessl plugins are behind the registry. Informative only. |
 | [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo) and warns when the local default branch is behind or diverged. Informative only. |
-| [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Warns when `tessl.json` pins a `gAmUssA/*` dependency instead of `latest`. Informative only. |
+| [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Warns when `tessl.json` pins a `gamussa/*` dependency instead of `latest`. Informative only. |
 | [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, orphaned worktrees, or shellcheck/pyright findings in the changed set. A dirty tree is reported, not blocked. |
 
 ## Philosophy

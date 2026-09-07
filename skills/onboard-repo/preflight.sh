@@ -14,7 +14,7 @@
 # Env:   CODEX_AUTH_FILE   path of the Codex credential (default ~/.codex/auth.json;
 #                          tests point it at a fixture)
 #        PLUGIN_MOUNT      installed plugin root (default
-#                          .tessl/plugins/gAmUssA/coding-policy; tests override)
+#                          .tessl/plugins/gamussa/coding-policy; tests override)
 # Out:   one JSON object on stdout:
 #          {"ok": bool, "override": bool,
 #           "failures": [{"check": "<name>", "reason": "<text>"}, ...],
@@ -40,7 +40,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-PLUGIN_MOUNT="${PLUGIN_MOUNT:-.tessl/plugins/gAmUssA/coding-policy}"
+PLUGIN_MOUNT="${PLUGIN_MOUNT:-.tessl/plugins/gamussa/coding-policy}"
 CODEX_AUTH_FILE="${CODEX_AUTH_FILE:-$HOME/.codex/auth.json}"
 TARGETS=(
   ".github/workflows/review-codex.yml"
@@ -105,7 +105,7 @@ check_templates_present() {
     [[ -f "$t" ]] || missing+=("$t")
   done
   (( ${#missing[@]} == 0 )) \
-    || push_failure "templates-present" "Template(s) not found: ${missing[*]} — run 'tessl install gAmUssA/coding-policy' first"
+    || push_failure "templates-present" "Template(s) not found: ${missing[*]} — run 'tessl install gamussa/coding-policy' first"
 }
 
 check_targets() {

@@ -2,7 +2,7 @@
 
 This repository is reviewed by a separate policy reviewer — the `.github/workflows/review-codex.yml`
 workflow (the OpenAI Codex CLI on a ChatGPT subscription), which reviews every PR against the
-`gAmUssA/coding-policy` rules. It owns conventions and policy. **Your job is the complementary
+`gamussa/coding-policy` rules. It owns conventions and policy. **Your job is the complementary
 lane: correctness and risk.** Spend your review budget where the policy reviewer does not look.
 
 ## Review for

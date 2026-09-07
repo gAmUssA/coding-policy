@@ -44,7 +44,7 @@ run_main() { ( set -euo pipefail; main "$@" ); }
 t_pass() {
   local dir; dir=$(mktemp -d) || { bad "pass: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  printf '{"summary":"Policy loaded: 23 rule files from gAmUssA/coding-policy. All rules pass.","findings":[]}' > "$dir/final.json"
+  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. All rules pass.","findings":[]}' > "$dir/final.json"
   local out; out=$(run_main owner repo 5 "$dir/final.json")
   local rc=$?
   [[ $rc -eq 0 ]]                                              || { bad "pass: exit 0 (rc=$rc)"; rm -rf "$dir"; return; }
@@ -67,7 +67,7 @@ t_pass() {
 t_pass_422_fallback() {
   local dir; dir=$(mktemp -d) || { bad "fallback: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=1
-  printf '{"summary":"Policy loaded: 23 rule files from gAmUssA/coding-policy. Clean.","findings":[]}' > "$dir/final.json"
+  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. Clean.","findings":[]}' > "$dir/final.json"
   local out; out=$(run_main owner repo 5 "$dir/final.json" 2>/dev/null)
   local rc=$?
   MOCK_422_ON_APPROVE=0

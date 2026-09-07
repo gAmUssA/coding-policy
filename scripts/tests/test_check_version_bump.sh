@@ -31,7 +31,7 @@ cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remo
 fixture() {
   local d="$1" mv="$2" cv="$3"
   mkdir -p "$d/.tessl-plugin" || { echo "fatal: mkdir $d" >&2; exit 2; }
-  printf '{"name":"gAmUssA/coding-policy","version":"%s"}\n' "$mv" > "$d/.tessl-plugin/plugin.json"
+  printf '{"name":"gamussa/coding-policy","version":"%s"}\n' "$mv" > "$d/.tessl-plugin/plugin.json"
   if [[ -n "$cv" ]]; then
     printf '# Changelog\n\n## %s — 2026-01-15\n\n### Added\n\n- thing\n' "$cv" > "$d/CHANGELOG.md"
   else

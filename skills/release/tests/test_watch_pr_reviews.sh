@@ -143,7 +143,7 @@ test_ready_first_poll() {
   reset_mocks
   queue "$(snap MERGEABLE CLEAN success APPROVED APPROVED)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
   assert_eq "poll count" "1" "$(calls)" || return 1
@@ -158,7 +158,7 @@ test_deferred_ready() {
     "$(snap MERGEABLE CLEAN success APPROVED none)" \
     "$(snap MERGEABLE CLEAN success APPROVED APPROVED)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
   assert_eq "poll count" "2" "$(calls)" || return 1
@@ -172,7 +172,7 @@ test_both_bots_required() {
   # Copilot never posts — mergeable + codex approved is NOT enough.
   queue "$(snap MERGEABLE CLEAN success APPROVED none)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code (budget)" "1" "$rc" || return 1
   assert_eq "result" "pending_at_budget" "$(result_of "$out")" || return 1
 }
@@ -183,7 +183,7 @@ test_zero_comments_ready() {
   reset_mocks
   queue "$(snap MERGEABLE CLEAN success COMMENTED APPROVED 0 0)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
   assert_eq "poll count" "1" "$(calls)" || return 1
@@ -195,7 +195,7 @@ test_ci_none_ready() {
   reset_mocks
   queue "$(snap MERGEABLE CLEAN none APPROVED APPROVED)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
 }
@@ -206,7 +206,7 @@ test_changes_requested() {
   reset_mocks
   queue "$(snap MERGEABLE BLOCKED success CHANGES_REQUESTED APPROVED)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
   assert_eq "poll count" "1" "$(calls)" || return 1
@@ -220,7 +220,7 @@ test_copilot_advisory_not_terminal() {
   # changes_requested — only the policy reviewer gates (rules/review-severity.md).
   queue "$(snap MERGEABLE CLEAN success APPROVED CHANGES_REQUESTED)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
 }
@@ -231,7 +231,7 @@ test_ci_failure() {
   reset_mocks
   queue "$(snap MERGEABLE UNSTABLE failure none none)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "ci_failure" "$(result_of "$out")" || return 1
 }
@@ -242,7 +242,7 @@ test_dirty() {
   reset_mocks
   queue "$(snap CONFLICTING DIRTY none none none)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "result" "dirty" "$(result_of "$out")" || return 1
   assert_eq "poll count" "1" "$(calls)" || return 1
@@ -254,7 +254,7 @@ test_pending_at_budget() {
   reset_mocks
   queue "$(snap UNKNOWN BLOCKED pending none none)"
   local out rc=0
-  out=$(main gAmUssA coding-policy 42 2>&1) || rc=$?
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "1" "$rc" || return 1
   assert_eq "result" "pending_at_budget" "$(result_of "$out")" || return 1
   # The final snapshot is preserved so the agent can see which field is stuck.
@@ -267,7 +267,7 @@ run "pending forever exits 1 with the snapshot intact" test_pending_at_budget
 test_arg_validation() {
   reset_mocks
   local err rc=0
-  err=$(main gAmUssA coding-policy 2>&1 >/dev/null) || rc=$?
+  err=$(main gamussa coding-policy 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$err" | grep -q "usage:" || { echo "    FAIL: missing usage line, got: ${err}" >&2; return 1; }
 }
@@ -278,7 +278,7 @@ test_interval_zero_rejected() {
   reset_mocks
   INTERVAL_SEC=0
   local err rc=0
-  err=$(main gAmUssA coding-policy 42 2>&1 >/dev/null) || rc=$?
+  err=$(main gamussa coding-policy 42 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$err" | grep -q "WATCH_PR_REVIEWS_INTERVAL_SEC" || { echo "    FAIL: should name INTERVAL var, got: ${err}" >&2; return 1; }
 }
@@ -291,7 +291,7 @@ test_interval_gt_budget_rejected() {
   # shellcheck disable=SC2034  # read by the sourced watch-pr-reviews.sh; shellcheck can't trace the source boundary
   BUDGET_SEC=5
   local err rc=0
-  err=$(main gAmUssA coding-policy 42 2>&1 >/dev/null) || rc=$?
+  err=$(main gamussa coding-policy 42 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$err" | grep -q "cannot exceed" || { echo "    FAIL: should explain interval-vs-budget, got: ${err}" >&2; return 1; }
 }
@@ -302,7 +302,7 @@ test_poll_failure() {
   reset_mocks
   queue "POLLFAIL"
   local err rc=0
-  err=$(main gAmUssA coding-policy 42 2>&1 >/dev/null) || rc=$?
+  err=$(main gamussa coding-policy 42 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$err" | grep -q "poll-pr-reviews.sh failed" || { echo "    FAIL: should name poll failure, got: ${err}" >&2; return 1; }
 }
@@ -313,7 +313,7 @@ test_non_json() {
   reset_mocks
   queue "GARBAGE"
   local err rc=0
-  err=$(main gAmUssA coding-policy 42 2>&1 >/dev/null) || rc=$?
+  err=$(main gamussa coding-policy 42 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$err" | grep -q "non-JSON" || { echo "    FAIL: should flag non-JSON, got: ${err}" >&2; return 1; }
 }

@@ -82,7 +82,7 @@ STUB
 
   # 5. templates missing
   mkrepo "$TMP/r5"; run "$TMP/r5" PLUGIN_MOUNT="$TMP/empty-mount"
-  if [[ $RC -eq 1 ]] && has_failure templates-present && grep -q 'tessl install gAmUssA/coding-policy' <<<"$OUT"; then pass; else fail "templates: RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 1 ]] && has_failure templates-present && grep -q 'tessl install gamussa/coding-policy' <<<"$OUT"; then pass; else fail "templates: RC=$RC OUT=$OUT"; fi
 
   # 6. install mode, target present
   mkrepo "$TMP/r6"; mkdir -p "$TMP/r6/.github/workflows"; printf 'x\n' > "$TMP/r6/.github/workflows/review-codex.yml"

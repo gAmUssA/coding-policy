@@ -45,7 +45,7 @@ description: SKILL.md structure, frontmatter, execution-mode preamble, flat step
 - Never call `Skill()` on a rule (rules are auto-loaded, not invoked via Skill)
 - Deterministic operations must be executable script files, not inline code blocks — see `rules/script-delegation.md`
 - In rule prose, documentation, and skill cross-references, use repo-relative paths (`skills/<name>/<file>.<ext>`)
-- In step bodies, use the path that resolves at the invocation site: repo-relative when the skill runs from a clone of this repo (`skills/release/poll-pr-reviews.sh`), plugin-mount path when the skill runs inside a consumer (`.tessl/plugins/gAmUssA/coding-policy/skills/onboard-repo/scaffold.sh`)
+- In step bodies, use the path that resolves at the invocation site: repo-relative when the skill runs from a clone of this repo (`skills/release/poll-pr-reviews.sh`), plugin-mount path when the skill runs inside a consumer (`.tessl/plugins/gamussa/coding-policy/skills/onboard-repo/scaffold.sh`)
 - Don't mix conventions inside one SKILL.md — if one step invokes via a mount path, every other script-invoking step must too
 - Include the expected input/output contract in the step description
 

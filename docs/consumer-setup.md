@@ -1,6 +1,6 @@
 # Consumer setup
 
-How a repo adopts `gAmUssA/coding-policy`. The `onboard-repo` skill automates every step below; this page is the human-readable map.
+How a repo adopts `gamussa/coding-policy`. The `onboard-repo` skill automates every step below; this page is the human-readable map.
 
 This plugin started as a fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-policy); the reviewer scripts, hooks, and release tooling descend from it.
 
@@ -8,9 +8,9 @@ This plugin started as a fork-in-spirit of [jbaruch/coding-policy](https://githu
 
 | Path | Purpose |
 | --- | --- |
-| `tessl.json` | Declares `gAmUssA/coding-policy` at `latest`; `tessl install` resolves it into the gitignored `.tessl/` |
+| `tessl.json` | Declares `gamussa/coding-policy` at `latest`; `tessl install` resolves it into the gitignored `.tessl/` |
 | `.gitignore` block | Ignores `.tessl/` and the per-agent files tessl generates; `AGENTS.md` / `CLAUDE.md` stay committed |
-| `.github/workflows/review-codex.yml` | On every same-repo PR: checks out `gAmUssA/coding-policy@main` into `.coding-policy/`, runs the Codex CLI review against `.coding-policy/rules`, posts the verdict as `github-actions[bot]` |
+| `.github/workflows/review-codex.yml` | On every same-repo PR: checks out `gamussa/coding-policy@main` into `.coding-policy/`, runs the Codex CLI review against `.coding-policy/rules`, posts the verdict as `github-actions[bot]` |
 | `.github/codex-review/` | The reviewer prompt, output schema, and the post / mask / leak-guard scripts (copied from this plugin's `skills/onboard-repo/templates/`) |
 | `.github/copilot-instructions.md` | Scopes Copilot to the correctness lane |
 

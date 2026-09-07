@@ -57,7 +57,7 @@ cat > "$STUBDIR/tessl" <<'STUB'
 #!/usr/bin/env bash
 case "${MOCK_MODE:-}" in
   ok)
-    echo "Plugin gAmUssA/coding-policy"
+    echo "Plugin gamussa/coding-policy"
     echo "  Latest Version   0.3.91"
     ;;
   warning_on_stderr)
@@ -65,14 +65,14 @@ case "${MOCK_MODE:-}" in
     echo "  Latest Version   0.3.91"
     ;;
   no_version_line)
-    echo "Plugin gAmUssA/coding-policy"
+    echo "Plugin gamussa/coding-policy"
     echo "  Description   nothing useful here"
     ;;
   version_not_semver)
     # The registry reporting an outage on the line we parse. Taking the
     # last field on faith yielded {"version":"unavailable"} — a baseline
     # verify-publish-landed.sh's version comparison cannot order.
-    echo "Plugin gAmUssA/coding-policy"
+    echo "Plugin gamussa/coding-policy"
     echo "  Latest Version   unavailable"
     ;;
   version_is_prose)
@@ -87,7 +87,7 @@ esac
 STUB
 chmod +x "$STUBDIR/tessl"
 
-invoke() { OUT="$(bash "$SCRIPT" gAmUssA coding-policy 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"; }
+invoke() { OUT="$(bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"; }
 
 echo "capture-registry-baseline.sh tests"
 
@@ -166,7 +166,7 @@ cat > "$STUBDIR/tessl" <<'STUB'
 #!/usr/bin/env bash
 case "${MOCK_MODE:-}" in
   ok)
-    echo "Plugin gAmUssA/coding-policy"
+    echo "Plugin gamussa/coding-policy"
     echo "  Latest Version   0.3.91"
     ;;
   tessl_fails)
@@ -187,7 +187,7 @@ else
 fi
 
 # --- wrong arity is a usage error, not a silent default ---
-OUT="$(bash "$SCRIPT" gAmUssA 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"
+OUT="$(bash "$SCRIPT" gamussa 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"
 if [[ "$CODE" == 2 ]] && [[ "$ERR" == *"usage:"* ]]; then
   pass "wrong arity -> exit 2 with usage"
 else

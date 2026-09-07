@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Report gAmUssA/* dependency versions at session start, after running an update.
+# Report gamussa/* dependency versions at session start, after running an update.
 #
 # A SessionStart hook. It is the deterministic enforcement for the
 # Runtime-Managed Manifest Carve-Out (rules/dependency-management.md): tessl.json
 # is a runtime-managed manifest — tessl rewrites the resolved state into the
-# gitignored .tessl/ — so gAmUssA/*-owned deps use the floating "latest"
+# gitignored .tessl/ — so gamussa/*-owned deps use the floating "latest"
 # specifier. Each session this hook runs `tessl update --yes` (best-effort) and
-# reports every gAmUssA/* dependency's version transition, so a stale consumer repo
+# reports every gamussa/* dependency's version transition, so a stale consumer repo
 # surfaces the moment a session opens and a disallowed pin is flagged without a
 # per-consumer deploy-time check. Third-party pins (tessl-labs/*, tessl/npm-*)
 # are out of scope — they pin normally.
@@ -25,7 +25,7 @@
 #   stdout: on a consumer repo, one JSON object {"additionalContext": "<status>"}
 #           whose text begins with "Session-start status — versions: ".
 #           Three cases emit nothing at all: no manifest (not a consumer), no
-#           gAmUssA/* dependency, and an unparseable manifest (warned to stderr,
+#           gamussa/* dependency, and an unparseable manifest (warned to stderr,
 #           no status — there is no dependency list to report on).
 #   exit  : always 0. A best-effort failure that still leaves something to
 #           report — a failed `tessl update`, a missing jq, an unreadable
@@ -37,7 +37,7 @@ set -euo pipefail
 
 warn() { printf 'check-tessl-latest: %s\n' "$1" >&2; }
 
-# Print a gAmUssA/* dependency's installed version from its resolved-state
+# Print a gamussa/* dependency's installed version from its resolved-state
 # tessl-package.json, or nothing when it cannot be determined. An absent file is
 # an expected non-result (the dep is not yet resolved into .tessl/ — reported as
 # install-pending). An existing but unreadable or unparseable file is a tool
@@ -75,17 +75,17 @@ main() {
   # literal, no interpolation, so no escaping is needed).
   if ! command -v jq >/dev/null 2>&1; then
     warn "jq not found — cannot read tessl.json or the resolved state"
-    printf '%s\n' '{"additionalContext":"Session-start status — versions: unavailable — jq is not installed, cannot read tessl.json or the resolved state. Install jq (and the Tessl CLI) so the Runtime-Managed Manifest Carve-Out enforcement (gAmUssA/* deps must be \"latest\") can run."}'
+    printf '%s\n' '{"additionalContext":"Session-start status — versions: unavailable — jq is not installed, cannot read tessl.json or the resolved state. Install jq (and the Tessl CLI) so the Runtime-Managed Manifest Carve-Out enforcement (gamussa/* deps must be \"latest\") can run."}'
     return 0
   fi
 
-  # Collect gAmUssA/* deps as "<name>\t<specifier>" lines, sorted by name for a
-  # deterministic status (gAmUssA/coding-policy is pinned first below). A parse
+  # Collect gamussa/* deps as "<name>\t<specifier>" lines, sorted by name for a
+  # deterministic status (gamussa/coding-policy is pinned first below). A parse
   # failure is surfaced, not swallowed as "no deps".
   local deps_raw
   if ! deps_raw="$(jq -r '
       (.dependencies // {} | to_entries | sort_by(.key)[])
-      | select(.key | startswith("gAmUssA/"))
+      | select(.key | startswith("gamussa/"))
       | "\(.key)\t\(.value.version // "")"' "$manifest" 2>/dev/null)"; then
     warn "could not parse ${manifest} — check it is valid JSON; skipping the versions status"
     return 0
@@ -98,7 +98,7 @@ main() {
     names+=("$name"); specs+=("$spec")
   done <<< "$deps_raw"
 
-  # No gAmUssA/* deps => nothing first-party to report. Silent no-op.
+  # No gamussa/* deps => nothing first-party to report. Silent no-op.
   (( ${#names[@]} > 0 )) || return 0
 
   # Installed versions BEFORE the update. A broken state file (rc 3) reads the
@@ -132,13 +132,13 @@ main() {
     if (( rc == 3 )); then after_broken[i]=1; else after_broken[i]=0; fi
   done
 
-  # Report order: gAmUssA/coding-policy first, then the rest in manifest order.
+  # Report order: gamussa/coding-policy first, then the rest in manifest order.
   local -a order=()
   for (( i = 0; i < ${#names[@]}; i++ )); do
-    if [[ "${names[i]}" == "gAmUssA/coding-policy" ]]; then order+=("$i"); fi
+    if [[ "${names[i]}" == "gamussa/coding-policy" ]]; then order+=("$i"); fi
   done
   for (( i = 0; i < ${#names[@]}; i++ )); do
-    if [[ "${names[i]}" != "gAmUssA/coding-policy" ]]; then order+=("$i"); fi
+    if [[ "${names[i]}" != "gamussa/coding-policy" ]]; then order+=("$i"); fi
   done
 
   # One segment per dep; collect any pins for the trailing NOTE.
@@ -180,7 +180,7 @@ main() {
     for p in "${pinned[@]}"; do
       if (( firstp )); then pins+="$p"; firstp=0; else pins+=", ${p}"; fi
     done
-    status+=$'\n'"NOTE: tessl.json pins gAmUssA/* dependencies that should float to \`latest\` (Runtime-Managed Manifest Carve-Out, rules/dependency-management.md): ${pins}. Set them to \`\"version\": \"latest\"\` — the resolved state lives in the gitignored \`.tessl/\`, so a pin only re-introduces the auto-update churn."
+    status+=$'\n'"NOTE: tessl.json pins gamussa/* dependencies that should float to \`latest\` (Runtime-Managed Manifest Carve-Out, rules/dependency-management.md): ${pins}. Set them to \`\"version\": \"latest\"\` — the resolved state lives in the gitignored \`.tessl/\`, so a pin only re-introduces the auto-update churn."
   fi
 
   jq -n --arg c "$status" '{additionalContext: $c}' \

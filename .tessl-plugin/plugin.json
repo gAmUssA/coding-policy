@@ -1,5 +1,5 @@
 {
-  "name": "gAmUssA/coding-policy",
+  "name": "gamussa/coding-policy",
   "version": "0.1.0",
   "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
   "private": false,

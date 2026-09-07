@@ -35,7 +35,7 @@ fi
 STUB
 chmod +x "$STUBBIN/tessl"
 
-OUTDATED='{"outdated":[{"current":{"tile":{"workspaceName":"gAmUssA","tileName":"coding-policy","version":"0.3.138"}},"update":{"version":"0.3.139"}}]}'
+OUTDATED='{"outdated":[{"current":{"tile":{"workspaceName":"gamussa","tileName":"coding-policy","version":"0.3.138"}},"update":{"version":"0.3.139"}}]}'
 EMPTY='{"outdated":[]}'
 
 FAIL=0; PASS=0

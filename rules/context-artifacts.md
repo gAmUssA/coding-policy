@@ -10,7 +10,7 @@ description: Plugin structure, rule format and frontmatter, prose discipline, su
 
 - The plugin has a `.tessl-plugin/plugin.json` manifest with `name`, `version`, and `description` — full schema in `rules/skill-authoring.md`
 - The plugin's `README.md` is the project's `README.md` — same file, carrying the rules table, skills table, hooks table, and installation instructions
-- Include the Tessl registry badge at the top of README: `[![tessl](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2FgAmUssA%2Fcoding-policy)](https://tessl.io/registry/gAmUssA/coding-policy)`
+- Include the Tessl registry badge at the top of README: `[![tessl](https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.tessl.io%2Fv1%2Fbadges%2Fgamussa%2Fcoding-policy)](https://tessl.io/registry/gamussa/coding-policy)`
 - Rules live in `rules/<name>.md`, skills in `skills/<name>/SKILL.md`, hooks in `hooks/<name>.sh`
 - Use `.tesslignore` to exclude CI files, `scripts/`, and `docs/` from the published plugin
 - Validate structure with `tessl plugin lint` before every publish; `CHANGELOG.md` and similar repo files show as orphaned in lint, which only tracks manifest-declared paths

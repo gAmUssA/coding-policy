@@ -73,7 +73,7 @@ main() {
   # 5. missing template -> exit 1, nothing written
   MOUNT_C="$TMP/mount-c"; mkmount "$MOUNT_C" v3; rm "$MOUNT_C/skills/onboard-repo/templates/schema.json"
   mkrepo "$TMP/r5"; ERR="$(cd "$TMP/r5" && PLUGIN_MOUNT="$MOUNT_C" bash "$SCRIPT" 2>&1 >/dev/null)"; RC=$?
-  if [[ $RC -eq 1 ]] && grep -q 'tessl install gAmUssA/coding-policy' <<<"$ERR" && none_present "$TMP/r5"; then pass; else fail "missing template: RC=$RC ERR=$ERR"; fi
+  if [[ $RC -eq 1 ]] && grep -q 'tessl install gamussa/coding-policy' <<<"$ERR" && none_present "$TMP/r5"; then pass; else fail "missing template: RC=$RC ERR=$ERR"; fi
 
   # 6. write failure restores prior targets: make a LATER target read-only so
   #    the earlier ones are already overwritten when the write fails.

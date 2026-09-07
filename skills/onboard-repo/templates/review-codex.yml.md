@@ -1,11 +1,11 @@
 name: PR Policy Review (Codex, subscription)
 
-# Reviews every same-repo pull request against the gAmUssA/coding-policy rules
+# Reviews every same-repo pull request against the gamussa/coding-policy rules
 # using the Codex CLI authenticated by a ChatGPT subscription (no API key).
 # Scaffolded by the coding-policy `onboard-repo` skill; refresh it with the
 # skill's --override mode rather than editing by hand.
 #
-# The policy is read from a fresh checkout of gAmUssA/coding-policy (public,
+# The policy is read from a fresh checkout of gamussa/coding-policy (public,
 # no token) under .coding-policy/rules — the consumer never vendors the rules.
 #
 # The subscription token is read ONLY from the CODEX_AUTH_JSON secret at

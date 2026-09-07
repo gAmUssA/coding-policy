@@ -146,7 +146,7 @@ test_immediate_hit() {
   reset_mocks
   queue_responses "123456"
   local output rc=0
-  output=$(main gAmUssA coding-policy abc123 publish.yml 2>&1) || rc=$?
+  output=$(main gamussa coding-policy abc123 publish.yml 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "database_id" "123456" "$(database_id_of "$output")" || return 1
   assert_eq "gh call count" "1" "$(gh_calls)" || return 1
@@ -159,7 +159,7 @@ test_deferred_hit() {
   reset_mocks
   queue_responses "EMPTY" "EMPTY" "789012"
   local output rc=0
-  output=$(main gAmUssA coding-policy def456 publish.yml 2>&1) || rc=$?
+  output=$(main gamussa coding-policy def456 publish.yml 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "database_id" "789012" "$(database_id_of "$output")" || return 1
   assert_eq "gh call count" "3" "$(gh_calls)" || return 1
@@ -172,7 +172,7 @@ test_budget_exhausted() {
   reset_mocks
   queue_responses "EMPTY" "EMPTY" "EMPTY" "EMPTY" "EMPTY"
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy zzz999 publish.yml 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy zzz999 publish.yml 2>&1 >/dev/null) || rc=$?
   [[ $rc -ne 0 ]] || { echo "    FAIL: expected non-zero exit, got 0" >&2; return 1; }
   echo "$stderr" | grep -q "zzz999" || { echo "    FAIL: stderr missing SHA, got: ${stderr}" >&2; return 1; }
   echo "$stderr" | grep -q "publish.yml" || { echo "    FAIL: stderr missing workflow name, got: ${stderr}" >&2; return 1; }
@@ -183,7 +183,7 @@ run "budget exhausted exits non-zero with diagnostic" test_budget_exhausted
 test_arg_validation() {
   reset_mocks
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy abc123 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy abc123 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$stderr" | grep -q "usage:" || { echo "    FAIL: stderr missing usage line, got: ${stderr}" >&2; return 1; }
 }
@@ -194,7 +194,7 @@ test_interval_zero_rejected() {
   reset_mocks
   INTERVAL_SEC=0
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$stderr" | grep -q "INTERVAL_SEC" || { echo "    FAIL: stderr should name INTERVAL_SEC var, got: ${stderr}" >&2; return 1; }
 }
@@ -204,7 +204,7 @@ test_budget_negative_rejected() {
   reset_mocks
   BUDGET_SEC=-5
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$stderr" | grep -q "BUDGET_SEC" || { echo "    FAIL: stderr should name BUDGET_SEC var, got: ${stderr}" >&2; return 1; }
 }
@@ -216,7 +216,7 @@ test_interval_gt_budget_rejected() {
   INTERVAL_SEC=10
   BUDGET_SEC=5
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   echo "$stderr" | grep -q "cannot exceed" || { echo "    FAIL: stderr should explain interval-vs-budget, got: ${stderr}" >&2; return 1; }
 }
@@ -235,7 +235,7 @@ test_budget_cap_on_non_divisible_interval() {
   local rc=0
   # Wrap main in a subshell so its `exit 1` on budget exhaustion
   # doesn't kill the test runner.
-  ( main gAmUssA coding-policy abc publish.yml >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy abc publish.yml >/dev/null 2>&1 ) || rc=$?
   [[ $rc -ne 0 ]] || { echo "    FAIL: expected budget-exhausted non-zero exit" >&2; return 1; }
   local total
   total=$(total_sleep_seconds)
@@ -248,7 +248,7 @@ test_non_numeric_run_id_rejected() {
   reset_mocks
   queue_responses "not-a-number"
   local stderr rc=0
-  stderr=$(main gAmUssA coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
+  stderr=$(main gamussa coding-policy abc publish.yml 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "1" "$rc" || return 1
   echo "$stderr" | grep -q "expected numeric run id" || { echo "    FAIL: stderr should explain numeric validation, got: ${stderr}" >&2; return 1; }
 }

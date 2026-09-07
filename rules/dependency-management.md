@@ -43,8 +43,8 @@ alwaysApply: true
 
 - Covered manifest: a consumer repo's `tessl.json`
 - tessl writes its resolved state into the gitignored `.tessl/`
-- `gAmUssA/*`-owned dependencies use the `latest` specifier
-- Deterministic check: the plugin-shipped `hooks/check-tessl-latest.sh` `SessionStart` hook, which flags any `gAmUssA/*` dependency not at `latest`
+- `gamussa/*`-owned dependencies use the `latest` specifier
+- Deterministic check: the plugin-shipped `hooks/check-tessl-latest.sh` `SessionStart` hook, which flags any `gamussa/*` dependency not at `latest`
 - `skills/onboard-repo` sets `latest` and gitignores `.tessl/` at onboarding
 - Third-party dependencies (`tessl-labs/*`, `tessl/npm-*`) pin normally and stay out of scope
 

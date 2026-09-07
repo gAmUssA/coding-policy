@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Outcome-based tests for tessl-hygiene.sh: pins gAmUssA/* deps to latest and
+# Outcome-based tests for tessl-hygiene.sh: pins gamussa/* deps to latest and
 # ensures the .gitignore block, without touching third-party pins or the
 # committed AGENTS.md/CLAUDE.md/GEMINI.md entrypoints.
 #
@@ -27,20 +27,20 @@ main() {
 
   local d out cp_ver react_ver
 
-  # 1. pins gAmUssA/* to latest, leaves third-party pins untouched.
+  # 1. pins gamussa/* to latest, leaves third-party pins untouched.
   d="$TMP/1"; mkrepo "$d"
   cat > "$d/tessl.json" <<'JSON'
 {
-  "name": "gAmUssA/x",
+  "name": "gamussa/x",
   "mode": "vendored",
   "dependencies": {
-    "gAmUssA/coding-policy": { "version": "0.3.99" },
+    "gamussa/coding-policy": { "version": "0.3.99" },
     "tessl/npm-react": { "version": "19.2.0" }
   }
 }
 JSON
   out="$(cd "$d" && bash "$SCRIPT" 2>/dev/null)"
-  cp_ver=$(jq -r '.dependencies["gAmUssA/coding-policy"].version' "$d/tessl.json")
+  cp_ver=$(jq -r '.dependencies["gamussa/coding-policy"].version' "$d/tessl.json")
   react_ver=$(jq -r '.dependencies["tessl/npm-react"].version' "$d/tessl.json")
   if [[ "$cp_ver" == "latest" && "$react_ver" == "19.2.0" ]] \
      && printf '%s' "$out" | jq -e '.tessl_json=="pinned-latest"' >/dev/null; then pass
@@ -48,7 +48,7 @@ JSON
 
   # 2. idempotent: already latest -> unchanged.
   d="$TMP/2"; mkrepo "$d"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$d/tessl.json"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$d/tessl.json"
   out="$(cd "$d" && bash "$SCRIPT" 2>/dev/null)"
   if printf '%s' "$out" | jq -e '.tessl_json=="unchanged"' >/dev/null; then pass; else fail "idempotent pin: $out"; fi
 

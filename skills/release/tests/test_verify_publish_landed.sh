@@ -116,7 +116,7 @@ t_success_and_advance_returns_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "ok"               "true"                  "$(echo "$out" | jq -r .ok)"             || return 1
   assert_eq "run_conclusion"   "success"               "$(echo "$out" | jq -r .run_conclusion)" || return 1
@@ -135,7 +135,7 @@ t_race_failure_with_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="failure"
   MOCK_REGISTRY_VERSION="0.3.32"  # interleaved publish advanced it
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
   assert_eq "run_conclusion"   "failure"    "$(echo "$out" | jq -r .run_conclusion)" || return 1
@@ -150,7 +150,7 @@ t_success_but_no_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.31"  # unchanged from PRE
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
   local reason
@@ -163,7 +163,7 @@ t_failure_with_no_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="failure"
   MOCK_REGISTRY_VERSION="0.3.31"
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
 }
@@ -176,7 +176,7 @@ t_cancelled_conclusion_returns_not_ok() {
   MOCK_RUN_CONCLUSION="cancelled"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code"        "1"             "$rc"                                    || return 1
   assert_eq "run_conclusion"   "cancelled"     "$(echo "$out" | jq -r .run_conclusion)" || return 1
 }
@@ -187,7 +187,7 @@ t_semver_advance_double_digit_patch_returns_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.10"
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.9" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.9" "12345") || rc=$?
   assert_eq "exit code" "0"      "$rc"                          || return 1
   assert_eq "ok"        "true"   "$(echo "$out" | jq -r .ok)"
 }
@@ -198,7 +198,7 @@ t_downgrade_returns_not_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.30"
   local out rc=0
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   assert_eq "exit code" "1"       "$rc"                          || return 1
   assert_eq "ok"        "false"   "$(echo "$out" | jq -r .ok)"
 }
@@ -210,19 +210,19 @@ t_invalid_run_id_exits_two() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gAmUssA coding-policy "0.3.31" "not-a-number" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "not-a-number" >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for non-numeric run-id" "2" "$rc"
 }
 
 t_empty_pre_baseline_exits_two() {
   local rc=0
-  ( main gAmUssA coding-policy "" "12345" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "" "12345" >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for empty pre-baseline" "2" "$rc"
 }
 
 t_wrong_arg_count_exits_two() {
   local rc=0
-  ( main gAmUssA coding-policy "0.3.31" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for wrong arg count" "2" "$rc"
 }
 
@@ -233,7 +233,7 @@ t_zero_run_id_exits_two() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gAmUssA coding-policy "0.3.31" "0" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "0" >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for run-id == 0" "2" "$rc"
 }
 
@@ -247,7 +247,7 @@ t_null_conclusion_in_flight_exits_two() {
   MOCK_RUN_CONCLUSION="null"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0 stderr
-  stderr=$( ( main gAmUssA coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for in-flight (null) conclusion" "2" "$rc" || return 1
   [[ "$stderr" == *"in flight"* ]] || { echo "    FAIL: expected 'in flight' in stderr, got: $stderr" >&2; return 1; }
 }
@@ -258,7 +258,7 @@ t_empty_conclusion_exits_two() {
   MOCK_RUN_CONCLUSION=""
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gAmUssA coding-policy "0.3.31" "12345" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "12345" >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for empty conclusion" "2" "$rc"
 }
 
@@ -276,7 +276,7 @@ t_tessl_empty_versions_exits_two() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( main gAmUssA coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for empty versions API" "2" "$rc" || return 1
   [[ "$stderr" == *"no published version"* ]] || { echo "    FAIL: expected 'no published version' in diagnostic; got: $stderr" >&2; return 1; }
   # Restore the canonical mock so subsequent tests aren't affected.
@@ -302,7 +302,7 @@ t_tessl_non_json_exits_two() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( main gAmUssA coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for non-JSON versions body" "2" "$rc" || return 1
   [[ "$stderr" == *"not valid JSON"* ]] || { echo "    FAIL: expected 'not valid JSON' in diagnostic; got: $stderr" >&2; return 1; }
   unset -f tessl
@@ -332,7 +332,7 @@ t_main_runs_under_errexit_pipefail() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( set -e; set -o pipefail; set -u; main gAmUssA coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( set -e; set -o pipefail; set -u; main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
   # Restore the canonical mock so subsequent tests aren't affected.
   unset -f tessl
   tessl() {
@@ -369,7 +369,7 @@ t_missing_jq_emits_json_AND_stderr() {
   path=$(no_jq_path) || return 0  # SKIP returns 0 to avoid noisy fail
   local out err_file rc=0 err
   err_file=$(mktemp)
-  out=$(env -i PATH="$path" HOME="$HOME" "$SCRIPT" gAmUssA coding-policy "0.3.31" "12345" 2>"$err_file") || rc=$?
+  out=$(env -i PATH="$path" HOME="$HOME" "$SCRIPT" gamussa coding-policy "0.3.31" "12345" 2>"$err_file") || rc=$?
   err=$(cat "$err_file"); rm -f "$err_file"
   assert_eq "exit code" "2" "$rc" || return 1
   # JSON envelope on stdout (caller-parses-stdout contract still holds).
@@ -387,7 +387,7 @@ t_output_is_valid_json_with_documented_shape() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0 keys
-  out=$(main gAmUssA coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
   echo "$out" | jq -e . >/dev/null || { echo "    FAIL: stdout not valid JSON: $out" >&2; return 1; }
   keys=$(echo "$out" | jq -r 'keys | sort | join(",")')
   assert_eq "keys" "current,ok,pre,reason,run_conclusion" "$keys"

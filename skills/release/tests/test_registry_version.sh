@@ -79,7 +79,7 @@ chmod +x "$STUBDIR/tessl"
 # Invoke with MOCK_MODE exported so it reaches the fake tessl subprocess.
 invoke() {
   local mode="$1"
-  OUT="$(MOCK_MODE="$mode" bash "$SCRIPT" gAmUssA coding-policy 2>"$STUBDIR/err")"
+  OUT="$(MOCK_MODE="$mode" bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"
   CODE=$?
   ERR="$(cat "$STUBDIR/err")"
 }
@@ -144,7 +144,7 @@ else
 fi
 
 # --- wrong arity is a usage error, not a silent default ---
-OUT="$(bash "$SCRIPT" gAmUssA 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"
+OUT="$(bash "$SCRIPT" gamussa 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"
 if [[ "$CODE" == 2 ]] && [[ "$ERR" == *"usage:"* ]]; then
   pass "wrong arity -> exit 2 with usage"
 else

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Outcome-based tests for check-tessl-latest.sh.
 #
-# The hook runs `tessl update --yes` and reads each gAmUssA/* dep's installed
+# The hook runs `tessl update --yes` and reads each gamussa/* dep's installed
 # version from the resolved state before and after, so tests put a FAKE `tessl`
 # on PATH and drive it via env: STUB_BUMP_FILE/STUB_BUMP_TO rewrite a fixture
 # tessl-package.json to simulate an update, STUB_UPDATE_EXIT makes the update
@@ -16,7 +16,7 @@
 #   5. install pending  -> no resolved-state file -> "(install pending)", exit 0.
 #   6. pinned dep      -> "NOTE:" pin warning present, marker present, exit 0.
 #   7. no manifest     -> silent no-op, exit 0.
-#   8. third-party only -> silent (no gAmUssA/* deps), exit 0.
+#   8. third-party only -> silent (no gamussa/* deps), exit 0.
 #   9. malformed JSON   -> silent no-op, exit 0 (never aborts SessionStart).
 #  10. unreadable state -> warns to stderr AND labels the dep "version unknown"
 #                          rather than "(install pending)" (existing-but-broken
@@ -73,7 +73,7 @@ main() {
 #!/usr/bin/env bash
 if [[ "${1:-}" == "update" ]]; then
   if [[ -n "${STUB_BUMP_FILE:-}" && -n "${STUB_BUMP_TO:-}" ]]; then
-    printf '{"name":"gAmUssA/coding-policy","version":"%s"}\n' "$STUB_BUMP_TO" > "$STUB_BUMP_FILE"
+    printf '{"name":"gamussa/coding-policy","version":"%s"}\n' "$STUB_BUMP_TO" > "$STUB_BUMP_FILE"
   fi
   if [[ -n "${STUB_UPDATE_EXIT:-}" ]]; then
     printf 'stub tessl: simulated update failure\n' >&2
@@ -89,25 +89,25 @@ STUB
   # 1. updated: coding-policy at latest, resolved state 0.3.147, update bumps to
   #    0.3.153 -> "0.3.147 → 0.3.153 (updated)".
   local m1="$TMP/m1.json" s1="$TMP/s1"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m1" || die "write m1 failed"
-  seed_pkg "$s1" "gAmUssA/coding-policy" "0.3.147"
-  run "$m1" "$s1" STUB_BUMP_FILE="$s1/plugins/gAmUssA/coding-policy/tessl-package.json" STUB_BUMP_TO="0.3.153"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m1" || die "write m1 failed"
+  seed_pkg "$s1" "gamussa/coding-policy" "0.3.147"
+  run "$m1" "$s1" STUB_BUMP_FILE="$s1/plugins/gamussa/coding-policy/tessl-package.json" STUB_BUMP_TO="0.3.153"
   if [[ $RC -eq 0 ]] && has "Session-start status" && has "versions:" && has "0.3.147" && has "0.3.153" && has "updated"; then
     pass; else fail "updated: expected transition status, got RC=$RC OUT=$OUT"; fi
 
   # 2. already latest: resolved state 0.3.153, update leaves it unchanged ->
   #    "0.3.153 (latest)".
   local m2="$TMP/m2.json" s2="$TMP/s2"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m2" || die "write m2 failed"
-  seed_pkg "$s2" "gAmUssA/coding-policy" "0.3.153"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m2" || die "write m2 failed"
+  seed_pkg "$s2" "gamussa/coding-policy" "0.3.153"
   run "$m2" "$s2"
   if [[ $RC -eq 0 ]] && has "Session-start status" && has "0.3.153" && has "latest"; then
     pass; else fail "already-latest: expected (latest) status, got RC=$RC OUT=$OUT"; fi
 
   # 3. update failed: fake tessl exits non-zero. Status still emits, hook exits 0.
   local m3="$TMP/m3.json" s3="$TMP/s3"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m3" || die "write m3 failed"
-  seed_pkg "$s3" "gAmUssA/coding-policy" "0.3.147"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m3" || die "write m3 failed"
+  seed_pkg "$s3" "gamussa/coding-policy" "0.3.147"
   run "$m3" "$s3" STUB_UPDATE_EXIT=1
   # A failed update must NOT claim "latest" for the unchanged version — it is
   # labeled "(installed)" since freshness was never verified.
@@ -120,8 +120,8 @@ STUB
   ln -s "$(command -v bash)" "$minbin/bash" || die "symlink bash failed"
   ln -s "$(command -v jq)"   "$minbin/jq"   || die "symlink jq failed"
   local m4="$TMP/m4.json" s4="$TMP/s4"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m4" || die "write m4 failed"
-  seed_pkg "$s4" "gAmUssA/coding-policy" "0.3.147"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m4" || die "write m4 failed"
+  seed_pkg "$s4" "gamussa/coding-policy" "0.3.147"
   OUT="$(env "PATH=$minbin" TESSL_LATEST_MANIFEST="$m4" TESSL_STATE_DIR="$s4" bash "$SCRIPT" </dev/null 2>/dev/null)"; RC=$?
   if [[ $RC -eq 0 ]] && has "Session-start status" && has "update failed"; then
     pass; else fail "tessl-missing: expected status with 'update failed', got RC=$RC OUT=$OUT"; fi
@@ -129,7 +129,7 @@ STUB
   # 5. install pending: manifest lists coding-policy but no resolved-state file
   #    exists (and the update does not create one) -> "(install pending)".
   local m5="$TMP/m5.json" s5="$TMP/s5"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m5" || die "write m5 failed"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m5" || die "write m5 failed"
   run "$m5" "$s5"
   if [[ $RC -eq 0 ]] && has "Session-start status" && has "install pending"; then
     pass; else fail "install-pending: expected '(install pending)', got RC=$RC OUT=$OUT"; fi
@@ -137,8 +137,8 @@ STUB
   # 6. pinned dep: coding-policy pinned to 0.3.99 -> the "NOTE:" pin warning is
   #    appended and the marker status is present.
   local m6="$TMP/m6.json" s6="$TMP/s6"
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"0.3.99"}}}\n' > "$m6" || die "write m6 failed"
-  seed_pkg "$s6" "gAmUssA/coding-policy" "0.3.99"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"0.3.99"}}}\n' > "$m6" || die "write m6 failed"
+  seed_pkg "$s6" "gamussa/coding-policy" "0.3.99"
   run "$m6" "$s6"
   if [[ $RC -eq 0 ]] && has "Session-start status" && has "NOTE:" && has "0.3.99"; then
     pass; else fail "pinned: expected NOTE pin warning, got RC=$RC OUT=$OUT"; fi
@@ -147,7 +147,7 @@ STUB
   run "$TMP/does-not-exist.json" "$TMP/s7"
   if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "no-manifest: expected silence, got RC=$RC OUT=$OUT"; fi
 
-  # 8. third-party only (no gAmUssA/* deps) -> silent.
+  # 8. third-party only (no gamussa/* deps) -> silent.
   local m8="$TMP/m8.json" s8="$TMP/s8"
   printf '{"dependencies":{"tessl/npm-react":{"version":"19.2.0"}}}\n' > "$m8" || die "write m8 failed"
   run "$m8" "$s8"
@@ -168,9 +168,9 @@ STUB
   #     chmod 000 does not bind root.
   if [[ "$(id -u)" -ne 0 ]]; then
     local m10="$TMP/m10.json" s10="$TMP/s10" errU pkg10
-    printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m10" || die "write m10 failed"
-    seed_pkg "$s10" "gAmUssA/coding-policy" "0.3.147"
-    pkg10="$s10/plugins/gAmUssA/coding-policy/tessl-package.json"
+    printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m10" || die "write m10 failed"
+    seed_pkg "$s10" "gamussa/coding-policy" "0.3.147"
+    pkg10="$s10/plugins/gamussa/coding-policy/tessl-package.json"
     chmod 000 "$pkg10" || die "chmod 000 $pkg10 failed"
     OUT="$(env "PATH=$STUBBIN:$PATH" TESSL_LATEST_MANIFEST="$m10" TESSL_STATE_DIR="$s10" bash "$SCRIPT" </dev/null 2>"$TMP/err10")"; RC=$?
     errU="$(cat "$TMP/err10")" || die "read $TMP/err10 failed"
@@ -182,9 +182,9 @@ STUB
   # 11. unparseable resolved-state file: valid permissions, invalid JSON. Same
   #     "version unknown" label, and no chmod, so this case also runs as root.
   local m11="$TMP/m11.json" s11="$TMP/s11" err11 pkg11
-  printf '{"dependencies":{"gAmUssA/coding-policy":{"version":"latest"}}}\n' > "$m11" || die "write m11 failed"
-  seed_pkg "$s11" "gAmUssA/coding-policy" "0.3.147"
-  pkg11="$s11/plugins/gAmUssA/coding-policy/tessl-package.json"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$m11" || die "write m11 failed"
+  seed_pkg "$s11" "gamussa/coding-policy" "0.3.147"
+  pkg11="$s11/plugins/gamussa/coding-policy/tessl-package.json"
   printf 'not json\n' > "$pkg11" || die "write $pkg11 failed"
   OUT="$(env "PATH=$STUBBIN:$PATH" TESSL_LATEST_MANIFEST="$m11" TESSL_STATE_DIR="$s11" bash "$SCRIPT" </dev/null 2>"$TMP/err11")"; RC=$?
   err11="$(cat "$TMP/err11")" || die "read $TMP/err11 failed"
