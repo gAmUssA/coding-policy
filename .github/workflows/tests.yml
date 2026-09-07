@@ -1,0 +1,63 @@
+name: Tests
+
+# Gates on every PR (and on direct pushes to main):
+#   1. diagnostics  — shellcheck over every first-party shell script and
+#      pyright over first-party Python, at zero findings
+#      (rules/language-diagnostics.md). Runs first: static checks are fast
+#      and cheap (rules/code-formatting.md CI Integration).
+#   2. lint         — `tessl plugin lint` (manifest + skill-frontmatter +
+#      structure validation), so a bad manifest is caught here, not when it
+#      breaks publish.yml after merge.
+#   3. unit-tests   — every module's bash unit suite via scripts/run-tests.sh
+#      (rules/testing-standards.md). Gated on diagnostics + lint passing.
+#   4. version-bump — PR only: the manifest version must be ahead of the
+#      registry and CHANGELOG.md must carry its heading, because publish.yml
+#      publishes the manifest version as-is on merge (no auto-bump).
+# publish.yml reruns lint + diagnostics + the suites before release as
+# defense-in-depth.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-diagnostics
+      - name: Run language-diagnostics gate
+        run: bash scripts/run-diagnostics.sh
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: tesslio/setup-tessl@v2
+        with:
+          token: ${{ secrets.TESSL_TOKEN }}
+      - name: Lint plugin
+        run: tessl plugin lint
+
+  unit-tests:
+    needs: [diagnostics, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run unit test suites
+        run: bash scripts/run-tests.sh
+
+  version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: tesslio/setup-tessl@v2
+        with:
+          token: ${{ secrets.TESSL_TOKEN }}
+      - name: Manifest version is ahead of the registry and CHANGELOG is headed
+        run: bash scripts/check-version-bump.sh

@@ -1,0 +1,50 @@
+name: Publish Plugin
+
+# Publishes the manifest version AS-IS on every push to main. No auto-bump,
+# no commit-back: the PR that lands the change already bumped
+# .tessl-plugin/plugin.json and headed CHANGELOG.md (gated pre-merge by
+# tests.yml's version-bump job via scripts/check-version-bump.sh). A version
+# that already exists in the registry fails this run red — the signal that a
+# bump was skipped, never silently re-published.
+#
+# The release skill (skills/release/SKILL.md Step 7) resolves this run by the
+# merge commit SHA + push event and confirms the registry advanced and the
+# moderation state cleared before reporting the release done.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-plugin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: tesslio/setup-tessl@v2
+        with:
+          token: ${{ secrets.TESSL_TOKEN }}
+
+      - name: Lint plugin
+        run: tessl plugin lint
+
+      # Defense-in-depth: tests.yml already gates PRs, but publish.yml runs
+      # independently on push to main — block the publish on either failing
+      # here too. Static checks first.
+      - uses: ./.github/actions/setup-diagnostics
+      - name: Run language diagnostics
+        run: bash scripts/run-diagnostics.sh
+
+      - name: Run unit tests
+        run: bash scripts/run-tests.sh
+
+      - name: Publish (manifest version as-is)
+        run: tessl plugin publish

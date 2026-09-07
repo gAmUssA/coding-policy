@@ -1,0 +1,117 @@
+name: PR Policy Review (Codex, subscription)
+
+# Reviews every same-repo pull request against this repo's in-tree rules/*.md
+# using the Codex CLI authenticated by a ChatGPT subscription (no API key).
+# The subscription token is read ONLY from the CODEX_AUTH_JSON secret at
+# runtime (rules/no-secrets.md) — never persisted to the actions cache or
+# anywhere else on the runner. Codex refreshes the access token in-memory for
+# the duration of the run; if the refresh token itself expires, the review
+# fails loudly and the operator re-seeds the secret (step 2 below).
+#
+# Security posture: this pull_request workflow exposes the subscription
+# credential to same-repo PRs. Same-repo PRs require write access, which
+# GitHub's trust model already treats as trusted (forks are excluded and get
+# no secret). Accidental and content-injection leaks are mitigated: every
+# token is registered with ::add-mask:: before Codex runs, the review output is
+# scanned for credential material (assert-no-secret-leak.sh), and the token is
+# deleted before the post step.
+#
+# One-time operator setup (needs a browser login, cannot be automated):
+#   1. On a trusted machine run `codex login` (Sign in with ChatGPT). Confirm
+#      ~/.codex/auth.json has "auth_mode": "chatgpt" and "has_refresh_token": true.
+#   2. Store the FULL contents of ~/.codex/auth.json as the repo secret
+#      CODEX_AUTH_JSON (re-run whenever the review fails on expired auth):
+#        gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json
+# See https://learn.chatgpt.com/docs/auth/ci-cd-auth
+#
+# The reviewer prompt, output schema, and the post/mask/leak-guard scripts are
+# the same files this plugin ships to consumers (skills/onboard-repo/templates/),
+# so there is one source of truth for both deployments.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  RULES_DIR: rules
+  REVIEW_DIR: skills/onboard-repo/templates
+
+jobs:
+  review:
+    # Fork PRs cannot read secrets, so the review only runs for same-repo PRs.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # renovate: datasource=npm depName=@openai/codex
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@0.153.4
+
+      - name: Write auth.json from the secret (runtime-only, never persisted)
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_AUTH_JSON:-}" ]; then
+            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json' (see this workflow's header)" >&2
+            exit 1
+          fi
+          export CODEX_HOME="$HOME/.codex"
+          mkdir -p "$CODEX_HOME"; chmod 700 "$CODEX_HOME"
+          printf '%s' "$CODEX_AUTH_JSON" > "$CODEX_HOME/auth.json"
+          chmod 600 "$CODEX_HOME/auth.json"
+
+      # Register each token with ::add-mask:: BEFORE any PR-controlled agent
+      # code runs, so a prompt-injected attempt to print the credential is
+      # redacted as *** in the (public) CI logs (rules/no-secrets.md Logging).
+      - name: Redact the credential from CI logs
+        run: bash "$REVIEW_DIR/mask-secrets.sh" "$HOME/.codex/auth.json"
+
+      - name: Run Codex policy review
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          { printf 'Environment: RULES_DIR=%s BASE_REF=%s\n\n' "$RULES_DIR" "$BASE_REF"; cat "$REVIEW_DIR/prompt.md"; } \
+            | codex exec \
+                --json \
+                --skip-git-repo-check \
+                --dangerously-bypass-approvals-and-sandbox \
+                --output-schema "$REVIEW_DIR/schema.json" \
+                --output-last-message /tmp/codex-final.json \
+                -
+
+      # Defense against prompt-injection exfil: refuse to post if any token
+      # string from auth.json appears in the review output, then delete the
+      # credential before the (also PR-controlled) post step runs.
+      - name: Guard against credential leakage, then drop the token
+        run: |
+          set -euo pipefail
+          bash "$REVIEW_DIR/assert-no-secret-leak.sh" "$HOME/.codex/auth.json" /tmp/codex-final.json
+          rm -f "$HOME/.codex/auth.json"
+
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash "$REVIEW_DIR/post-review.sh" \
+            "${{ github.repository_owner }}" \
+            "${{ github.event.repository.name }}" \
+            "${{ github.event.pull_request.number }}" \
+            /tmp/codex-final.json

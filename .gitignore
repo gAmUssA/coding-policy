@@ -12,3 +12,7 @@ tessl.json
 *.bak
 *.tmp
 __pycache__/
+
+# Re-include directories the operator's global gitignore excludes; both are shipped repo content here.
+!.github/
+!.claude/
