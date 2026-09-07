@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "One short paragraph. MUST begin with the load indicator 'Policy loaded: N rule files from rules/.' where N is the count of rules/*.md files read."
+    },
+    "findings": {
+      "type": "array",
+      "description": "One entry per concrete rule violation on a changed line. Empty when nothing violates a rule.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "description": "Repo-relative path of the changed file."},
+          "line": {"type": "integer", "description": "1-indexed line in the file the finding anchors to."},
+          "rule": {"type": "string", "description": "The rules/*.md file whose clause is violated, e.g. 'ci-safety'."},
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "advisory"],
+            "description": "blocking if fixing the finding changes behavior or closes a contract gap (correctness, security, carve-out preconditions, no-secrets, ci-safety gate-evasion, surface-sync that breaks publish, a directive whose violation changes agent behavior, a style split that alters meaning); advisory if the fix changes only presentation (prose/style placement, CHANGELOG wording, naming taste, synonym preference). See rules/review-severity.md."
+          },
+          "message": {"type": "string", "description": "What is wrong, the clause violated, and the fix."}
+        },
+        "required": ["path", "line", "rule", "severity", "message"]
+      }
+    }
+  },
+  "required": ["summary", "findings"]
+}

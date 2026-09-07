@@ -1,0 +1,100 @@
+{
+  "name": "gAmUssA/coding-policy",
+  "version": "0.1.0",
+  "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
+  "private": false,
+  "repository": "https://github.com/gAmUssA/coding-policy",
+  "license": "MIT",
+  "author": {
+    "name": "Viktor Gamov",
+    "url": "https://github.com/gAmUssA"
+  },
+  "skills": [
+    "skills/release",
+    "skills/onboard-repo"
+  ],
+  "rules": [
+    "rules/commit-conventions.md",
+    "rules/sync-before-work.md",
+    "rules/testing-standards.md",
+    "rules/error-handling.md",
+    "rules/dependency-management.md",
+    "rules/file-hygiene.md",
+    "rules/ci-safety.md",
+    "rules/no-secrets.md",
+    "rules/code-formatting.md",
+    "rules/language-diagnostics.md",
+    "rules/boy-scout.md",
+    "rules/ship-on-green.md",
+    "rules/response-clarity.md",
+    "rules/agent-worktree-isolation.md",
+    "rules/review-severity.md",
+    "rules/reviewer-feedback-reading.md",
+    "rules/external-repo-contributions.md",
+    "rules/hook-action-reporting.md",
+    "rules/verify-before-done.md",
+    "rules/environment-changes.md",
+    "rules/demo-readiness.md",
+    "rules/script-delegation.md",
+    "rules/skill-authoring.md",
+    "rules/context-artifacts.md"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${TESSL_PLUGIN_DIR}/hooks/check-policy-freshness.sh"
+            ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${TESSL_PLUGIN_DIR}/hooks/check-git-sync.sh"
+            ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${TESSL_PLUGIN_DIR}/hooks/check-tessl-latest.sh"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "nativeHooks": {
+    "claude-code": {
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash",
+              "args": [
+                "${TESSL_PLUGIN_DIR}/hooks/stop-handoff-hygiene.sh"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "codex": {
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${TESSL_PLUGIN_DIR}/hooks/stop-handoff-hygiene.sh\""
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

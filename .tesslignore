@@ -1,0 +1,6 @@
+.github/
+docs/
+scripts/
+pyrightconfig.json
+*.bak
+*.tmp

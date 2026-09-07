@@ -1,0 +1,6 @@
+{
+  "include": ["scripts", "skills", "hooks"],
+  "exclude": ["**/node_modules", "**/__pycache__"],
+  "typeCheckingMode": "strict",
+  "reportMissingModuleSource": "error"
+}

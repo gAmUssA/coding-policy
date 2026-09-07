@@ -1,0 +1,14 @@
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.codex/
+.gemini/
+.tessl/
+tessl.json
+*.bak
+*.tmp
+__pycache__/
