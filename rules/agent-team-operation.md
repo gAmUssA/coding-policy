@@ -262,8 +262,9 @@ description: Running a multi-agent team — headroom-driven role rotation, one w
 - The gate reads the post-push reports for the current branch tip
 - A pre-development report never satisfies the gate
 - The developer pushes the branch and stops
-- A shared GitHub account posts internal reviews as COMMENT reviews
-- The lead enforces the blocking findings a COMMENT review carries
+- An internal review is delivered in the report file; no PR exists to post it on before the release round
+- When a PR already exists, a shared GitHub account posts the review there as a COMMENT review
+- The lead enforces the blocking findings a report or a COMMENT review carries
 - Severity classification follows `rules/review-severity.md`
 - The developer then runs the release skill for the PR, the merge, and the cleanup
 

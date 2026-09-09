@@ -114,8 +114,7 @@ file for the renderer:
 }
 ```
 
-`note` renders beside the agent's name, so a busy worker reads as
-`grok (busy: refactor)`. Every field is optional. Take the content from the
+`note` renders beside the agent's name in parentheses. Every field is optional. Take the content from the
 round log or the assignment ledger — never from a pane read, and never from a
 guess about what a worker is probably doing.
 Use the lead's schema-1 task ledger under

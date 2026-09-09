@@ -35,9 +35,13 @@ List deferred advisories with their existing follow-up references.
 
 ## Release
 
-Run `Skill(skill: "release")` from Step 1 through Step 7, in order. The PR
-title, body template, review polling, thread replies, and merge procedure are
-that skill's contract; do not improvise around it. The PR body carries no AI attribution or tool disclosure
+Run `Skill(skill: "release")` from Step 1 through Step 7, in order, with one
+adaptation the team contract requires: in Step 7 run the merge and the
+post-merge publication verification from inside `{{WORKTREE}}`, and skip the
+local cleanup (the base-checkout fast-forward, `git worktree remove`,
+`git branch -d`) — the lead does that after reading your report (COMMON
+Checkouts). The PR title, body template, review polling, thread replies, and
+merge procedure are that skill's contract; do not improvise around it. The PR body carries no AI attribution or tool disclosure
 (`rules/commit-conventions.md` No AI Attribution). Never paste a report file into
 the PR.
 

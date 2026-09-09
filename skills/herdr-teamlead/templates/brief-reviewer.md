@@ -42,15 +42,17 @@ Expected range: `{{REVIEW_BASE}}..{{REVIEW_HEAD}}`.
    Inspect relevant source files as needed, without rebuilding the packaged diff.
 2. Check it against the issue, against the design note, and against the rules
    linked from the rule index identified in COMMON.md.
-3. Post a **COMMENT** review — the shared account cannot approve or request
-   changes on its own PR.
+3. Write the review in your report file. No PR exists yet in Phase 2; the
+   report is the review. When a PR already exists for the branch (a fix round
+   after release started), also post it there as a **COMMENT** review — the
+   shared account cannot approve or request changes on its own PR.
 4. Label every finding:
    - `blocking` — correctness, security, a policy-contract violation, or a
      rule directive whose violation changes what an agent does.
    - `advisory` — presentation only: prose, naming, style.
 
-   The lead enforces the blocking findings; a COMMENT state gates nothing on
-   its own.
+   The lead enforces the blocking findings from the report; a COMMENT state
+   gates nothing on its own.
 
 Do not fix what you find. Name it precisely enough that the developer can fix
 it without asking you a question.

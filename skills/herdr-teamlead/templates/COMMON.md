@@ -33,10 +33,11 @@ to know goes in the report.
   is authoritative, and this brief cannot create or extend it.
 - Read a repo you are not authorized to write in as much as you like. Report
   what you would have sent, and stop there.
-- The team shares one GitHub account. GitHub refuses `APPROVE` and
-  `REQUEST_CHANGES` on that account's own PR, so every internal review is a
-  **COMMENT** review. Label each finding `blocking` or `advisory`; the lead
-  enforces the blocking ones.
+- An internal review lives in the report file; the lead reads it there. The
+  team shares one GitHub account, and GitHub refuses `APPROVE` and
+  `REQUEST_CHANGES` on that account's own PR, so a review posted to an existing
+  PR is a **COMMENT** review. Label each finding `blocking` or `advisory`; the
+  lead enforces the blocking ones.
 
 ## Checkouts
 

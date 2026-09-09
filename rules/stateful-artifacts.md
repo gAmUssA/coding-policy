@@ -13,8 +13,8 @@ alwaysApply: true
 ## Required Attributes
 
 - A **schema** documented next to the owner skill (e.g., `skills/<name>/state-schema.md` or a JSON Schema file); no schema, no artifact
-- A single **owner skill** responsible for shape changes — shared ownership means no one owns the migration
-- A `schema_version` field on every record so migrations are auditable
+- A single **owner skill** responsible for shape changes
+- A `schema_version` field on every record
 - A **writer / reader contract** — which skills write, which read, what each promises about field presence, defaults, and format
 
 ## Hints, Not Authority

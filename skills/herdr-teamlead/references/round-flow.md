@@ -184,9 +184,11 @@ both: re-run Phase 2 against the new tip.
 
 ## Shared-Account Reviews
 
-The workers share one GitHub account, and GitHub refuses `APPROVE` and
-`REQUEST_CHANGES` on that account's own PR. Internal reviews are posted as
-COMMENT reviews with each finding labelled blocking or advisory per
+A Phase 2 review is delivered in the reviewer's report file; there is no PR
+yet to post it on. When a PR already exists (a fix round after release
+started), the workers share one GitHub account, and GitHub refuses `APPROVE`
+and `REQUEST_CHANGES` on that account's own PR, so the review is also posted
+as a COMMENT review with each finding labelled blocking or advisory per
 `rules/review-severity.md`. The COMMENT state carries no gate, so the LEAD is
 the gate: a blocking finding in an internal review sends the round back,
 whatever GitHub's merge box says.
