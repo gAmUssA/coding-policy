@@ -29,6 +29,15 @@ description: Deterministic operations → script, reasoning → LLM, the regex t
 - Scripts are executable files that live in the plugin (e.g., `skills/release/watch-pr-reviews.sh`) — not code blocks in SKILL.md for the agent to copy-paste
 - The skill references the script and runs it; the script does the work
 - Code blocks in SKILL.md are for showing the agent what command to run, not for embedding logic the agent should reproduce character-by-character
+- Narrow exception for the Herdr skills' installed-plugin bootstrap.
+- Applies only to command blocks in `skills/herdr-teamlead/SKILL.md`, `skills/herdr-standup/SKILL.md`, and `skills/herdr-teamlead/references/round-setup.md`
+- Preconditions (all required):
+  1. The block initializes `CP` to the literal `.tessl/plugins/gamussa/coding-policy`; its only inline branch tests that directory and falls back to the same path under `$HOME`
+  2. The block invokes only co-shipped scripts through quoted `$CP` paths with an explicit interpreter; each independent call repeats the bootstrap
+  3. The bootstrap performs no writes, network access, permission changes, sourcing, or evaluation of repository-controlled code
+  4. All work after root selection stays in the invoked script; no inline business logic, loops, or additional selection heuristics
+  5. `skills/herdr-teamlead/tests/test_skill_invocations.sh` checks every covered block
+- Every other command block follows Scripts Are Real Files unchanged
 
 ## Script Requirements
 
@@ -37,6 +46,12 @@ description: Deterministic operations → script, reasoning → LLM, the regex t
 - **Self-error-handling**: exit non-zero on failure, write an actionable diagnostic to stderr (`rules/error-handling.md` Shell Error Handling)
 - **Single-purpose**: one script does one thing — compose scripts, don't build monoliths
 - **Tested**: a `tests/test_<name>.sh` harness beside it, discovered by `scripts/run-tests.sh`
+- Narrow exception for `skills/herdr-teamlead/review-package.sh` artifact-path stdout.
+- Preconditions (all required):
+  1. Success emits only the absolute path of the completed review package and a newline
+  2. Failure emits no path, exits non-zero, and writes an actionable diagnostic to stderr
+  3. The package contains the resolved commit range, commit list, diff stat, and patch
+- Every other skill script retains the JSON-producing requirement
 
 ## Black Box
 

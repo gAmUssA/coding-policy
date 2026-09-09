@@ -4,7 +4,7 @@
 
 Coding policy plugin for Viktor Gamov's AI agents. Language-agnostic code quality rules, autonomous shipping discipline, stack defaults for JVM, Swift, TypeScript, and Python, plus the hooks, reviewer, and release workflow that enforce them.
 
-A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-policy): the code rules, the ship-on-green stance, the session hooks, and the Codex policy reviewer are ported; the multi-agent team layer and the fleet publishing pipeline are not. See [CHANGELOG.md](CHANGELOG.md) for what was kept, dropped, and added.
+A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-policy): the code rules, the ship-on-green stance, the session hooks, the Codex policy reviewer, and the [Herdr](https://herdr.dev) multi-agent team layer are ported; the fleet reviewer App and the auto-bump publishing pipeline are not. See [CHANGELOG.md](CHANGELOG.md) for what was kept, dropped, and added.
 
 ## Installation
 
@@ -36,6 +36,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 | Discipline | [environment-changes](rules/environment-changes.md) | State a machine-level install or a new dependency before making it |
 | Communication | [response-clarity](rules/response-clarity.md) | Action first, numbered steps, plain errors, one next step, no preamble |
 | Concurrency | [agent-worktree-isolation](rules/agent-worktree-isolation.md) | Git worktrees for concurrent agent work; cleanup; read-only exception |
+| Teamwork | [agent-team-operation](rules/agent-team-operation.md) | Herdr team rounds: headroom-driven role rotation, YOLO workers within classified assignments, one writer per worktree, report files as the worker channel, task ledger, judge seat, bounded fix loops, retrospectives, internal review before the PR opens |
 | Review | [review-severity](rules/review-severity.md) | Blocking gates the merge, advisory never does; Copilot is always advisory |
 | Review | [reviewer-feedback-reading](rules/reviewer-feedback-reading.md) | Read every reviewer's body before declaring merge-ready, `COMMENTED` included |
 | Scope | [external-repo-contributions](rules/external-repo-contributions.md) | Default deny on issues, PRs, comments, and reactions in repos the operator does not own |
@@ -44,6 +45,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 | Authoring | [script-delegation](rules/script-delegation.md) | Deterministic work goes in scripts, reasoning stays in the LLM; skills cite a script's contract |
 | Authoring | [skill-authoring](rules/skill-authoring.md) | `SKILL.md` structure, flat step numbering, typed `Skill()` calls, manifest reference |
 | Authoring | [context-artifacts](rules/context-artifacts.md) | Plugin structure, rule format and frontmatter, writing style, surface sync, manual versioning |
+| Authoring | [stateful-artifacts](rules/stateful-artifacts.md) | Cross-invocation state: schema, owner skill, `schema_version`, hints-not-authority, migration |
 
 ### Skills
 
@@ -51,6 +53,8 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 |-------|-------------|
 | [release](skills/release/SKILL.md) | Ship a branch: readiness checks, PR, Codex policy review plus advisory Copilot review, watch to a verdict, address feedback, merge on green, cleanup, and publish confirmation for plugin repos. |
 | [onboard-repo](skills/onboard-repo/SKILL.md) | Bootstrap a consumer repo: install the plugin at `latest`, gitignore `.tessl/`, scaffold the per-repo Codex reviewer workflow and Copilot instructions, set `CODEX_AUTH_JSON`, open the PR. |
+| [herdr-teamlead](skills/herdr-teamlead/SKILL.md) | Lead coding rounds in [Herdr](https://herdr.dev): measure headroom, assign developer / tester / reviewer roles, compose briefs, provision worktrees, dispatch workers in verified YOLO mode, observe the fleet, and gate release on their reports. A persistent task ledger tracks acceptance independently of Herdr status; retrospectives, lead handoffs, and an attention queue survive worker transitions and lead resets. A pinned judge rules on disputes and exhausted fix loops. |
+| [herdr-standup](skills/herdr-standup/SKILL.md) | Daily standup with the named Herdr agents: ask each idle worker for DONE / PLAN / BLOCKED / REPORT, never interrupt a working one, show unresolved user attention first, then render a fixed-width table plus a Markdown record. |
 
 ### Hooks
 
@@ -59,7 +63,9 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 | [check-policy-freshness](hooks/check-policy-freshness.sh) | SessionStart | Warns (throttled once a day) when installed Tessl plugins are behind the registry. Informative only. |
 | [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo) and warns when the local default branch is behind or diverged. Informative only. |
 | [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Warns when `tessl.json` pins a `gamussa/*` dependency instead of `latest`. Informative only. |
-| [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, orphaned worktrees, or shellcheck/pyright findings in the changed set. A dirty tree is reported, not blocked. |
+| [herdr-team-status](hooks/herdr-team-status.sh) | SessionStart | Names the live Herdr team: each named worker, its kind, and its lifecycle state. Silent outside Herdr. Informative only. |
+| [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, orphaned worktrees, or shellcheck/pyright findings in the changed set (venv-aware). A dirty tree is reported, not blocked. |
+| [herdr-supervision-stop](hooks/herdr-supervision-stop.sh) | Stop (Claude Code + Codex) | Gates the exact bound Herdr lead while assignments or unhandled events remain; a saved pause or handoff covering every active assignment releases it. Reads local state only. |
 
 ## Philosophy
 
@@ -74,7 +80,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 
 ```
 bash scripts/run-diagnostics.sh   # shellcheck + pyright at zero findings
-bash scripts/run-tests.sh         # every **/tests/test_*.sh suite
+bash scripts/run-tests.sh         # every **/tests/test_*.sh and test_*.py suite
 tessl plugin lint                 # manifest and structure
 ```
 

@@ -64,6 +64,43 @@ emit_notice() { # <notice-text>
   return 0
 }
 
+# Is this session a Herdr WORKER rather than the lead?
+#
+# The team rules reserve the shared checkout and every worktree operation for
+# the lead: a worker "runs no git command against the shared checkout,
+# mutating or otherwise" and "never creates, moves, or removes a worktree"
+# (rules/agent-team-operation.md Writers and Checkouts). A hook that tells a
+# worker to fast-forward `main` or remove a worktree is instructing it to
+# break that rule -- which is exactly what happened in a live round, where the
+# worker reported the contradiction and then obeyed the hook.
+#
+# Herdr exports no lead/worker flag, so the role is derived from where the
+# session sits: the lead works in the shared checkout, every worker works in a
+# linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
+# resolve differently; in the main checkout they are the same.
+#
+# 0 = a Herdr worker (suppress lead-only advice), 1 = the lead, a standalone
+# agent, or anything this cannot determine. Fail open: a hook that goes silent
+# because a git command failed would be worse than one that speaks up.
+is_herdr_worker() {
+  [[ -n "${HERDR_ENV:-}" ]] || return 1
+
+  local git_dir common_dir rc=0
+  git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    warn "git rev-parse --absolute-git-dir failed (exit ${rc}) — cannot tell a Herdr worker from the lead; treating this as the lead"
+    return 1
+  fi
+  rc=0
+  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    warn "git rev-parse --git-common-dir failed (exit ${rc}) — cannot tell a Herdr worker from the lead; treating this as the lead"
+    return 1
+  fi
+
+  [[ "$git_dir" != "$common_dir" ]]
+}
+
 main() {
   local THROTTLE_HOURS="${SYNC_THROTTLE_HOURS:-1}"
   local FETCH_TIMEOUT="${SYNC_FETCH_TIMEOUT:-10}"
@@ -164,7 +201,7 @@ main() {
   stamp="${STATE_DIR}/sync-${repo_key}"
 
   # Throttle stamp schema (see hooks/state-schema.md): one line "<schema_version>
-  # <checked_at-epoch>". Per hooks/state-schema.md Migration:
+  # <checked_at-epoch>". Per rules/stateful-artifacts.md Migration Policy:
   #   - schema_version 1 within the window => throttle (skip the fetch).
   #   - a future version (sv > 1) => this hook is lagging: no usable prior state
   #     (fetch), and DO NOT downgrade the record — preserve it (preserve_future).
@@ -251,6 +288,13 @@ main() {
     else
       emit_notice "Session-start status — git: local \`${db}\` is ${ahead} commit(s) ahead of \`origin/${db}\` (unpushed), none behind"
     fi
+    return 0
+  fi
+
+  # A worker never touches the shared checkout, so telling it to sync one is
+  # telling it to break the rule. Report the drift, name whose job it is.
+  if is_herdr_worker; then
+    emit_notice "Session-start status — git: local \`${db}\` is ${behind} behind / ${ahead} ahead of \`origin/${db}\`. This is a Herdr worker session: the shared checkout is the lead's (rules/agent-team-operation.md Writers and Checkouts). Do not sync it — work in this worktree and report the drift."
     return 0
   fi
 

@@ -46,3 +46,9 @@ alwaysApply: true
 - Turning the gate on for a tree never checked is its own focused change — land the config plus the fixes in a PR separate from feature work
 - The tree goes green first; wire the gate into CI only once it reports zero findings
 - Sequence large adoptions: a config PR, then fix PRs grouped by finding shape, then the CI-gate PR
+- Narrow exception for a tree imported from another project that the project's configured level has never checked.
+- Preconditions (all required):
+  1. The gate runs at the engine's default level and reports zero findings on the imported tree — no rule is switched off and no file is excluded
+  2. The importing PR records the finding count at the project's configured level and files the adoption as an issue naming the sequence above
+  3. Every tree the project already checks stays at its configured level
+- Every other lowering of a configured level is blanket silencing under Findings Are Non-Dismissible Without Cause

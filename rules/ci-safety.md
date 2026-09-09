@@ -44,12 +44,20 @@ alwaysApply: true
 - For a reviewer workflow, the run `conclusion` reports only that the workflow finished, never that the review happened — a fail-open gate can report `success` having reviewed nothing
 - Gate a reviewer workflow on its posted verdict, not the check's color; never promote it to a required branch-protection gate while a fail-open path exists
 - A failed PR check that no event re-triggers stays red until an explicit `gh run rerun --failed` once its cause is fixed
-- Release contract, after merge (all required, in this order):
+- For plugin/package releases, the duty extends past merge — confirm the resolved run's conclusion and the publication's own published-artifact evidence; no single signal is authoritative
+- The duty is keyed on the publication, never on the package — a package that publishes through more than one channel owes it once per publication, each confirmed against the channel that carried it
+- Channel-independent, whatever publishes the package:
+  1. Resolve the run for that publication, bound to its workflow, its exact commit, the `push` event and the ref that fired it (`skills/release/resolve-publish-run.sh`), never "latest on main"
+  2. Watch that resolved run to a terminal state
+  3. Require its `conclusion` to be `success`
+  4. Verify the version actually published on the channel that carried it
+- Two runs matching all four binding facts are an ambiguity to resolve, never a winner to pick — see the `skills/release/resolve-publish-run.sh` header
+- Tessl publication (the registry form), all required, in this order:
   1. Before merge: capture the registry's latest version as baseline (`skills/release/capture-registry-baseline.sh`)
-  2. Resolve the publish run by merge-commit `headSha` + `push` event (`skills/release/resolve-publish-run.sh`), never "latest on main"
-  3. Watch the resolved run to a terminal state
-  4. Confirm the run's `conclusion` is `success` AND the registry advanced past the baseline (`skills/release/verify-publish-landed.sh`)
-  5. Confirm the published version's moderation state cleared (`skills/release/verify-moderation-cleared.sh`) — a still-pending or blocked state at budget exhaustion is an unconfirmed release, surfaced as a failure
+  2. Confirm the run's `conclusion` is `success` AND the registry advanced past the baseline (`skills/release/verify-publish-landed.sh`)
+  3. Confirm the published version's moderation state cleared (`skills/release/verify-moderation-cleared.sh`) — a still-pending or blocked state at budget exhaustion is an unconfirmed release, surfaced as a failure
+- GitHub tag/asset publication: a published, non-draft release exists at the exact tag the run published and every asset is retrievable (`skills/release/verify-github-release.sh`); which conjuncts it reads is the script header's contract
+- A Tessl publish confirmed on the registry says nothing about another channel's release, and a green GitHub release says nothing about a pending Tessl moderation — each needs its own evidence
 - Never derive an expected version from the merge SHA's manifest and compare against it; never invent a moderation state
 
 ## Checks Not Starting

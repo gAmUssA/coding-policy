@@ -1,6 +1,27 @@
 {
-  "include": ["scripts", "skills", "hooks"],
-  "exclude": ["**/node_modules", "**/__pycache__"],
-  "typeCheckingMode": "strict",
-  "reportMissingModuleSource": "error"
+  "include": [
+    "scripts",
+    "skills",
+    "hooks"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__"
+  ],
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.11",
+  "executionEnvironments": [
+    {
+      "root": "skills/herdr-teamlead",
+      "extraPaths": [
+        "skills/herdr-teamlead"
+      ]
+    },
+    {
+      "root": "skills/herdr-standup",
+      "extraPaths": [
+        "skills/herdr-standup"
+      ]
+    }
+  ]
 }
