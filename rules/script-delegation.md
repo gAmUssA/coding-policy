@@ -46,6 +46,12 @@ description: Deterministic operations → script, reasoning → LLM, the regex t
 - **Self-error-handling**: exit non-zero on failure, write an actionable diagnostic to stderr (`rules/error-handling.md` Shell Error Handling)
 - **Single-purpose**: one script does one thing — compose scripts, don't build monoliths
 - **Tested**: a `tests/test_<name>.sh` harness beside it, discovered by `scripts/run-tests.sh`
+- Narrow exception for `skills/herdr-teamlead/review-package.sh` artifact-path stdout.
+- Preconditions (all required):
+  1. Success emits only the absolute path of the completed review package and a newline
+  2. Failure emits no path, exits non-zero, and writes an actionable diagnostic to stderr
+  3. The package contains the resolved commit range, commit list, diff stat, and patch
+- Every other skill script retains the JSON-producing requirement
 
 ## Black Box
 
