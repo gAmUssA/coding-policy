@@ -14,9 +14,9 @@ description: >
 Process steps in order. Do not skip ahead.
 
 Before any finish with enrolled work, reconcile the whole fleet under
-`references/supervision.md`. Continue observation or persist an authorized pause
+`skills/herdr-teamlead/references/supervision.md`. Continue observation or persist an authorized pause
 or handoff covering every active assignment. Keep user attention visible under
-`references/attention.md`.
+`skills/herdr-teamlead/references/attention.md`.
 
 Follow `rules/agent-team-operation.md` for round constraints.
 
@@ -41,8 +41,8 @@ skills/herdr-teamlead/state-schema.md
 
 ## Step 1 — Determine the Mode
 
-For catch-up or saved attention, follow `references/attention.md`. For lesson
-curation, saved lead context, or a lead handoff, follow `references/working-memory.md`.
+For catch-up or saved attention, follow `skills/herdr-teamlead/references/attention.md`. For lesson
+curation, saved lead context, or a lead handoff, follow `skills/herdr-teamlead/references/working-memory.md`.
 Use the recorded state override or default; these commands need no live Herdr.
 Finish here after the requested operation. They grant no new task authority.
 
@@ -99,7 +99,7 @@ Emits the caller and live workers with kind, pane, and state.
 
 If roles lack workers, name one or record combined roles in a single brief.
 Never duplicate dispatch targets.
-Start workers in YOLO mode under `references/model-tiers.md`; preserve it on
+Start workers in YOLO mode under `skills/herdr-teamlead/references/model-tiers.md`; preserve it on
 relaunch. Verify live permission flags before dispatch, including existing workers.
 
 ## Step 3 — Verify Authority for the Repo
@@ -110,14 +110,14 @@ bash "$CP/skills/herdr-teamlead/verify-authority.sh" <owner/repo>
 ```
 
 Record the emitted namespace ownership evidence using Step 3 of
-`references/round-setup.md`. For a non-owned repo, reuse explicit per-action
+`skills/herdr-teamlead/references/round-setup.md`. For a non-owned repo, reuse explicit per-action
 operator permission; absent permission, remain read-only or finish here.
 On non-zero, report the diagnostic and finish here.
 
 Record the task's existing source and words in `TASK_AUTHORIZATION`,
 and permitted actions and repo in `AUTHORIZED_ACTIONS`. Read-only uses `none`.
-Ownership never expands task scope. Examples: `references/round-setup.md`.
-Create or resume the stable task ledger under `references/task-ledger.md`.
+Ownership never expands task scope. Examples: `skills/herdr-teamlead/references/round-setup.md`.
+Create or resume the stable task ledger under `skills/herdr-teamlead/references/task-ledger.md`.
 Record its absolute path with the task authorization before the first dispatch.
 Apply the round-setup reference's accepted-behavior, resume, and supervision
 binding requirements before continuing.
@@ -125,7 +125,7 @@ Proceed immediately to Step 4.
 
 ## Step 4 — Measure Headroom
 
-Run `references/retrospectives.md` on resume, before planning, or for an explicit
+Run `skills/herdr-teamlead/references/retrospectives.md` on resume, before planning, or for an explicit
 retrospective request. For an explicit request, complete a new retrospective and
 finish here; otherwise continue below.
 
@@ -158,7 +158,7 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
 ```
 
 Emits the role plan without worker contact. On exit 1, resolve the diagnostic
-before continuing. Apply the Step 5 constraints in `references/round-setup.md`:
+before continuing. Apply the Step 5 constraints in `skills/herdr-teamlead/references/round-setup.md`:
 exclude the author from verification, reserve the developer through early fixes,
 preserve task identity and fix count, and reuse recorded correction bounds.
 Operator-controlled tier and qualification contracts:
@@ -182,7 +182,7 @@ bash "$CP/skills/herdr-teamlead/review-package.sh" \
 ```
 
 Apply the Step 6 base, range, and rebuild requirements in
-`references/round-setup.md`. Success prints the absolute review-package path;
+`skills/herdr-teamlead/references/round-setup.md`. Success prints the absolute review-package path;
 set it as `REVIEW_PACKAGE`. On non-zero, fix the diagnostic and retry before
 composing verification briefs. Other roles need no package.
 Proceed immediately to Step 7.
@@ -270,7 +270,7 @@ Preserve task identity and cumulative fix count. Retained fixes dispatch
 developer alone; other roles clear separately. Reconcile unknown outcomes
 before retrying. Reuse existing correction authorization within its bounds.
 
-Follow the Dispatch Results contract in `references/round-flow.md` for busy,
+Follow the Dispatch Results contract in `skills/herdr-teamlead/references/round-flow.md` for busy,
 uncertain, failed, and dry-run outcomes. Preserve all already enrolled work.
 
 Read the context, recovery, and executable refusal contracts:
@@ -328,8 +328,8 @@ Classify each finding blocking or advisory per `rules/review-severity.md`.
 Record assignment acceptance or outstanding work in the task ledger against
 the inspected report and artifact evidence. Record the task's gate decision
 separately; a worker finishing its brief never completes the whole task.
-Assess correction scope and bug evidence under `references/assignment-reasoning.md`.
-Persist user-facing obligations under `references/attention.md` before presenting
+Assess correction scope and bug evidence under `skills/herdr-teamlead/references/assignment-reasoning.md`.
+Persist user-facing obligations under `skills/herdr-teamlead/references/attention.md` before presenting
 them; record an actual answer or resolution separately from showing the item.
 
 For an investigation-only task, assess every assigned report against the requested
@@ -427,7 +427,7 @@ under observation.
 
 ## Step 19 — Act on the Ruling
 
-Apply the Ruling Outcomes contract in `references/round-flow.md`. Investigation
+Apply the Ruling Outcomes contract in `skills/herdr-teamlead/references/round-flow.md`. Investigation
 rulings return to Step 12's knowledge gate. Implementation rulings route
 unchanged-branch rulings to verified release or renewed verification,
 branch-changing rulings to the counted correction path, and a blocked ruling

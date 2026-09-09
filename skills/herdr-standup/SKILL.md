@@ -144,8 +144,7 @@ report file did not carry the four-line shape, naming the file — ask that
 worker again, or move it to `--extra`. Exit 1 is a missing or unwritable input,
 and the message says what to fix.
 
-`--now` is required and never defaults to the clock, so the same inputs render
-the same bytes. The column widths and the wrapping are the script's contract;
+`--now` is required and never defaults to the clock. The column widths and the wrapping are the script's contract;
 see the constants at the top of
 `skills/herdr-standup/standup-render.py`.
 
