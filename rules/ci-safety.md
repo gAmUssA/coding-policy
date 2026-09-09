@@ -56,7 +56,7 @@ alwaysApply: true
   1. Before merge: capture the registry's latest version as baseline (`skills/release/capture-registry-baseline.sh`)
   2. Confirm the run's `conclusion` is `success` AND the registry advanced past the baseline (`skills/release/verify-publish-landed.sh`)
   3. Confirm the published version's moderation state cleared (`skills/release/verify-moderation-cleared.sh`) — a still-pending or blocked state at budget exhaustion is an unconfirmed release, surfaced as a failure
-- GitHub tag/asset publication: the immutable release exists at the exact tag the run published, is not a draft, and every asset is retrievable (`skills/release/verify-github-release.sh`)
+- GitHub tag/asset publication: a published, non-draft release exists at the exact tag the run published and every asset is retrievable (`skills/release/verify-github-release.sh`); which conjuncts it reads is the script header's contract
 - A Tessl publish confirmed on the registry says nothing about another channel's release, and a green GitHub release says nothing about a pending Tessl moderation — each needs its own evidence
 - Never derive an expected version from the merge SHA's manifest and compare against it; never invent a moderation state
 

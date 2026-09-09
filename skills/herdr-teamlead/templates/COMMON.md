@@ -71,7 +71,8 @@ to know goes in the report.
   dependence, no self-generated random inputs.
 - One logical change per commit. Imperative subject, body says why.
 - PR title is `<type>(<scope>): <imperative summary>`. The PR body follows the
-  repo's template and carries the AI disclosure.
+  repo's template and carries no AI attribution or tool disclosure
+  (`rules/commit-conventions.md` No AI Attribution).
 
 ## Reporting
 

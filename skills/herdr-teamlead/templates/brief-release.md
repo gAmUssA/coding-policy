@@ -37,8 +37,8 @@ List deferred advisories with their existing follow-up references.
 
 Run `Skill(skill: "release")` from Step 1 through Step 7, in order. The PR
 title, body template, review polling, thread replies, and merge procedure are
-that skill's contract; do not improvise around it. The PR body's contribution
-declaration names the tools that did the work. Never paste a report file into
+that skill's contract; do not improvise around it. The PR body carries no AI attribution or tool disclosure
+(`rules/commit-conventions.md` No AI Attribution). Never paste a report file into
 the PR.
 
 You do not edit repository content in the release role. If any release step,
