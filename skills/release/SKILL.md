@@ -42,13 +42,20 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 
 Proceed immediately to Step 3.
 
-## Step 3 — Bump Version and CHANGELOG (plugin repos)
+## Step 3 — Bump Version and CHANGELOG (publishing repos)
 
-Applies to repos that publish a Tessl plugin (a `.tessl-plugin/plugin.json` exists). Otherwise proceed immediately to Step 4.
+Applies to repos that publish a package. Name the channels first, by reading the publish workflow and the manifest; a repo can publish on more than one:
+
+- **Tessl** — a `.tessl-plugin/plugin.json` manifest, or a publish path calling `tessl plugin publish`
+- **GitHub tag/asset** — a workflow triggered on a tag push (`on: push: tags:`) that creates a release carrying the package's assets
+- **Neither** — proceed immediately to Step 4
+
+Then bump:
 
 - Decide the bump per semver: patch for fixes and rule tightening, minor for a new rule/skill/hook, major for a removed or contract-breaking one
-- Set `version` in `.tessl-plugin/plugin.json` and add a `## <version> — <YYYY-MM-DD>` heading above this release's CHANGELOG entries (`rules/context-artifacts.md` Versioning and CHANGELOG)
-- `bash scripts/check-version-bump.sh` must exit 0 — CI runs the same gate on the PR; the publish workflow publishes the manifest version as-is, so a missed bump reds the publish after merge
+- Write the bump into every channel's manifest in this PR; nothing auto-bumps on either channel
+- Tessl: set `version` in `.tessl-plugin/plugin.json` and add a `## <version> — <YYYY-MM-DD>` heading above this release's CHANGELOG entries (`rules/context-artifacts.md` Versioning and CHANGELOG); `bash scripts/check-version-bump.sh` must exit 0 — CI runs the same gate on the PR, and the publish workflow publishes the manifest version as-is
+- GitHub tag/asset: the manifest version is the tag Step 7 cuts (`v<version>`)
 - Commit and push the bump on the same branch
 
 Proceed immediately to Step 4.
@@ -108,7 +115,7 @@ Only proceed when Step 5 returned `ready`, every non-empty review body has been 
 skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>
 ```
 
-**Plugin repos: capture the registry baseline before merging** so the post-merge check has something to compare against:
+**Tessl publication: capture the registry baseline before merging** so the post-merge check has something to compare against. A GitHub tag/asset publication skips this:
 
 ```bash
 PRE=$(skills/release/capture-registry-baseline.sh <workspace> <plugin> | jq -r .version)
@@ -136,16 +143,32 @@ git remote prune origin
 
 **After merge — ordinary repos:** confirm `main` advanced (`git log -1 --oneline` shows the merge) and watch CI on `main` to green (`gh run watch`). Report the merged PR URL. Finish here.
 
-**After merge — plugin repos:** bind to the merge commit, never "latest on main":
+**After merge — publishing repos:** the confirmation is owed once per publication, each read from the channel that carried it (`rules/ci-safety.md` Always Watch CI). A green GitHub release confirms nothing about a pending Tessl moderation, and a cleared Tessl publish confirms nothing about an absent GitHub asset. Bind every run to its exact commit, never "latest on main".
+
+**Tessl publication** — the publish workflow fires on the merge commit:
 
 ```bash
 merge_sha=$(gh pr view <N> --json mergeCommit --jq '.mergeCommit.oid')
-run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin" | jq -r '.database_id')
-gh run watch "$run_id"
-landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$run_id") \
+tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin" | jq -r '.database_id')
+gh run watch "$tessl_run_id"
+landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$tessl_run_id") \
   || { echo "Publish not confirmed — $(jq -r '.reason // "see stderr"' <<<"$landed")" >&2; exit 1; }
 CURRENT=$(jq -r '.current' <<<"$landed")
 skills/release/verify-moderation-cleared.sh <workspace> <plugin> "$CURRENT"
 ```
 
-`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE`; `verify-moderation-cleared.sh` exits 0 only when the published version is installable (exit 1 = blocked or still pending at budget — an unconfirmed release, never reported as success). Report the merged PR URL, the version published, and the registry + moderation confirmation. Finish here — the skill is complete.
+`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE`; `verify-moderation-cleared.sh` exits 0 only when the published version is installable (exit 1 = blocked or still pending at budget — an unconfirmed release, never reported as success).
+
+**GitHub tag/asset publication** — push the tag from the fast-forwarded `main`; its workflow fires on the tag, whose run carries the tag name as `headBranch`, so the resolver takes the tag as its fifth argument:
+
+```bash
+git tag v<version> && git push origin v<version>
+tag_sha=$(git rev-list -n 1 "v<version>")
+tag_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$tag_sha" "<tag-publish-workflow>" "v<version>" | jq -r '.database_id')
+gh run watch "$tag_run_id"
+skills/release/verify-github-release.sh <owner> <repo> "v<version>" "$tag_run_id"
+```
+
+`verify-github-release.sh` exits 0 only when the run concluded `success` AND a published, non-draft release exists at that exact tag with every asset retrievable; exit 1 is a definitive no, exit 2 is indeterminate (run in flight, gh unreachable), and neither is a landing. Which conjuncts each helper reads is its header's contract, not restated here (`rules/script-delegation.md` Black Box). Omit `--exit-status` from every watch so the helper, not the watch, reports the failed conjunct.
+
+Report the merged PR URL, the version published, and each publication's own confirmation. Finish here — the skill is complete.

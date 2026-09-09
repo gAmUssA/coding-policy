@@ -65,6 +65,39 @@ mk_stub_bin() { # <dir> <sc_rc> <py_rc>
   chmod +x "$1/shellcheck" "$1/pyright" || die "chmod stubs failed"
 }
 
+mk_pyright_probe() { # <path>
+  cat > "$1" <<'PROBE' || die "could not write Pyright environment probe"
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$0" "$@" > "${PYRIGHT_PROBE_LOG:?}"
+if [[ -n "${PYRIGHT_REQUIRED_INTERPRETER:-}" ]]; then
+  if [[ "${1:-}" != --pythonpath || "${2:-}" != "$PYRIGHT_REQUIRED_INTERPRETER" ]]; then
+    echo 'reportMissingImports: interpreter does not expose the project dependency'
+    exit 1
+  fi
+  shift 2
+elif [[ "${1:-}" == --pythonpath ]]; then
+  echo 'unexpected override of default/config interpreter'
+  exit 1
+fi
+if [[ $# != 1 || "$1" != 'changed file.py' || ! -f "$1" ]]; then
+  echo 'changed Python file was not resolved from the repository root'
+  exit 1
+fi
+if [[ -n "${PYRIGHT_PROBE_FINDING:-}" ]]; then
+  printf '%s\n' "$PYRIGHT_PROBE_FINDING"
+  exit 1
+fi
+PROBE
+  chmod +x "$1" || die "could not enable Pyright environment probe"
+}
+
+mk_python_probe() { # <path>
+  mkdir -p "${1%/*}" || die "could not create environment directory"
+  printf '#!/bin/sh\nexit 0\n' > "$1" || die "could not write interpreter fixture"
+  chmod +x "$1" || die "could not enable interpreter fixture"
+}
+
 # run_hook <repo> <stop-json> [path] -> OUT, RC
 run_hook() {
   local repo="$1" json="$2" pathspec="${3:-$PATH}"
@@ -83,6 +116,7 @@ main() {
   [[ -f "$HOOK" && -r "$HOOK" ]] || die "hook not found/readable at $HOOK"
 
   TMP="$(mktemp -d -t stop-hygiene-test.XXXXXX)" || die "mktemp failed"
+  TMP="$(cd "$TMP" && pwd -P)" || die "could not resolve fixture root"
   trap cleanup EXIT
   export HOME="$TMP/home"; mkdir -p "$HOME" || die "could not create isolated HOME"
   export GIT_CONFIG_NOSYSTEM=1
@@ -122,6 +156,33 @@ main() {
   if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees" && reason_has "worktree remove" \
      && ! reason_has "Leftover local branches"; then
     pass; else fail "orphaned worktree: expected worktree block only, got RC=$RC OUT=$OUT"; fi
+
+  # 4b. The same orphaned worktree, seen from INSIDE a linked worktree with
+  # HERDR_ENV set: that is a worker session, and removing a worktree is the
+  # lead's job (rules/agent-team-operation.md). Blocking here would force the
+  # worker to either disobey the rule or fail to hand off.
+  OUT="$(cd "$TMP/r4-wt" && printf '%s' '{"stop_hook_active":false}' \
+    | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?
+  if [[ $RC -eq 0 && -z "$OUT" ]]; then
+    pass; else fail "worker session: expected silence, got RC=$RC OUT=$OUT"; fi
+
+  # 4b-ii. A worker's OWN changed files still gate: only branch/worktree
+  # cleanup is suppressed, never the diagnostics its handoff depends on.
+  # shellcheck disable=SC2016  # The literal `$x` IS the fixture: the hook's
+  # own shellcheck run has to find something to report.
+  printf 'if [ $x = 1 ]; then :; fi\n' > "$TMP/r4-wt/bad.sh" || die "r4-wt bad.sh failed"
+  OUT="$(cd "$TMP/r4-wt" && printf '%s' '{"stop_hook_active":false}' \
+    | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?
+  if [[ $RC -eq 0 ]] && reason_has "shellcheck findings" && ! reason_has "Orphaned worktrees"; then
+    pass; else fail "worker diagnostics: expected a diagnostics block without the worktree finding, got RC=$RC OUT=$OUT"; fi
+  rm -f "$TMP/r4-wt/bad.sh" || die "r4-wt cleanup failed"
+
+  # 4c. The lead's own session (main checkout) still blocks with HERDR_ENV set:
+  # the suppression keys on being in a linked worktree, not on Herdr alone.
+  OUT="$(cd "$TMP/r4" && printf '%s' '{"stop_hook_active":false}' \
+    | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?
+  if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees"; then
+    pass; else fail "lead session: expected the worktree block, got RC=$RC OUT=$OUT"; fi
 
   # 5. dirty tree only -> allow (report-only).
   mk_origin o5; clone_from "$BARE" "$TMP/r5"
@@ -178,6 +239,67 @@ main() {
   if [[ $RC -eq 0 ]] && reason_has "shellcheck is not installed" \
      && [[ "$(printf '%s' "$OUT" | jq -r '.decision')" == "block" ]]; then
     pass; else fail "engine unavailable: expected block with install guidance, got RC=$RC OUT=$OUT"; fi
+
+  # 11. Environment selection drives the public hook outcome. Each fixture
+  # has a dependency that the probe resolves only with its intended Python.
+  local shape repo interpreter engine active_env probe_log
+  for shape in active dotvenv venv windows default; do
+    mk_origin "py-$shape"
+    repo="$TMP/python $shape"; clone_from "$BARE" "$repo"
+    printf 'import project_dependency\n' > "$repo/changed file.py" || die "could not write Python fixture"
+    mkdir "$repo/nested" "$TMP/bin-$shape" || die "could not create probe directories"
+    mk_pyright_probe "$TMP/bin-$shape/pyright"
+    active_env=""; interpreter=""; engine="$TMP/bin-$shape/pyright"
+    case "$shape" in
+      active)
+        active_env="$TMP/active environment"
+        interpreter="$active_env/bin/python"
+        mk_python_probe "$repo/.venv/bin/python"
+        mk_python_probe "$repo/venv/bin/python"
+        ;;
+      dotvenv)
+        active_env="$TMP/missing environment"
+        interpreter="$repo/.venv/bin/python"
+        mk_python_probe "$repo/venv/bin/python"
+        ;;
+      venv) interpreter="$repo/venv/bin/python" ;;
+      windows) interpreter="$repo/.venv/Scripts/python.exe" ;;
+      default) ;;
+    esac
+    if [[ -n "$interpreter" ]]; then mk_python_probe "$interpreter"; fi
+    if [[ "$shape" == active || "$shape" == dotvenv || "$shape" == windows ]]; then
+      engine="${interpreter%/*}/pyright"
+      if [[ "$shape" == windows ]]; then engine+=.exe; fi
+      mk_pyright_probe "$engine"
+    fi
+    probe_log="$TMP/probe-$shape.log"
+    VIRTUAL_ENV="$active_env" PYRIGHT_REQUIRED_INTERPRETER="$interpreter" PYRIGHT_PROBE_LOG="$probe_log" \
+      run_hook "$repo/nested" '{"stop_hook_active":false}' "$TMP/bin-$shape:$PATH"
+    if [[ $RC -eq 0 && -z "$OUT" && -r "$probe_log" ]] && [[ "$(head -1 "$probe_log")" == "$engine" ]]; then
+      pass; else fail "$shape environment must resolve the dependency through the intended engine: RC=$RC OUT=$OUT"; fi
+
+    if [[ "$shape" == dotvenv ]]; then
+      # Local engine is sufficient even when PATH contains no Pyright.
+      VIRTUAL_ENV="" PYRIGHT_REQUIRED_INTERPRETER="$interpreter" PYRIGHT_PROBE_LOG="$probe_log" \
+        run_hook "$repo" '{"stop_hook_active":false}' "$engbin"
+      if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "local Pyright must work without a global installation: OUT=$OUT"; fi
+      local finding
+      for finding in reportArgumentType reportMissingImports; do
+        VIRTUAL_ENV="" PYRIGHT_REQUIRED_INTERPRETER="$interpreter" PYRIGHT_PROBE_LOG="$probe_log" PYRIGHT_PROBE_FINDING="$finding" \
+          run_hook "$repo" '{"stop_hook_active":false}' "$TMP/bin-$shape:$PATH"
+        if [[ $RC -eq 0 ]] && reason_has "$finding" && reason_has 'pyright findings'; then
+          pass; else fail "environment selection must preserve blocking $finding diagnostics: OUT=$OUT"; fi
+      done
+    fi
+  done
+
+  # No engine in either environment or PATH retains the explicit install gate.
+  mk_origin py-missing; repo="$TMP/python missing"; clone_from "$BARE" "$repo"
+  printf 'value = 1\n' > "$repo/changed file.py" || die "could not write missing-engine fixture"
+  mk_python_probe "$repo/.venv/bin/python"
+  VIRTUAL_ENV="" run_hook "$repo" '{"stop_hook_active":false}' "$engbin"
+  if [[ $RC -eq 0 ]] && reason_has 'pyright is not installed'; then
+    pass; else fail "missing Pyright must retain install guidance: OUT=$OUT"; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi

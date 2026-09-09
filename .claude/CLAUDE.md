@@ -16,6 +16,7 @@ This repo IS `gamussa/coding-policy`. The rule files below are the source-of-tru
 @../rules/ship-on-green.md
 @../rules/response-clarity.md
 @../rules/agent-worktree-isolation.md
+@../rules/agent-team-operation.md
 @../rules/review-severity.md
 @../rules/reviewer-feedback-reading.md
 @../rules/external-repo-contributions.md
@@ -26,3 +27,4 @@ This repo IS `gamussa/coding-policy`. The rule files below are the source-of-tru
 @../rules/script-delegation.md
 @../rules/skill-authoring.md
 @../rules/context-artifacts.md
+@../rules/stateful-artifacts.md

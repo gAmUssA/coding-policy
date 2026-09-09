@@ -4,6 +4,19 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.2.0 — 2026-09-09
+
+### Added
+
+- **The Herdr fleet, ported wholesale from upstream 0.3.205.** `skills/herdr-teamlead`, `skills/herdr-standup`, `rules/agent-team-operation.md`, `rules/stateful-artifacts.md`, and the `herdr-team-status` (SessionStart) and `herdr-supervision-stop` (Stop) hooks arrive as Baruch shipped them on 2026-09-09, re-namespaced to the `gamussa/coding-policy` mount path. This is the whole protocol he built over four days and sixteen releases: three rotating roles plus a pinned judge, headroom-driven assignment, reports as files with the `REPORT: <path>` marker, internal reviewer and tester passes on the pushed SHA before the PR opens, a five-round fix allowance with retained context for rounds 1 to 3 and a fresh worker after, the judge's `RULING` / `ACTION` / `UNVERIFIED` deliverable, a lead-owned task ledger that separates delivered reports from accepted work and completed tasks, a persistent attention queue, daily and pre-transition retrospectives, lead handoff stows, fleet supervision with an exact-session Stop gate, and verified YOLO relaunches with tier qualification. The 0.1.0 decision to leave this layer out is reversed on the strength of that protocol; the Python under `skills/herdr-teamlead/teamlead/` and its 40-odd suites come along because the protocol is only enforceable through them. Standalone sessions (no `HERDR_ENV`) are untouched: the rule's first section says none of it applies there.
+- **GitHub tag/asset publication verification.** `skills/release/verify-github-release.sh` confirms a tag-triggered release the way `verify-publish-landed.sh` confirms a Tessl publish: the resolved run concluded `success` AND a published, non-draft release exists at the exact tag with every asset retrievable. `resolve-publish-run.sh` takes an optional fifth `ref` argument so a tag run, whose `headBranch` is the tag name, resolves through the same four-fact binding. `rules/ci-safety.md` Always Watch CI and the release skill's Steps 3 and 7 now key the confirmation on the publication, not the package: a repo that publishes on both channels owes both confirmations, and neither substitutes for the other. Motivated by upstream #371/#374, where a main-only lookup missed a tag run and a Tessl-only confirmation was applied to a repo that no longer published through Tessl.
+- **Herdr bootstrap carve-out in `rules/script-delegation.md`.** The Herdr skills' command blocks open with a two-line `CP` resolver (project-local plugin, then `$HOME`) before invoking a co-shipped script. That inline branch is the one sanctioned exception to Scripts Are Real Files, bounded by five preconditions and checked by `skills/herdr-teamlead/tests/test_skill_invocations.sh`.
+
+### Fixed
+
+- **`stop-handoff-hygiene` on stock macOS Bash 3.2 and inside Python projects.** Empty-array expansions under `set -u` no longer abort the hook when the repo has no gone branches or linked worktrees. Pyright now runs with the project's own interpreter (`VIRTUAL_ENV`, then `.venv`, then `venv`) and prefers that environment's pyright, so a changed file's imports resolve against the project's dependencies instead of a global engine; nested worktree calls resolve from the repository root. Findings, including missing imports, stay blocking. Both from upstream #351.
+- **`check-git-sync` inside a Herdr worker pane.** A worker in a linked worktree is told to report the drift, not to sync the shared checkout it is forbidden to touch; the lead's own session still gets the fast-forward or rebase advice.
+
 ## 0.1.0 — 2026-09-07
 
 ### Added

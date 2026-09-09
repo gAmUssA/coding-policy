@@ -1,6 +1,6 @@
 {
   "name": "gamussa/coding-policy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
   "private": false,
   "repository": "https://github.com/gAmUssA/coding-policy",
@@ -11,7 +11,9 @@
   },
   "skills": [
     "skills/release",
-    "skills/onboard-repo"
+    "skills/onboard-repo",
+    "skills/herdr-teamlead",
+    "skills/herdr-standup"
   ],
   "rules": [
     "rules/commit-conventions.md",
@@ -37,7 +39,9 @@
     "rules/demo-readiness.md",
     "rules/script-delegation.md",
     "rules/skill-authoring.md",
-    "rules/context-artifacts.md"
+    "rules/context-artifacts.md",
+    "rules/agent-team-operation.md",
+    "rules/stateful-artifacts.md"
   ],
   "hooks": {
     "SessionStart": [
@@ -63,6 +67,13 @@
             "args": [
               "${TESSL_PLUGIN_DIR}/hooks/check-tessl-latest.sh"
             ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${TESSL_PLUGIN_DIR}/hooks/herdr-team-status.sh"
+            ]
           }
         ]
       }
@@ -79,6 +90,13 @@
               "args": [
                 "${TESSL_PLUGIN_DIR}/hooks/stop-handoff-hygiene.sh"
               ]
+            },
+            {
+              "type": "command",
+              "command": "bash",
+              "args": [
+                "${TESSL_PLUGIN_DIR}/hooks/herdr-supervision-stop.sh"
+              ]
             }
           ]
         }
@@ -91,6 +109,10 @@
             {
               "type": "command",
               "command": "bash \"${TESSL_PLUGIN_DIR}/hooks/stop-handoff-hygiene.sh\""
+            },
+            {
+              "type": "command",
+              "command": "bash \"${TESSL_PLUGIN_DIR}/hooks/herdr-supervision-stop.sh\""
             }
           ]
         }

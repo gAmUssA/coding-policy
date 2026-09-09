@@ -96,6 +96,22 @@ main() {
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Session-start status") and test("behind") and test("main")' >/dev/null 2>&1; then
     pass; else fail "behind: expected marker notice, got RC=$RC OUT=$OUT"; fi
 
+  # 1b. Behind, but read from a linked worktree with HERDR_ENV set -- a Herdr
+  # worker. The shared checkout is the lead's (rules/agent-team-operation.md
+  # Writers and Checkouts), so the notice must report the drift WITHOUT telling
+  # the worker to fetch or fast-forward it.
+  git -C "$TMP/r1" worktree add -q "$TMP/r1-wt" -b feat/worker >/dev/null 2>&1 \
+    || die "r1 worktree add failed"
+  run "$TMP/r1-wt" "$TMP/s1b" HERDR_ENV=1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Herdr worker session") and test("Do not sync") and (test("fast-forward") | not)' >/dev/null 2>&1; then
+    pass; else fail "worker session: expected a no-sync notice, got RC=$RC OUT=$OUT"; fi
+
+  # 1c. The same drift from the MAIN checkout with HERDR_ENV set is the lead:
+  # the suppression keys on the linked worktree, not on Herdr alone.
+  run "$TMP/r1" "$TMP/s1c" HERDR_ENV=1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forward")' >/dev/null 2>&1; then
+    pass; else fail "lead session: expected the sync instruction, got RC=$RC OUT=$OUT"; fi
+
   # 2. up to date -> marker "in sync" status.
   mk_origin o2
   clone_from "$BARE" "$TMP/r2"

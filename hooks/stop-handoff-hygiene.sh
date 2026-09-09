@@ -7,7 +7,7 @@
 # exactly this mess in real sessions — stray merged-and-remote-deleted local
 # branches and an abandoned worktree. This mechanizes the pre-handoff cleanup
 # rules/language-diagnostics.md endorses ("a Stop or pre-handoff hook running the
-# gate mechanizes this") and complements GitHub's delete_branch_on_merge setting
+# gate mechanizes this") and complements the fleet-wide delete_branch_on_merge
 # (that auto-cleans REMOTE branches; this covers the LOCAL branches/worktrees it
 # never touches).
 #
@@ -32,6 +32,11 @@
 #     blocking (the gate can't clear findings without it) — install and re-check.
 #     Inlined here rather than delegated to scripts/run-diagnostics.sh, which the
 #     Tessl packer does not ship (only rules/, skills/, hooks/ surfaces publish).
+#     Python uses the first executable interpreter in VIRTUAL_ENV, the repo's
+#     .venv, then venv, and passes it as --pythonpath. Prefer that environment's
+#     pyright when installed; otherwise use PATH. With no environment, retain
+#     Pyright's own configuration/default interpreter resolution. Import errors
+#     remain blocking; an environment correction never suppresses diagnostics.
 # Report-only (never blocks on its own): a dirty working tree — often intentional
 #   work-in-progress, surfaced to the user but not trapped.
 #
@@ -56,6 +61,43 @@ in_list() { # <needle> <haystack...>
   local needle="$1" x; shift
   for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
   return 1
+}
+
+# Is this session a Herdr WORKER rather than the lead?
+#
+# The team rules reserve the shared checkout and every worktree operation for
+# the lead: a worker "runs no git command against the shared checkout,
+# mutating or otherwise" and "never creates, moves, or removes a worktree"
+# (rules/agent-team-operation.md Writers and Checkouts). A hook that tells a
+# worker to fast-forward `main` or remove a worktree is instructing it to
+# break that rule -- which is exactly what happened in a live round, where the
+# worker reported the contradiction and then obeyed the hook.
+#
+# Herdr exports no lead/worker flag, so the role is derived from where the
+# session sits: the lead works in the shared checkout, every worker works in a
+# linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
+# resolve differently; in the main checkout they are the same.
+#
+# 0 = a Herdr worker (suppress lead-only advice), 1 = the lead, a standalone
+# agent, or anything this cannot determine. Fail open: a hook that goes silent
+# because a git command failed would be worse than one that speaks up.
+is_herdr_worker() {
+  [[ -n "${HERDR_ENV:-}" ]] || return 1
+
+  local git_dir common_dir rc=0
+  git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    warn "git rev-parse --absolute-git-dir failed (exit ${rc}) — cannot tell a Herdr worker from the lead; treating this as the lead"
+    return 1
+  fi
+  rc=0
+  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    warn "git rev-parse --git-common-dir failed (exit ${rc}) — cannot tell a Herdr worker from the lead; treating this as the lead"
+    return 1
+  fi
+
+  [[ "$git_dir" != "$common_dir" ]]
 }
 
 main() {
@@ -92,22 +134,34 @@ main() {
   fi
   [[ "$inside" == "true" ]] || return 0
 
-  collect_gone_branches
-  collect_worktrees
+  # Branch and worktree cleanup is the lead's, never a worker's
+  # (rules/agent-team-operation.md Writers and Checkouts). Blocking a worker's
+  # stop over leftovers it is forbidden to remove would force it to either
+  # disobey the rule or fail to hand off. The lead's own teardown runs at the
+  # end of its round.
+  #
+  # ONLY that cleanup is suppressed. The diagnostics gate and the dirty-tree
+  # report apply to a worker's own changed files, which are its to fix
+  # (rules/language-diagnostics.md Gate It Deterministically) -- skipping them
+  # here would let a worker hand off findings nobody else is going to see.
+  if ! is_herdr_worker; then
+    collect_gone_branches
+    collect_worktrees
 
-  # Partition gone branches: those checked out in a linked worktree are
-  # reported as orphaned worktrees (remove the worktree); the rest as
-  # leftover branches.
-  local b p i
-  for b in "${gone_branches[@]}"; do
-    in_list "$b" "${wt_branches[@]}" || leftover+=("$b")
-  done
-  for (( i = 0; i < ${#wt_paths[@]}; i++ )); do
-    b="${wt_branches[$i]}"; p="${wt_paths[$i]}"
-    if in_list "$b" "${gone_branches[@]}"; then orphaned+=("${p} (branch ${b})"); fi
-  done
+    # Partition gone branches: those checked out in a linked worktree are
+    # reported as orphaned worktrees (remove the worktree); the rest as
+    # leftover branches.
+    local b p i
+    for b in ${gone_branches[@]+"${gone_branches[@]}"}; do
+      in_list "$b" ${wt_branches[@]+"${wt_branches[@]}"} || leftover+=("$b")
+    done
+    for (( i = 0; i < ${#wt_paths[@]}; i++ )); do
+      b="${wt_branches[$i]}"; p="${wt_paths[$i]}"
+      if in_list "$b" ${gone_branches[@]+"${gone_branches[@]}"}; then orphaned+=("${p} (branch ${b})"); fi
+    done
 
-  build_branch_findings
+    build_branch_findings
+  fi
 
   run_changed_diagnostics
   check_dirty_tree
@@ -199,6 +253,15 @@ build_branch_findings() {
 # block. A required engine being absent is also blocking (rules/language-
 # diagnostics.md Install, Don't Skip — the gate cannot clear findings without it).
 run_changed_diagnostics() {
+  local repo_root
+  if ! repo_root="$(git rev-parse --show-toplevel)"; then
+    warn "cannot locate the worktree root — restore repository access and re-run the diagnostics gate"
+    return 0
+  fi
+  if ! cd "$repo_root"; then
+    warn "cannot enter ${repo_root} — restore worktree access and re-run the diagnostics gate"
+    return 0
+  fi
   collect_changed_lintable
   (( ${#changed[@]} > 0 )) || return 0
 
@@ -222,9 +285,30 @@ run_changed_diagnostics() {
   fi
 
   if (( ${#py_files[@]} > 0 )); then
-    if command -v pyright >/dev/null 2>&1; then
-      if ! out="$(pyright "${py_files[@]}" 2>&1)"; then
-        blocking+=("pyright findings in changed Python files — fix before handoff:"$'\n'"${out}")
+    local py_interp="" pyright_bin="" env_dir candidate
+    local -a py_args=()
+    for env_dir in "${VIRTUAL_ENV:-}" "$repo_root/.venv" "$repo_root/venv"; do
+      [[ -n "$env_dir" ]] || continue
+      for candidate in "$env_dir/bin/python" "$env_dir/Scripts/python.exe"; do
+        if [[ -f "$candidate" && -x "$candidate" ]]; then
+          py_interp="$candidate"
+          break
+        fi
+      done
+      [[ -z "$py_interp" ]] || break
+    done
+    if [[ -n "$py_interp" ]]; then
+      py_args=(--pythonpath "$py_interp")
+      for candidate in "${py_interp%/*}/pyright" "${py_interp%/*}/pyright.exe"; do
+        if [[ -f "$candidate" && -x "$candidate" ]]; then pyright_bin="$candidate"; break; fi
+      done
+    fi
+    if [[ -z "$pyright_bin" ]]; then
+      pyright_bin="$(command -v pyright)" || pyright_bin=""
+    fi
+    if [[ -n "$pyright_bin" ]]; then
+      if ! out="$("$pyright_bin" ${py_args[@]+"${py_args[@]}"} "${py_files[@]}" 2>&1)"; then
+        blocking+=("pyright findings in changed Python files — check the project environment and fix before handoff (engine: ${pyright_bin}; interpreter: ${py_interp:-Pyright default/config}):"$'\n'"${out}")
       fi
     else
       blocking+=("pyright is not installed but changed .py files need checking — install pyright to clear the pre-handoff diagnostics gate (rules/language-diagnostics.md).")
