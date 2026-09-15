@@ -34,7 +34,8 @@ role; a single-seat round needs none.
 ## Validate before planning
 
 ```bash
-teamlead.sh validate-partition --repo <repo> --base <base> [--head <head>] \
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" validate-partition --repo <repo> --base <base> [--head <head>] \
   --partition <partition.json>
 ```
 

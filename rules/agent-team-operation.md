@@ -225,7 +225,7 @@ description: Running a multi-agent team — task-based specialist composition, c
 - A worker's report, plan, and patch artifacts go only under the reports directory its brief names
 - A worker writes nowhere else
 - Narrow exception for a task-owned fixture root outside the reports directory
-- Applies when the tool under test resolves its configuration from filesystem ancestors, so a fixture placed under the reports directory initializes the operator's own project instead of the fixture's
+- Applies when the tool under test resolves its configuration from filesystem ancestors
 - Preconditions (all required):
   1. The brief names the fixture root
   2. The root is created by this assignment, under a name no other assignment uses
