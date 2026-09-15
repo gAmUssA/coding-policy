@@ -18,6 +18,13 @@ An agent holding no seat burns nothing, so it is not part of that minimum.
 verifies the branch they wrote, so the lead bars the author from those seats. A
 role whose eligible field is empty is a PlanError, never a silent drop.
 
+Ranking is only as honest as the field it sorts, so three refusals guard the
+field itself before any seat is filled: a snapshot that does not cover every
+agent `config.json` declares, an `--exclude` list the snapshot matches no name
+of, and a ranked seat whose measured field holds one agent. Each of the three
+is a measurement that missed the fleet rather than a fleet with no capacity,
+and each used to plan a forced pick that read like a ranked one.
+
 Ordering within one role, in full:
 
 1. Agents excluded from that role are not candidates at all, and neither is
@@ -39,6 +46,12 @@ Ordering within one role, in full:
 `assignments` comes back keyed in the caller's `--roles` order; `rationale`
 reads in the order the seats were filled, heaviest first, because the field a
 pick chose from only makes sense in that order.
+
+For a requirement-bearing assignment, composition.py supplies capability and
+contribution exclusions before this ranking. An affordable candidate with a
+confirmed matching task/engagement dispatch ranks before other affordable
+candidates, then the existing headroom ordering decides. Legacy assignments
+without requirements retain the ordering above.
 """
 
 import math
@@ -50,9 +63,14 @@ from .errors import PlanError
 #: pinned seat's agent, model and effort. Version 3 adds round-tier data. Additive: a version-1
 #: plan simply has no `judge` key, which is indistinguishable from a version-2
 #: plan that assigned no judge seat, so both readers take the same path.
+#: Version 5 adds normalized specialist requirements when requested. Version 6
+#: adds `judge.mode`, the seat's declared adjudication-or-diagnosis choice, so
+#: the start and the dispatch read the lead's decision rather than retaking it
+#: (#425). Additive: a version-5 plan simply carries no mode, and its readers
+#: refuse the start rather than defaulting one.
 #: A plan is a round's instruction, not stored state -- it is produced and
 #: consumed inside one round and never migrated (rules/stateful-artifacts.md).
-PLAN_SCHEMA_VERSION = 4
+PLAN_SCHEMA_VERSION = 6
 
 #: What one round in each seat is expected to burn, in points of the agent's
 #: remaining headroom percentage. The ORDER is what the planner acts on:
@@ -73,6 +91,8 @@ DEFAULT_ROLE_COSTS = {
     "critic": 5.0,
     "release": 8.0,
     "lead": 12.0,
+    "advisor": 8.0,
+    "investigator": 10.0,
 }
 
 #: Weight for a role nobody has weighed -- a folded seat, or a role a later
@@ -81,8 +101,15 @@ DEFAULT_ROLE_COSTS = {
 DEFAULT_ROLE_COST = 8.0
 
 
-def _sort_key(name, headroom, cost, role, counts, floor):
+def _sort_key(name, headroom, cost, role, counts, floor, familiarity=None):
     """Rank one candidate for one role. Lower sorts first."""
+    if familiarity is not None:
+        affordable = headroom is not None and float(headroom) - cost >= 0
+        # Continuity is useful only inside an affordable, eligible field. It
+        # never elevates an exhausted or unmeasured worker over usable capacity.
+        affinity = familiarity.get(role, {}).get(name, 0) if affordable else 0
+        return (0 if affordable else 1, -affinity,
+                *_sort_key(name, headroom, cost, role, counts, floor))
     if headroom is None:
         return (1, 0.0, 0.0, 0, name)
     projected = float(headroom) - cost
@@ -232,7 +259,93 @@ def _fillable(roles, agents, excluded):
     return True
 
 
-def _unfillable_message(role, barred, remaining, later_roles):
+def _refuse_uncovered_roster(roster, agents):
+    """Halt when the snapshot leaves out an agent `config.json` declares.
+
+    A declared worker absent from the snapshot is a measurement that missed
+    the fleet, not a worker with nothing left: `measure` pointed at one
+    freshly spawned pane writes a snapshot of one, and every seat then ranks
+    against that pane while an idle worker at 97% headroom stays invisible to
+    the sort. Measuring the roster is what keeps that worker a candidate, so
+    the plan refuses here rather than filling seats from whatever happened to
+    be measured.
+
+    An agent present but unmeasured is a different state: it carries a null
+    headroom, sorts last, and is named in the rationale.
+    """
+    if not roster:
+        return
+    uncovered = sorted(set(roster) - set(agents))
+    if not uncovered:
+        return
+    raise PlanError(
+        "Snapshot does not cover {} - config.json declares {} and this "
+        "snapshot measured {}. Run `teamlead measure` over the roster before "
+        "planning, or drop the worker from config.json.".format(
+            ", ".join(uncovered), ", ".join(sorted(roster)), ", ".join(sorted(agents))
+        ),
+        {"uncovered": uncovered, "roster": sorted(roster), "agents": sorted(agents)},
+    )
+
+
+def _refuse_inert_exclusions(excluded, agents):
+    """Halt when the snapshot matches no name `--exclude` bars.
+
+    An exclusion the snapshot cannot match bars nobody, so the author the lead
+    meant to keep out of review is eligible again and the round reads as if
+    independence had been enforced. One stray name among several is a typo and
+    stays a note (`_notes`); every name stray means the caller is excluding
+    against a fleet this snapshot never measured.
+    """
+    named = sorted({name for names in excluded.values() for name in names})
+    if not named or any(name in agents for name in named):
+        return
+    raise PlanError(
+        "--exclude names {}, and the snapshot contains none of them ({}) - "
+        "every exclusion is inert, so nothing was barred. Re-measure the "
+        "roster, or correct the names against `herdr agent list`.".format(
+            ", ".join(named), ", ".join(sorted(agents))
+        ),
+        {"inert_exclusions": named, "agents": sorted(agents)},
+    )
+
+
+def _refuse_degenerate_field(roles, agents, judge_agent, roster):
+    """Halt when a ranked seat has no field to rank.
+
+    One candidate is a forced pick, and reporting it as a headroom-ranked one
+    hides that nothing was compared: five consecutive rounds filled from a
+    one-pane snapshot drained a single window to 77% used while another sat at
+    1%. The measured field, not the field after `--exclude`, is what this
+    reads: an operator barring the author down to one candidate chose that
+    narrowing deliberately, whereas a one-agent snapshot chose nothing.
+
+    The pinned judge is not in that field. Its seat is assigned rather than
+    ranked, and every other seat bars it structurally, so a `{judge, worker}`
+    snapshot offers a ranked seat exactly one candidate.
+
+    A config whose own rankable roster holds one agent is exempt: it has no
+    rotation for the snapshot to have missed.
+    """
+    if roster and len({name for name in roster if name != judge_agent}) <= 1:
+        return
+    field = sorted(name for name in agents if name != judge_agent)
+    if len(field) > 1:
+        return
+    ranked = [role for role in roles if role != "judge" or not judge_agent]
+    if not ranked:
+        return
+    measured = "one agent ({})".format(field[0]) if field else "no agent at all"
+    raise PlanError(
+        "Role {} would be filled from a measured field of {} - one candidate "
+        "is a forced pick, not a ranking. Run `teamlead measure` over the "
+        "roster so every idle worker is a candidate, then plan "
+        "again.".format(", ".join(repr(role) for role in ranked), measured),
+        {"roles": ranked, "agents": field},
+    )
+
+
+def _unfillable_message(role, barred, remaining, later_roles, constrained=False):
     """Why one seat could not be filled, and what to change."""
     parts = [
         "Cannot fill role {!r} without leaving a later role with no eligible "
@@ -244,7 +357,8 @@ def _unfillable_message(role, barred, remaining, later_roles):
         "Roles left to fill after it: {}.".format(", ".join(later_roles))
         if later_roles
         else "",
-        "Drop an exclusion, measure another agent, or assign fewer roles.",
+        "Measure another eligible worker or assign fewer simultaneous roles; preserve capability and independence requirements."
+        if constrained else "Drop an exclusion, measure another agent, or assign fewer roles.",
     ]
     return " ".join(part for part in parts if part)
 
@@ -309,7 +423,7 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
         )
 
 
-def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, tier_candidates=None, rounds=None):
+def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
     `counts` is `{role: {agent: times_held}}` from the state ledger; omit it
@@ -323,11 +437,22 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
     is that block's `{model, effort}`; when the judge seat is planned the
     document echoes it back as the tier the worker is started on, so a caller
     builds the launch flags from the config rather than typing them by hand.
+    `judge_mode` is the seat's declared mode, echoed beside the tier so the
+    start and the dispatch read the lead's choice instead of retaking it.
+
+    `roster` is the agent names `config.json` declares, so the plan can tell a
+    snapshot that missed the fleet from a fleet with no capacity; omit it to
+    plan against whatever the snapshot holds. `operator_exclude` is the
+    exclusion map as the operator typed it, before a caller merges its own
+    generated bars into `exclude`; omit it when `exclude` carries only what
+    the operator asked for.
 
     Raises PlanError when there are no roles, no agents, fewer agents than
     roles, an exclusion naming a role nobody is assigning, or a role whose
     eligible field is empty -- silently dropping a role would hide work nobody
-    is doing.
+    is doing. Raises it again for a field nothing could have been ranked in: a
+    snapshot missing a declared agent, an `--exclude` list naming nobody the
+    snapshot holds, or a ranked seat measured against one agent.
     """
     counts = counts or {}
     roles = list(roles)
@@ -371,6 +496,11 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
             "pass --snapshot pointing at a snapshot that has an `agents` object.",
             {},
         )
+    # Before the capacity count: a snapshot that missed declared workers fails
+    # "measure more agents or pass fewer roles" first, which invites adding
+    # panes until the count fits instead of measuring the roster the config
+    # declares (#400). The field is wrong before the arithmetic is.
+    _refuse_uncovered_roster(roster, agents)
     if len(agents) < len(roles):
         raise PlanError(
             "Cannot assign {} roles across {} agent(s) - measure more agents or "
@@ -395,6 +525,15 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
             {"role": "judge"},
         )
 
+    # Only the names the operator typed: a generated bar naming a measured
+    # agent would otherwise vouch for an exclusion list that matched nobody.
+    _refuse_inert_exclusions(
+        excluded if operator_exclude is None
+        else _normalize_exclusions(operator_exclude, roles),
+        agents,
+    )
+    _refuse_degenerate_field(roles, agents, judge_agent, roster)
+
     # Expressed as exclusions so eligibility, fillability and the rationale all
     # read the same way they do for every other seat.
     if judge_agent:
@@ -415,6 +554,13 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 excluded[role] = sorted(set(excluded[role]) | {judge_agent})
     for role in roles:
         if all(name in excluded[role] for name in agents):
+            if selection_rationale:
+                raise PlanError(
+                    "No agent is eligible for role {!r}. Measure another eligible worker or correct verified capability declarations; preserve independence requirements. {}".format(
+                        role, " ".join(selection_rationale)),
+                    {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
+                     "eligibility": list(selection_rationale)},
+                )
             raise PlanError(
                 "No agent is eligible for role {!r} - --exclude bars {}, and "
                 "those are every agent in the snapshot ({}). Drop an exclusion, "
@@ -462,7 +608,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         later_roles = fill_order[index + 1:]
         ranked = sorted(
             (name for name in remaining if name not in barred),
-            key=lambda name: _sort_key(name, headrooms[name], candidate_cost(role, name), role, counts, floor),
+            key=lambda name: _sort_key(name, headrooms[name], candidate_cost(role, name), role, counts, floor,
+                                      familiarity if role in (requirements or {}) else None),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
         # who still can without stranding a later role. First candidate that
@@ -477,12 +624,13 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         )
         if chosen is None:
             raise PlanError(
-                _unfillable_message(role, barred, remaining, later_roles),
+                _unfillable_message(role, barred, remaining, later_roles, bool(selection_rationale)),
                 {
                     "role": role,
                     "excluded": list(barred),
                     "assigned": dict(picks),
                     "unassigned": sorted(remaining),
+                    **({"eligibility": list(selection_rationale)} if selection_rationale else {}),
                 },
             )
         remaining.discard(chosen)
@@ -491,6 +639,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         rationale.append(
             _explain(role, chosen, ranked, headrooms, counts, cost, floor, barred)
         )
+        if role in (requirements or {}) and (familiarity or {}).get(role, {}).get(chosen):
+            rationale.append("{} -> {} has a prior confirmed dispatch for the same task and engagement; familiarity ranks before headroom only when this projected seat is affordable.".format(role, chosen))
         headroom = headrooms[chosen]
         if headroom is not None:
             projected = headroom - cost
@@ -512,6 +662,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                     headrooms[name] -= cost
 
     rationale.extend(_notes(excluded, agents, warn))
+    rationale.extend(selection_rationale or [])
 
     # The loop removes each pick from `remaining`, so a repeat is impossible
     # by construction. Asserted anyway: `apply` briefs one pane per role, and
@@ -549,12 +700,20 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         }
         if tier.get("launch_args"):
             document["judge"]["launch_args"] = tier["launch_args"]
+        # The seat's declared mode travels with the plan, so `start-judge` and
+        # `apply` read the choice the lead already made rather than taking it
+        # again -- or, worse, defaulting it (#425).
+        if judge_mode:
+            document["judge"]["mode"] = judge_mode
 
     if tier_candidates is not None:
         document["tiers"] = {
             role: tier_candidates[role][picks[role]] for role in roles
         }
         document["rounds"] = rounds or {}
+
+    if requirements:
+        document["requirements"] = requirements
 
     return document
 

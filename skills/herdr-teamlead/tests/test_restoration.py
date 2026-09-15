@@ -166,6 +166,16 @@ class ReleaseGateTest(RestorationCase):
         self.assertEqual(self.runner.count("pane process-info"), RELEASE_POLL_ATTEMPTS)
         self.assertEqual(self.sleeps, [RELEASE_POLL_INTERVAL_SEC] * (RELEASE_POLL_ATTEMPTS - 1))
 
+    def test_release_timeout_does_not_blame_an_absent_foreground_process(self):
+        """An empty foreground list is not the stopped process still running (#388)."""
+        self.runner.script("pane process-info", ok(process_info())).script("agent get", RELEASED)
+        with self.assertRaises(HerdrError) as raised:
+            self.restore()
+        self.assertNotIn("still runs the stopped process", raised.exception.message)
+        self.assertIn("holds neither only its shell 20782 nor the stopped process 22241",
+                      raised.exception.message)
+        self.assertNoStart()
+
     def test_release_timeout_names_the_reserved_name_and_never_starts(self):
         self.runner.script("pane process-info", SHELL_ONLY).script("agent get", reserved())
         with self.assertRaisesRegex(HerdrError, r"Herdr still reserves the agent name 'codex-review'"):
@@ -191,8 +201,11 @@ class ReleaseGateTest(RestorationCase):
 
     def test_name_bound_to_another_pane_refuses_without_start(self):
         self.runner.script("pane process-info", SHELL_ONLY).script("agent get", reserved(pane="w9:p1"))
-        with self.assertRaisesRegex(HerdrError, r"bound to pane 'w9:p1', not the restoration pane 'w7:p1'"):
+        with self.assertRaises(HerdrError) as raised:
             self.restore()
+        self.assertRegex(raised.exception.message, r"bound to pane 'w9:p1', not the restoration pane 'w7:p1'")
+        # The refusal names the recovery, not only the conflict.
+        self.assertIn("reconcile the archived identity before retrying", raised.exception.message)
         self.assertNoStart()
 
     def test_malformed_herdr_data_refuses_before_any_start(self):
@@ -251,6 +264,23 @@ class StartTest(RestorationCase):
         with self.assertRaisesRegex(HerdrError, r"foreground process 81605 that is neither"):
             self.restore()
         self.assertEqual(len(self.runner.starts()), 1)
+
+    def test_recheck_refusals_do_not_claim_no_start_was_attempted(self):
+        """The gate also runs after a refused start, and says so (#388)."""
+        self.ready().runner.script("agent start", failed("agent_name_taken"))
+        self.runner.script("pane process-info", SHELL_ONLY, ok(process_info(NEW_PID)))
+        with self.assertRaises(HerdrError) as raised:
+            self.restore()
+        self.assertNotIn("No start was attempted", raised.exception.message)
+        self.assertIn("Herdr refused the preceding start with agent_name_taken", raised.exception.message)
+        self.assertIn("no process was started under this name", raised.exception.message)
+
+    def test_first_pass_refusals_still_report_that_no_start_was_attempted(self):
+        self.ready().runner.script("pane process-info", ok(process_info(SHELL, FOREIGN)))
+        with self.assertRaises(HerdrError) as raised:
+            self.restore()
+        self.assertIn("No start was attempted", raised.exception.message)
+        self.assertNoStart()
 
     def test_other_start_failures_are_never_retried(self):
         for label, response, pattern in (

@@ -11,7 +11,11 @@ main() {
     return 0
   fi
   local rc=0
+  # PYTHONDONTWRITEBYTECODE: the evaluator only reads, but importing it would
+  # drop __pycache__ into the installed plugin tree, which the read-only
+  # contract does not allow.
   PYTHONPATH="${plugin_root}/skills/herdr-teamlead${PYTHONPATH:+:${PYTHONPATH}}" \
+  PYTHONDONTWRITEBYTECODE=1 \
     python3 -m teamlead.supervision_hook || rc=$?
   if (( rc != 0 )); then
     echo "herdr-supervision-stop: Python hook failed (exit ${rc}) before completing its contract — restore the hook installation; native gating requires its structured JSON result" >&2

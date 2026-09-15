@@ -120,16 +120,19 @@ sleeps() { [[ -f "$TMPDIR_TEST/sleeps" ]] || { echo 0; return; }; wc -l < "$TMPD
 snap() {
   local mergeable="$1" mstatus="$2" ci="$3" codex="$4" copilot="$5"
   local ghc="${6:-0}" cpc="${7:-0}"
+  # `requested` defaults to true: every existing case models a lane that was
+  # asked for and has not answered yet, which is what waiting is for (#369).
+  local cpr="${8:-true}"
   jq -cn \
     --arg mergeable "$mergeable" --arg mstatus "$mstatus" --arg ci "$ci" \
     --arg codex "$codex" --arg copilot "$copilot" \
-    --argjson ghc "$ghc" --argjson cpc "$cpc" \
+    --argjson ghc "$ghc" --argjson cpc "$cpc" --argjson cpr "$cpr" \
     '{
       pr_number: 42,
       ci: {status: $ci, checks: []},
       reviews: {
-        codex:   {state: $codex,   submitted_at: null, body: null},
-        copilot: {state: $copilot, submitted_at: null, body: null}
+        codex:   {state: $codex,   submitted_at: null, body: null, requested: false},
+        copilot: {state: $copilot, submitted_at: null, body: null, requested: $cpr}
       },
       inline_comments: {codex: $ghc, copilot: $cpc},
       merge_state: {status: $mstatus, mergeable: $mergeable}
@@ -137,6 +140,56 @@ snap() {
 }
 
 result_of() { echo "$1" | jq -r '.watch.result // empty'; }
+
+# --- Test 0: a lane nobody requested is diagnosed at once ---------------------
+test_unrequested_copilot_is_immediate() {
+  reset_mocks
+  # Copilot has no verdict at this head AND no pending request: waiting cannot
+  # produce one, so the budget is not spent proving it (#369).
+  queue "$(snap MERGEABLE CLEAN success APPROVED none 0 0 false)"
+  # stdout and stderr apart: the JSON envelope is parsed, the diagnostic read.
+  local out err rc=0
+  err="$TMPDIR_TEST/unrequested.err"
+  out=$(main jbaruch coding-policy 42 2>"$err") || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  assert_eq "result" "review_unrequested" "$(result_of "$out")" || return 1
+  assert_eq "poll count" "1" "$(calls)" || return 1
+  assert_eq "sleep count" "0" "$(sleeps)" || return 1
+  case "$(cat "$err")" in
+    *request-copilot-review.sh*) ;;
+    *) echo "    expected the diagnostic to name the request command" >&2; return 1 ;;
+  esac
+}
+run "an unrequested Copilot lane is diagnosed without waiting" test_unrequested_copilot_is_immediate
+
+# A requested-but-silent lane is what the budget exists for, and still waits.
+test_requested_copilot_still_waits() {
+  reset_mocks
+  queue "$(snap MERGEABLE CLEAN success APPROVED none 0 0 true)" \
+        "$(snap MERGEABLE CLEAN success APPROVED COMMENTED 0 0 true)"
+  local out rc=0
+  out=$(main jbaruch coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "poll count" "2" "$(calls)" || return 1
+}
+run "a requested Copilot lane still waits for its verdict" test_requested_copilot_still_waits
+
+# A snapshot from an older poll-pr-reviews.sh carries no `requested` field; the
+# watcher must keep waiting rather than read its absence as "nobody asked".
+test_missing_requested_field_still_waits() {
+  reset_mocks
+  queue "$(jq -cn '{pr_number: 42, ci: {status: "success", checks: []},
+                    reviews: {codex: {state: "APPROVED"}, copilot: {state: "none"}},
+                    inline_comments: {codex: 0, copilot: 0},
+                    merge_state: {status: "CLEAN", mergeable: "MERGEABLE"}}')" \
+        "$(snap MERGEABLE CLEAN success APPROVED COMMENTED)"
+  local out rc=0
+  out=$(main jbaruch coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+}
+run "a snapshot without the requested field keeps waiting" test_missing_requested_field_still_waits
 
 # --- Test 1: ready on first poll ---------------------------------------------
 test_ready_first_poll() {

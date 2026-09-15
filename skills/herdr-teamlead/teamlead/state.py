@@ -5,12 +5,12 @@ looked like when it was measured; it never substitutes for reading the agent's
 live status before writing to it. `plan` may run off a stale snapshot on
 purpose (planning has no side effects); `apply` always re-checks live status.
 
-Schema (schema_version 5)::
+Schema (schema_version 6)::
 
     {
-      "schema_version": 5,
+      "schema_version": 6,
       "snapshots":  [ <measure output>, ... ],   # newest last, capped at 20
-      "assignments":[ {"schema_version": 5, "at": <ISO-8601>,
+      "assignments":[ {"schema_version": 6, "at": <ISO-8601>,
                        "role": <str>, "agent": <str>,
                        "status": "applied" | "sent_but_not_started"
                                  | "unknown",
@@ -18,7 +18,10 @@ Schema (schema_version 5)::
                        "clear_reason": "automatic" | "hand" | "retained" | "unknown",
                        "task": <str> | null, "fix_round": <int> | null,
                        "context_session": <object> | null,
-                       "tier": <object> | null}, ... ],
+                       "tier": <object> | null,
+                       "requirements": <object> | null,
+                       "reviewer_scope": <str> | null}, ... ],
+      "specialist_assessments": [ <immutable lead assessment>, ... ],
       "recovery": <owner-managed task, approval, dispatch and evidence ledger>
     }
 
@@ -28,6 +31,7 @@ UNCOUNTED_STATUSES), and `unknown` marks a version-1 row migrated without the
 information. Version 1 documents and rows carry no `status`; the 1 -> 2
 migration below stamps them `unknown`.
 
+Version 6 adds specialist requirements and assessed contribution receipts.
 Version 5 adds recovery history without inventing original authorization or
 session proof. Version 4 adds verified model-tier evidence.
 Version 3 records context handling, the task and the fix-round number.
@@ -68,7 +72,7 @@ from .recovery import DEFAULT_FIX_LIMIT, empty_recovery, migrate_store, validate
 
 #: The version this build writes for the document and assignment rows.
 #: Snapshots have their own version and migration chain below.
-STATE_SCHEMA_VERSION = 5
+STATE_SCHEMA_VERSION = 6
 
 #: Default checkpoint, not a global permission to exceed an approved budget.
 MAX_FIX_ROUNDS = DEFAULT_FIX_LIMIT
@@ -110,7 +114,7 @@ def default_state_path():
 
 def empty_state():
     """A fresh, valid state document."""
-    return {"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "assignments": [], "recovery": empty_recovery()}
+    return {"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "assignments": [], "recovery": empty_recovery(), "specialist_assessments": []}
 
 
 @contextmanager
@@ -224,6 +228,22 @@ def _migrate_document_4_to_5(payload):
     return payload
 
 
+def _migrate_record_5_to_6(record):
+    """Old assignments prove no specialty or engagement identity."""
+    if "requirements" in record or "reviewer_scope" in record:
+        raise _NoUsableState("older assignment contains unowned specialist requirements")
+    record.update(schema_version=6, requirements=None,
+                  reviewer_scope="unknown" if record.get("role") == "reviewer" else None)
+    return record
+
+
+def _migrate_document_5_to_6(payload):
+    if "specialist_assessments" in payload:
+        raise _NoUsableState("older state contains unowned specialist assessments")
+    payload.update(schema_version=6, specialist_assessments=[])
+    return payload
+
+
 def _migrate_snapshot_2_to_3(snapshot):
     """An older snapshot has no measured per-tier billing attribution."""
     snapshot["schema_version"] = 3
@@ -274,6 +294,7 @@ MIGRATIONS = {
     2: (3, _migrate_document_2_to_3),
     3: (4, _migrate_document_3_to_4),
     4: (5, _migrate_document_4_to_5),
+    5: (6, _migrate_document_5_to_6),
 }
 
 #: The same table for one assignment record, walked the same way.
@@ -283,6 +304,7 @@ RECORD_MIGRATIONS = {
     2: (3, _migrate_record_2_to_3),
     3: (4, _migrate_record_3_to_4),
     4: (5, _migrate_record_4_to_5),
+    5: (6, _migrate_record_5_to_6),
 }
 
 
@@ -331,6 +353,9 @@ def _validate(payload, path):
     Every rejection here is a no-usable-prior-state signal, never an
     instruction to the operator to delete their ledger.
     """
+    from .composition import normalize_requirement
+    from .engagement import validate_assessments
+
     if not isinstance(payload, dict):
         raise _NoUsableState("the document is not a JSON object")
 
@@ -345,6 +370,20 @@ def _validate(payload, path):
         if not isinstance(record, dict):
             raise _NoUsableState("an assignment row is not a JSON object")
         record, row_migrated = _apply_migrations(record, RECORD_MIGRATIONS, "an assignment row")
+        if "requirements" not in record:
+            raise _NoUsableState("an assignment row is missing specialist requirements provenance")
+        scope = record.get("reviewer_scope")
+        reviewer = record.get("role") == "reviewer"
+        if ("reviewer_scope" not in record
+                or reviewer and (not isinstance(scope, str) or scope not in {"verification", "design", "unknown"})
+                or not reviewer and scope is not None):
+            raise _NoUsableState("an assignment row has invalid reviewer responsibility provenance")
+        if record["requirements"] is not None:
+            try:
+                if normalize_requirement(record["requirements"], record.get("role")) != record["requirements"]:
+                    raise _NoUsableState("an assignment has non-canonical specialist requirements")
+            except UsageError as exc:
+                raise _NoUsableState(str(exc)) from None
         cleared = record.get("cleared")
         reason = record.get("clear_reason")
         if not isinstance(reason, str) or reason not in CLEAR_REASONS or (
@@ -417,6 +456,7 @@ def _validate(payload, path):
         store = payload.setdefault("recovery", empty_recovery())
         migrated = migrate_store(store) or migrated
         validate_store(store, rows)
+        validate_assessments(payload)
     except UsageError as exc:
         raise _NoUsableState(str(exc)) from None
     return payload, migrated
@@ -556,7 +596,7 @@ def add_snapshot(state, snapshot):
 
 
 def add_assignment(state, at, role, agent, status=STATUS_APPLIED, *,
-                   cleared=None, clear_reason="unknown", task=None, fix_round=None, context_session=None, tier=None):
+                   cleared=None, clear_reason="unknown", task=None, fix_round=None, context_session=None, tier=None, requirements=None, reviewer_scope=None):
     """Append one role-to-agent assignment to the ledger.
 
     Every hand-off is recorded, including one that never started -- the ledger
@@ -580,6 +620,8 @@ def add_assignment(state, at, role, agent, status=STATUS_APPLIED, *,
             "fix_round": fix_round,
             "context_session": context_session,
             "tier": tier,
+            "requirements": requirements,
+            "reviewer_scope": (reviewer_scope or "unknown") if role == "reviewer" else None,
         }
     )
     return state

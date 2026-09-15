@@ -7,6 +7,8 @@ this file.
 
 Complete `{{ISSUE}}` within the task authorization in COMMON.md.
 
+{{SPECIALIST_CONTEXT}}
+
 ## Setup
 
 Your worktree already exists at `{{WORKTREE}}`, on branch `{{BRANCH}}`, cut
@@ -31,11 +33,13 @@ Read, in this order:
 1. The issue `{{ISSUE}}` and every comment on it.
 2. The consumers of the code you are about to change — who calls it, what they
    expect.
-3. The architect's design note, posted as a comment on `{{ISSUE}}`.
-4. The tester's plan in `{{REPORTS_DIR}}`.
+3. Any design or specialist reports the lead assigned to this task, named in
+   this brief or the issue comments.
+4. Any assigned tester plan in `{{REPORTS_DIR}}`; otherwise derive tests from
+   the task's acceptance criteria.
 
-If the design note and the tester's plan disagree, follow the design note and
-record the conflict in your report.
+Report a conflict between the accepted task behavior and a proposed design or
+test plan. An advisory report grants no changed scope.
 
 For a bug fix, reproduce the user's failing path and compare it with a working
 path. Separate the trigger, the conditions that expose or hide it, and the
@@ -57,8 +61,8 @@ the implementation and push stages below apply only to authorized code changes.
   outcomes.
 - One logical change per commit. Imperative subject line under 72 characters, a
   body saying why.
-- Run every gate `CONTRIBUTING.md` names, from inside the worktree. Green
-  before you push.
+- Run the repository's configured gates from inside the worktree. Green before
+  you push.
 
 ## Push, Then Stop
 

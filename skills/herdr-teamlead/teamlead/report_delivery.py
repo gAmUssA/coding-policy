@@ -24,6 +24,7 @@ from pathlib import Path
 from . import claude_native
 from . import recovery as ledger
 from . import supervision
+from .composition import parse_requirements
 from .errors import UsageError
 
 
@@ -158,6 +159,57 @@ def source_final(body, kind, session):
     return parser(rows, session) if parser else None
 
 
+#: Grok updates that carry an attachment's own metadata rather than a message.
+#: They interleave with the user chunks of one turn, so a parser that read them
+#: as the end of the user group saw two groups where the runtime wrote one --
+#: which refused a completed review whose dispatch happened to carry an image
+#: (#392). They belong to no message, so they neither start nor end a group.
+GROK_ATTACHMENT_UPDATES = frozenset({"image_compressed"})
+
+def _is_one_of(value, names):
+    """Membership that survives untrusted JSON.
+
+    A malformed row can carry a list or object where a name belongs, and `in`
+    on a frozenset raises TypeError for an unhashable value -- crashing the
+    recovery instead of refusing the evidence and preserving its receipt.
+    """
+    return isinstance(value, str) and value in names
+
+
+#: User-chunk content types that carry an attachment rather than prompt text.
+#: Only these are skipped; an unknown type is content the parser does not
+#: understand, and it refuses rather than authenticate the text around it.
+GROK_ATTACHMENT_CONTENT = frozenset({"image"})
+
+#: Grok's own marker for an attachment on a user turn, e.g. `[Image #1]`. It is
+#: appended AFTER the dispatched text; a marker anywhere else is altered
+#: assignment text and still refuses.
+GROK_ATTACHMENT_MARKER = re.compile(r"[ \t]*\n?[ \t]*\[Image #\d+\][ \t]*\Z")
+
+
+def strip_attachment_markers(text):
+    """Drop the attachment markers Grok appends to the end of a user turn."""
+    if not isinstance(text, str):
+        return text
+    previous = None
+    while previous != text:
+        previous = text
+        text = GROK_ATTACHMENT_MARKER.sub("", text)
+    return text
+
+
+def prompt_matches(read, expected, agent):
+    """Is `read` the dispatched text?
+
+    Exactly, or — for Grok alone — followed only by the attachment marker the
+    runtime appends when the turn carried one. Anything else is altered
+    assignment text (#392).
+    """
+    if read == expected:
+        return True
+    return agent == "grok" and strip_attachment_markers(read) == expected
+
+
 def source_prompt(body, kind, session=None):
     """Read the actual latest user message; quoted assistant instructions fail.
 
@@ -187,9 +239,22 @@ def source_prompt(body, kind, session=None):
             update = params.get("update", {}) if isinstance(params, dict) else {}
             if not isinstance(update, dict):
                 return None
+            if _is_one_of(update.get("sessionUpdate"), GROK_ATTACHMENT_UPDATES):
+                continue
             if update.get("sessionUpdate") == "user_message_chunk":
                 content = update.get("content", {})
-                if not isinstance(content, dict) or content.get("type") != "text" or not isinstance(content.get("text"), str):
+                if not isinstance(content, dict):
+                    return None
+                if _is_one_of(content.get("type"), GROK_ATTACHMENT_CONTENT):
+                    # An attachment chunk carries no prompt text and does not
+                    # end the group the dispatched text was written in (#392).
+                    # Starting a group, it starts that group's text empty: the
+                    # following text belongs to THIS turn, not the previous one.
+                    if not in_chunks:
+                        prompt = ""
+                    in_chunks = True
+                    continue
+                if content.get("type") != "text" or not isinstance(content.get("text"), str):
                     return None
                 prompt = (prompt or "") + content["text"] if in_chunks else content["text"]
                 in_chunks = True
@@ -340,6 +405,12 @@ def grok_clear_identity(body, prompt):
     An explicit archived updates file is the input, never newest-file selection.
     Repeated prompts, multiple identities, failed turns or later turns make the
     source ambiguous even when one assistant message names the requested file.
+
+    An attachment on the dispatched turn is that turn, not another one: its
+    metadata rows and its non-text chunks belong to the same user group, and
+    the marker Grok appends after the dispatched text is stripped before the
+    text is compared. A marker anywhere but the end, or any other change to the
+    assignment text, is still a refusal (#392).
     """
     rows = _rows(body)
     if rows is None:
@@ -363,6 +434,11 @@ def grok_clear_identity(body, prompt):
             return None
         if event == "session_start" and index != 0:
             return None
+        if _is_one_of(kind, GROK_ATTACHMENT_UPDATES):
+            # `previous` is deliberately untouched: the user chunks either side
+            # of an attachment's metadata are one group, which is what the
+            # runtime wrote (#392).
+            continue
         if event == "user_prompt_submit":
             if submitted is not None or user_groups:
                 return None
@@ -371,6 +447,10 @@ def grok_clear_identity(body, prompt):
                 return None
         if kind == "user_message_chunk":
             if not submitted:
+                return None
+            content = update.get("content")
+            if (not isinstance(content, dict)
+                    or not _is_one_of(content.get("type"), GROK_ATTACHMENT_CONTENT | {"text"})):
                 return None
             user_groups += previous != kind
             if user_groups != 1:
@@ -385,7 +465,9 @@ def grok_clear_identity(body, prompt):
             if index != len(rows) - 1 or update.get("prompt_id") != submitted or update.get("stop_reason") != "end_turn":
                 return None
         previous = kind
-    if completions != 1 or user_groups != 1 or source_prompt(body, "grok") != prompt:
+    if completions != 1 or user_groups != 1:
+        return None
+    if not prompt_matches(source_prompt(body, "grok"), prompt, "grok"):
         return None
     return {"agent": "grok", "kind": "id", "value": identity}
 
@@ -404,6 +486,14 @@ def stale_grok_source(dispatch, assignment, observed, body, prompt, plan_body, *
     options = {"task": dispatch["task"], "fix_round": dispatch["fix_round"],
                "plan": dispatch.get("plan"), "work": dispatch.get("work"), "rounds": rounds,
                "retain_context": False, "no_clear": False}
+    requirements = parse_requirements(
+        {"schema_version": 1, "assignments": plan["requirements"]} if "requirements" in plan else None,
+        list(assignments), dispatch["task"], allow_historical_architect=True,
+    )
+    if requirements.get(dispatch["role"]) != dispatch.get("requirements"):
+        raise UsageError("grok_dispatch_unbound: restore the original specialist requirements recorded for this dispatch.", {})
+    if requirements:
+        options["requirements"] = requirements
     task_context = {key: options[key] for key in ("task", "fix_round", "plan", "work")}
     if plan.get("task_context") is not None and plan["task_context"] != task_context:
         raise UsageError("grok_dispatch_unbound: original plan names different task or correction bounds; restore its dispatch inputs.", {})
@@ -475,7 +565,7 @@ def recover(store, assignments, data, at):
     if (identity is None or original_identity is not None and identity != original_identity
             or not isinstance(pane, dict) or not pane_identity(pane, dispatch["result"].get("pane_id"), identity)
             or not decorated_row(bodies["visible"], identity["agent"], data["report"])
-            or source_prompt(bodies["source"], identity["agent"], final_session) != prompt
+            or not prompt_matches(source_prompt(bodies["source"], identity["agent"], final_session), prompt, identity["agent"])
             or not bare_final(source_final(bodies["source"], identity["agent"], final_session), data["report"])):
         raise UsageError("Archived pane and completed native source do not prove this report's bare final marker; preserve the negative receipt.", {})
     prior = next((row for row in store["delivery_recoveries"] if row["id"] == data["id"]), None)

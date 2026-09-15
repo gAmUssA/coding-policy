@@ -25,7 +25,11 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+from types import SimpleNamespace
+
+from teamlead import attention, cli
 from teamlead.cli import build_parser, main
+from teamlead.errors import UsageError
 from teamlead.herdr import HerdrClient
 from teamlead.state import STATE_SCHEMA_VERSION, add_assignment, empty_state, save_state
 
@@ -398,6 +402,22 @@ class PlanCommandTest(CliCase):
         self.assertEqual(json.loads(err)["error"], "usage_error")
         self.assertIn("ROLE=AGENT", json.loads(err)["message"])
 
+    def test_a_snapshot_missing_a_configured_agent_refuses_end_to_end(self):
+        # The CLI is what hands the planner its roster; a regression dropping
+        # that argument restores gamussa/coding-policy#395 while the planner's
+        # own tests stay green.
+        partial = json.loads(json.dumps(SNAPSHOT))
+        partial["agents"] = {"codex": partial["agents"]["codex"]}
+        self.snapshot.write_text(json.dumps(partial), encoding="utf-8")
+        code, out, err = self.run_cli(
+            self.base() + ["plan", "--roles", "reviewer", "--snapshot", str(self.snapshot)]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(json.loads(err)["error"], "plan_error")
+        self.assertIn("does not cover claude, grok", json.loads(err)["message"])
+        self.assertEqual(json.loads(err)["details"]["uncovered"], ["claude", "grok"])
+
     def test_role_costs_in_the_config_reweigh_the_seats(self):
         config = json.loads(json.dumps(CONFIG))
         config["role_costs"] = {"reviewer": 40}
@@ -727,6 +747,8 @@ class ApplyCommandTest(CliCase):
                     "fix_round": None,
                     "context_session": None,
                     "tier": None,
+                    "requirements": None,
+                    "reviewer_scope": None,
                 },
                 {
                     "schema_version": STATE_SCHEMA_VERSION,
@@ -740,6 +762,8 @@ class ApplyCommandTest(CliCase):
                     "fix_round": None,
                     "context_session": None,
                     "tier": None,
+                    "requirements": None,
+                    "reviewer_scope": None,
                 },
             ],
         )
@@ -961,6 +985,73 @@ class ApplyCommandTest(CliCase):
             "--now", AT, "--task", "repo#322", "--fix-round", str(round_number),
             *extra,
         ] + self.brief_args("developer")
+
+    def _obligation(self, name, kind="decision", task: "str | None" = "repo#322"):
+        return {"id": name, "kind": kind, "task": task, "title": "Choose the replacement tester",
+                "context": "The tester's provider refused the brief.", "consequence": "No tester report exists.",
+                "resolution_condition": "Record the user's choice of replacement tester.", "priority": 99,
+                "sources": [{"schema_version": 1, "kind": "user_message", "ref": "conversation/1/message/3"}]}
+
+    def _answer(self, name, event_id="answer-1", revision=1):
+        return {"event_id": event_id, "id": name, "expected_revision": revision, "action": "resolve",
+                "reason": "The user answered.", "evidence": {"schema_version": 1, "kind": "user_answer",
+                "ref": "conversation/1/message/5", "summary": "Use the other provider."}}
+
+    def _retained(self):
+        return self._client({"grok": "idle"}, sessions={"grok": "task-session"})
+
+    def test_apply_refuses_while_a_decision_on_the_task_is_unanswered(self):
+        # coding-policy#399: the lead withheld a tester on an unanswered
+        # priority-99 decision and kept dispatching fix rounds on the same
+        # task. A lead that can keep dispatching has not been blocked.
+        self._seed_context()
+        attention.write(self.state, "record", self._obligation("acr14-tester"), AT)
+        for extra in ((), ("--dry-run",)):
+            self.out, self.err = io.StringIO(), io.StringIO()
+            code, out, err = self.run_cli(self._fix_args(1, "--retain-context", *extra), client=self._retained())
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            failure = json.loads(err)
+            self.assertEqual(failure["error"], "usage_error")
+            self.assertIn("acr14-tester", failure["message"])
+            self.assertIn("Record the user's choice of replacement tester.", failure["message"])
+            self.assertEqual(failure["details"]["gating"][0]["id"], "acr14-tester")
+            self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(json.loads(self.state.read_text(encoding="utf-8"))["assignments"][-1]["fix_round"], None)
+        # A presentation is not an answer; a decision on another task gates nothing.
+        attention.write(self.state, "update", {"event_id": "shown-1", "id": "acr14-tester", "expected_revision": 1,
+            "action": "present", "reason": "Shown in commentary.", "evidence": {"schema_version": 1, "kind": "delivery",
+            "ref": "conversation/1/message/4", "summary": "Mentioned in a long message."}}, AT)
+        attention.write(self.state, "record", self._obligation("elsewhere", task="repo#999"), AT)
+        self.out, self.err = io.StringIO(), io.StringIO()
+        code, _out, err = self.run_cli(self._fix_args(1, "--retain-context"), client=self._retained())
+        self.assertEqual(code, 1)
+        self.assertIn("acr14-tester", err)
+        attention.write(self.state, "update", self._answer("acr14-tester", revision=2), AT)
+        self.out, self.err = io.StringIO(), io.StringIO()
+        code, out, err = self.run_cli(self._fix_args(1, "--retain-context"), client=self._retained())
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["applied"][0]["agent"], "grok")
+        self.assertEqual(len(self.runner.writes()), 1)
+
+    def test_apply_refuses_a_malformed_attention_history(self):
+        self._seed_context()
+        attention.storage_path(self.state).write_text("{", encoding="utf-8")
+        code, out, err = self.run_cli(self._fix_args(1, "--retain-context"), client=self._retained())
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(json.loads(err)["error"], "state_error")
+        self.assertEqual(self.runner.writes(), [])
+
+    def test_apply_without_a_task_ignores_the_attention_queue(self):
+        attention.write(self.state, "record", self._obligation("untasked", task=None), AT)
+        client = self._client({"grok": "idle"})
+        code, out, err = self.run_cli(
+            self.base() + ["apply", "--composer-settle", "0", "--assignments", json.dumps({"developer": "grok"}),
+                           "--common", str(self.common), "--now", AT] + self.brief_args("developer"),
+            client=client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(json.loads(out)["applied"]), 1)
 
     def test_retained_context_sends_one_prompt_and_persists_its_reason(self):
         self._seed_context()
@@ -1403,6 +1494,46 @@ class ApplyCommandTest(CliCase):
         self.assertNotEqual(code, 0)
         self.assertIn("would destroy its contents", err)
         self.assertEqual(self.state.read_text(encoding="utf-8"), self.CORRUPT_STATE)
+
+
+
+
+class JudgeModeTest(unittest.TestCase):
+    """A seat's mode is chosen once, at plan, and read everywhere after (#425)."""
+
+    def setUp(self):
+        self.args = SimpleNamespace(judge_mode=None)
+
+    def plan_doc(self, mode=None):
+        judge = {"agent": "claude", "model": "opus-5", "effort": "high"}
+        if mode is not None:
+            judge["mode"] = mode
+        return {"schema_version": 6, "assignments": {"judge": "claude"}, "judge": judge}
+
+    def test_the_plan_supplies_the_mode(self):
+        self.assertEqual(cli._judge_mode_for(self.args, self.plan_doc("diagnosis")), "diagnosis")
+
+    def test_a_matching_flag_agrees(self):
+        args = SimpleNamespace(judge_mode="diagnosis")
+        self.assertEqual(cli._judge_mode_for(args, self.plan_doc("diagnosis")), "diagnosis")
+
+    def test_a_differing_flag_refuses(self):
+        args = SimpleNamespace(judge_mode="adjudication")
+        with self.assertRaisesRegex(UsageError, "the plan's mode is the one its brief was composed for"):
+            cli._judge_mode_for(args, self.plan_doc("diagnosis"))
+
+    def test_a_plan_seating_a_judge_without_a_mode_refuses(self):
+        # A flag cannot supply what the plan's brief was never composed for.
+        for args in (self.args, SimpleNamespace(judge_mode="adjudication")):
+            with self.assertRaisesRegex(UsageError, "re-plan with --judge-mode"):
+                cli._judge_mode_for(args, self.plan_doc())
+
+    def test_a_bare_assignments_map_takes_the_flag(self):
+        # Not a plan document: there is no seat to have recorded a mode.
+        args = SimpleNamespace(judge_mode="adjudication")
+        self.assertEqual(cli._judge_mode_for(args, {"judge": "claude"}), "adjudication")
+        self.assertIsNone(cli._judge_mode_for(self.args, {"judge": "claude"}))
+
 
 if __name__ == "__main__":
     unittest.main()

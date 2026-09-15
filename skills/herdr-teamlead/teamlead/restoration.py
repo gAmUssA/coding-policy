@@ -50,6 +50,18 @@ NAME_TAKEN = "agent_name_taken"
 COMMANDS = frozenset({"restore-session"})
 
 
+def _start_clause(attempted):
+    """What the refusal can truthfully say about starts so far.
+
+    The release gate runs twice: before the first start, and again after a
+    start Herdr refused with `agent_name_taken`. Its refusals used to claim no
+    start was attempted from both positions.
+    """
+    if attempted:
+        return "Herdr refused the preceding start with {}, so no process was started under this name, and it was not retried.".format(NAME_TAKEN)
+    return "No start was attempted."
+
+
 def _positive_int(value):
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -79,9 +91,10 @@ def _foreground_pids(info, pane):
     return shell, pids
 
 
-def _pane_state(client, pane, shell_pid, stopped_pid):
+def _pane_state(client, pane, shell_pid, stopped_pid, attempted=False):
     """`shell` once only the archived shell is in the foreground, `stopping` while
-    the stopped process still is. A replaced shell or a foreign occupant raises."""
+    the stopped process still is, `settling` for anything else the gate may wait
+    out. A replaced shell or a foreign occupant raises."""
     shell, pids = _foreground_pids(client.pane_process_info(pane), pane)
     if shell != shell_pid:
         raise HerdrError(
@@ -91,13 +104,15 @@ def _pane_state(client, pane, shell_pid, stopped_pid):
     foreign = [pid for pid in pids if pid not in (shell_pid, stopped_pid)]
     if foreign:
         raise HerdrError(
-            "Pane {} has a foreground process {} that is neither its shell {} nor the stopped process {}; another occupant holds the pane. No start was attempted; inspect it by hand.".format(pane, foreign[0], shell_pid, stopped_pid),
+            "Pane {} has a foreground process {} that is neither its shell {} nor the stopped process {}; another occupant holds the pane. {} Inspect it by hand.".format(pane, foreign[0], shell_pid, stopped_pid, _start_clause(attempted)),
             {"pane": pane, "foreground_pid": foreign[0], "shell_pid": shell_pid, "stopped_pid": stopped_pid},
         )
-    return "shell" if pids == [shell_pid] else "stopping"
+    if pids == [shell_pid]:
+        return "shell"
+    return "stopping" if stopped_pid in pids else "settling"
 
 
-def _name_state(client, name, pane):
+def name_state(client, name, pane, attempted=False):
     """`released` once Herdr answers agent_not_found, `reserved` while the old
     record still names this pane. Any other answer raises."""
     try:
@@ -108,33 +123,35 @@ def _name_state(client, name, pane):
         raise
     if record.get("pane_id") != pane:
         raise HerdrError(
-            "Agent name {!r} is bound to pane {!r}, not the restoration pane {!r}; the name belongs to another worker. No start was attempted.".format(name, record.get("pane_id"), pane),
+            "Agent name {!r} is bound to pane {!r}, not the restoration pane {!r}; the name belongs to another worker. {} Inspect that worker and both panes and reconcile the archived identity before retrying; rename or stop nothing on its account.".format(name, record.get("pane_id"), pane, _start_clause(attempted)),
             {"agent": name, "pane": pane, "bound_pane": record.get("pane_id")},
         )
     return "reserved"
 
 
-def await_release(client, name, pane, shell_pid, stopped_pid, sleep=time.sleep):
+def await_release(client, name, pane, shell_pid, stopped_pid, sleep=time.sleep, attempted=False):
     """Wait, bounded, until the pane holds only its shell and the name is released.
 
     Both predicates are re-read on every attempt and must hold on the same
     read; a pane that regresses after the shell appeared is not released.
     """
-    pane_state = name_state = None
+    pane_state = current_name = None
     for attempt in range(1, RELEASE_POLL_ATTEMPTS + 1):
-        pane_state = _pane_state(client, pane, shell_pid, stopped_pid)
-        name_state = _name_state(client, name, pane)
-        if pane_state == "shell" and name_state == "released":
+        pane_state = _pane_state(client, pane, shell_pid, stopped_pid, attempted)
+        current_name = name_state(client, name, pane, attempted)
+        if pane_state == "shell" and current_name == "released":
             return {"attempts": attempt, "shell_pid": shell_pid}
         if attempt < RELEASE_POLL_ATTEMPTS:
             sleep(RELEASE_POLL_INTERVAL_SEC)
     pending = []
-    if pane_state != "shell":
+    if pane_state == "stopping":
         pending.append("pane {} still runs the stopped process {}".format(pane, stopped_pid))
-    if name_state != "released":
+    elif pane_state != "shell":
+        pending.append("pane {} holds neither only its shell {} nor the stopped process {}".format(pane, shell_pid, stopped_pid))
+    if current_name != "released":
         pending.append("Herdr still reserves the agent name {!r}".format(name))
     raise HerdrError(
-        "Release wait exhausted after {} reads: {}. No start was attempted; inspect the pane by hand before retrying.".format(RELEASE_POLL_ATTEMPTS, "; ".join(pending)),
+        "Release wait exhausted after {} reads: {}. {} Inspect the pane by hand before retrying.".format(RELEASE_POLL_ATTEMPTS, "; ".join(pending), _start_clause(attempted)),
         {"pane": pane, "agent": name, "attempts": RELEASE_POLL_ATTEMPTS},
     )
 
@@ -170,7 +187,7 @@ def start_resumed(client, name, kind, pane, tokens, shell_pid, stopped_pid, slee
             code = error_code(exc)
             if code == NAME_TAKEN and retries < NAME_TAKEN_RETRIES:
                 retries += 1
-                await_release(client, name, pane, shell_pid, stopped_pid, sleep=sleep)
+                await_release(client, name, pane, shell_pid, stopped_pid, sleep=sleep, attempted=True)
                 continue
             if code == NAME_TAKEN:
                 raise HerdrError(

@@ -179,7 +179,7 @@ class ParseConfigTest(unittest.TestCase):
         self.assertEqual(by_name["grok"].dialog_next_tab_keys, ("tab",))
 
     def test_wrong_schema_version_is_rejected(self):
-        payload = dict(VALID, schema_version=3)
+        payload = dict(VALID, schema_version=4)
         with self.assertRaises(ConfigError) as caught:
             parse_config(payload)
         self.assertIn("schema_version", str(caught.exception))
@@ -503,6 +503,41 @@ class JudgeArgvConfigTest(unittest.TestCase):
             judge = parse_judge({"judge": {"agent": "j", "model": "opus-5", "effort": "high", "banner_pattern": pattern}})
             assert judge is not None
             self.assertEqual((judge.model, judge.effort), ("opus-5", "high"))
+
+
+class CapabilitiesTest(unittest.TestCase):
+    def test_old_config_versions_establish_no_specialty(self):
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                agents = parse_config(dict(VALID, schema_version=version))
+                self.assertEqual(agents[0].capabilities, ())
+                self.assertNotIn("capabilities", agents[0].as_dict())
+
+    def test_explicit_capabilities_round_trip_without_launch_changes(self):
+        payload = copy.deepcopy(VALID)
+        payload["schema_version"] = 3
+        payload["agents"][0]["capabilities"] = ["ux", "browser-tools", "a11y"]
+        worker = parse_config(payload)[0]
+        self.assertEqual(worker.capabilities, ("a11y", "browser-tools", "ux"))
+        self.assertEqual(worker.clear_prompt, VALID["agents"][0]["clear_prompt"])
+        rebuilt = parse_config({"schema_version": 3, "agents": [worker.as_dict()]})[0]
+        self.assertEqual(rebuilt, worker)
+        self.assertEqual(payload["agents"][0]["capabilities"], ["ux", "browser-tools", "a11y"])
+
+    def test_invalid_or_unversioned_capabilities_are_refused(self):
+        for capabilities in ("ux", None, ["UX"], ["ux", "ux"], ["ux design"], [1], [[]], [" ux"], ["2ux"]):
+            with self.subTest(capabilities=capabilities):
+                payload = copy.deepcopy(VALID)
+                payload["schema_version"] = 3
+                payload["agents"][0]["capabilities"] = capabilities
+                with self.assertRaisesRegex(ConfigError, "capabilities"):
+                    parse_config(payload)
+        for version in (1, 2):
+            payload = copy.deepcopy(VALID)
+            payload["schema_version"] = version
+            payload["agents"][0]["capabilities"] = []
+            with self.assertRaisesRegex(ConfigError, "schema_version 3"):
+                parse_config(payload)
 
 
 if __name__ == "__main__":

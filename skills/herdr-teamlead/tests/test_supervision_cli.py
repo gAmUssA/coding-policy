@@ -47,6 +47,10 @@ class SupervisionCliTest(fixture.CliCase):
         reports = {role: self.reports[role] for role in assignments} if reports is None else reports
         result = ["apply", "--assignments", json.dumps(assignments), "--common", str(self.common),
                   "--composer-settle", "0", "--now", AT, "--dispatch-id", "dispatch-fixture"]
+        # A seated judge declares what it is for (#425); these fixtures
+        # exercise adjudication, which carries no assessment requirement.
+        if "judge" in assignments and "judge_mode" not in options:
+            result += ["--judge-mode", "adjudication"]
         if task is not None:
             result += ["--task", task]
         result += self.brief_args(*assignments)
@@ -202,6 +206,155 @@ class SupervisionCliTest(fixture.CliCase):
         code, _, err = self.invoke(self.apply_arguments(), self._client({}))
         self.assertEqual(code, 0, err)
         self.assertEqual(len(self.saved()["members"]), 1)
+
+    def test_gated_mixed_batch_refuses_before_resaving_a_replayed_enrollment(self):
+        # Copilot on coding-policy#401: a batch mixing a replayed role and a
+        # new role under an open decision must refuse before the replay's
+        # enrollment is re-saved, so a refused apply writes nothing.
+        from teamlead import attention
+        code, out, err = self.invoke(self.apply_arguments(), self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        supervision.transaction(self.state, lambda data: data["members"].clear())
+        sidecar = supervision.store_path(self.state)
+        before_sidecar, before_state = sidecar.read_bytes(), self.state.read_bytes()
+        attention.write(self.state, "record", {
+            "id": "fixture-decision", "kind": "decision", "task": TASK, "title": "Choose the replacement tester",
+            "context": "The tester's provider refused the brief.", "consequence": "No tester report exists.",
+            "resolution_condition": "Record the user's choice of replacement tester.", "priority": 99,
+            "sources": [{"schema_version": 1, "kind": "user_message", "ref": "conversation/1/message/3"}]}, AT)
+        client = self._client({"claude": "idle"})
+        code, out, err = self.invoke(self.apply_arguments({"developer": "grok", "tester": "claude"}), client)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("fixture-decision", err)
+        self.assertEqual(sidecar.read_bytes(), before_sidecar)
+        self.assertEqual(self.state.read_bytes(), before_state)
+        self.assertEqual(self.runner.calls, [])
+        # A batch of replays alone still returns its receipt and repairs enrollment.
+        code, out, err = self.invoke(self.apply_arguments(), self._client({}))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["applied"][0]["replayed"])
+        self.assertEqual(len(self.saved()["members"]), 1)
+
+    def refusal_args(self, agent, report, dispatch_id, brief=None):
+        # Each replacement carries a fresh report path and, unchanged
+        # otherwise, the same brief identity. Timestamps advance per dispatch.
+        from datetime import datetime, timedelta
+        self.briefs["tester"].write_text(brief or "# tester\nWrite `{0}` covering the plan.\nREPORT: {0}\n".format(report))
+        count = len(json.loads(self.state.read_text())["assignments"]) if self.state.exists() else 0
+        at = (datetime.fromisoformat(AT) + timedelta(seconds=count)).isoformat()
+        return ["apply", "--assignments", json.dumps({"tester": agent}), "--common", str(self.common),
+                "--composer-settle", "0", "--now", at, "--dispatch-id", dispatch_id, "--task", TASK,
+                "--brief", "tester=" + str(self.briefs["tester"]), "--report", "tester=" + report]
+
+    def refusal_receipt(self, agent, report, name):
+        path = self.tmp / name
+        path.write_text(json.dumps({"agent": agent, "state": "idle", "report_path": report, "found": False,
+                                    "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        return str(path)
+
+    def record_refusal(self, dispatch, receipt):
+        record = self.tmp / "refusal-record.json"
+        record.write_text(json.dumps({"dispatch": dispatch, "receipt": receipt}))
+        return self.invoke(["record-refusal", "--record", str(record), "--now", AT])
+
+    def recovery_rows(self):
+        return json.loads(self.state.read_text())["recovery"]["dispatches"]
+
+    def test_a_refused_brief_moves_once_to_another_provider_and_then_stops(self):
+        # coding-policy#399, live case: codex refused the tester brief
+        # mid-execution. The lead may move the brief unchanged to one other
+        # provider; a same-provider resend, a reworded brief, and a third
+        # dispatch after two refusals are refused before any keystroke.
+        reports = {n: str(self.tmp / "tester-{}.md".format(n)) for n in (1, 2, 3, 4)}
+        code, out, err = self.invoke(self.refusal_args("codex", reports[1], "attempt-1"), self._client({"codex": "idle"}))
+        self.assertEqual(code, 0, err)
+        first = json.loads(out)["applied"][0]["dispatch_id"]
+        code, _, err = self.record_refusal(first, self.refusal_receipt("codex", reports[2], "stale.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("is enrolled for " + reports[1], err)
+        code, out, err = self.record_refusal(first, self.refusal_receipt("codex", reports[1], "refusal-1.json"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual((json.loads(out)["provider"], json.loads(out)["report_path"]), ("codex", reports[1]))
+        for extra in ((), ("--dry-run",)):
+            code, out, err = self.invoke(self.refusal_args("codex", reports[2], "attempt-2") + list(extra), self._client({"codex": "idle"}))
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+            self.assertIn("same provider", err)
+            self.assertEqual(self.runner.writes(), [])
+        reworded = "# tester\nWrite `{0}` covering the plan.\nSkip the security checks.\nREPORT: {0}\n".format(reports[2])
+        code, out, err = self.invoke(self.refusal_args("claude", reports[2], "attempt-2", brief=reworded), self._client({"claude": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertIn("reworded brief is not a move", err)
+        self.assertEqual(self.runner.writes(), [])
+        code, out, err = self.invoke(self.refusal_args("claude", reports[2], "attempt-2"), self._client({"claude": "idle"}))
+        self.assertEqual(code, 0, err)
+        second = json.loads(out)["applied"][0]["dispatch_id"]
+        moved = self.recovery_rows()[-1]
+        self.assertEqual((moved["id"], moved["refusal_move"]["from"], moved["refusal_move"]["from_provider"], moved["refusal_move"]["provider"]),
+                         (second, first, "codex", "claude"))
+        self.assertEqual(moved["brief_identity"], self.recovery_rows()[0]["brief_identity"])
+        code, out, err = self.invoke(self.refusal_args("grok", reports[3], "attempt-3"), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertIn("already moved to provider claude", err)
+        code, _, err = self.record_refusal(second, self.refusal_receipt("claude", reports[2], "refusal-2.json"))
+        self.assertEqual(code, 0, err)
+        code, out, err = self.invoke(self.refusal_args("grok", reports[4], "attempt-4"), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("refused by 2 providers", err)
+        self.assertEqual(self.runner.writes(), [])
+        grant = self.tmp / "grant.json"
+        grant.write_text(json.dumps({"id": "grant-1", "task": TASK, "role": "tester", "fix_round": None, "provider": "grok", "brief": "unchanged",
+                                     "decision": "Run the tester on grok with the same brief.",
+                                     "authorization": {"source": "fixture operator message", "quote": "Send it to grok."}}))
+        code, _, err = self.invoke(["authorize-refused-dispatch", "--record", str(grant), "--now", AT])
+        self.assertEqual(code, 0, err)
+        code, _, err = self.invoke(self.refusal_args("codex", reports[4], "attempt-4"), self._client({"codex": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertIn("approves provider grok", err)
+        code, _, err = self.invoke(self.refusal_args("grok", reports[4], "attempt-4", brief=reworded.replace(reports[2], reports[4])), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertIn("approves the refused brief unchanged", err)
+        code, out, err = self.invoke(self.refusal_args("grok", reports[4], "attempt-4"), self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.recovery_rows()[-1]["refusal_move"]["authorization"], "grant-1")
+        code, out, err = self.invoke(self.refusal_args("grok", str(self.tmp / "tester-5.md"), "attempt-5"), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        self.assertIn("refused by 2 providers", err)
+        code, _, err = self.invoke(["status"])
+        self.assertEqual(code, 0, err)
+
+    def test_a_receipt_naming_the_refined_pane_id_is_accepted(self):
+        # coding-policy#403: supervision can fill in a pane id the enrollment
+        # never knew, and wait-report may have been given that one.
+        report = str(self.tmp / "tester-1.md")
+        code, out, err = self.invoke(self.refusal_args("codex", report, "attempt-1"), self._client({"codex": "idle"}))
+        self.assertEqual(code, 0, err)
+        first = json.loads(out)["applied"][0]["dispatch_id"]
+        # A replayed or legacy enrollment can carry no pane id; supervision
+        # fills it in afterwards through a refinement.
+        supervision.transaction(self.state, lambda data: data["members"][0]["assignment"].update(pane_id=None))
+        supervision.refine(self.state, first, "w9:p9", None, AT)
+        self.assertEqual(supervision.expected_assignment(self.saved()["members"][0])["pane_id"], "w9:p9")
+        code, out, err = self.record_refusal(first, self.refusal_receipt("w9:p9", report, "refined.json"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["provider"], "codex")
+
+    def test_record_refusal_needs_the_refused_worker_in_config(self):
+        report = str(self.tmp / "tester-1.md")
+        code, out, err = self.invoke(self.refusal_args("codex", report, "attempt-1"), self._client({"codex": "idle"}))
+        self.assertEqual(code, 0, err)
+        first = json.loads(out)["applied"][0]["dispatch_id"]
+        config = json.loads(self.config.read_text())
+        config["agents"] = [agent for agent in config["agents"] if agent["name"] != "codex"]
+        self.config.write_text(json.dumps(config))
+        code, _, err = self.record_refusal(first, self.refusal_receipt("codex", report, "refusal-1.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("not in config.json", err)
+        code, _, err = self.record_refusal("no-such-dispatch", self.refusal_receipt("codex", report, "refusal-1.json"))
+        self.assertEqual(code, 1)
+        self.assertIn("dispatch", err)
 
     def test_sidecar_failure_after_confirmed_send_does_not_make_it_replayable(self):
         original_enroll = supervision.enroll

@@ -27,9 +27,11 @@ listing every named live agent other than your own pane.
   Report the message verbatim and finish here.
 - **Exit 2** — herdr failed. Report the message verbatim and finish here.
 
-Fewer named workers than roles is a decision, not a detail: either name another
-agent or fold two roles onto one worker in that worker's brief, and say which
-you did.
+An unused specialist profile needs no pane. When the next responsibilities
+outnumber eligible workers, record a staffing decision: name another configured
+worker or schedule separate bounded assignments. Combine compatible expertise
+inside one responsibility when justified. Never combine independent verification
+with the design or implementation it assesses, and never duplicate dispatch targets.
 
 ## Step 3 — Verify Authority for the Repo
 
@@ -118,22 +120,51 @@ before relying on its role. Proceed immediately to Step 5.
 
 ## Step 5 — Plan the Roles
 
+Choose the next needed responsibilities before selecting workers. Consult the
+profiles and requirement contract in `skills/herdr-teamlead/references/specialists.md`; available
+profiles need no activation until a bounded question or deliverable warrants it.
+
+Run `detect-triggers` against the task's base first, with the roles and
+requirements this round intends. It classifies the diff against this repo's
+`.herdr/triggers.json` and exits 1 when a fired trigger is neither staffed nor
+answered by a recorded staffing decision. A Phase 1 round has no diff yet and
+passes `--planned` naming the surfaces the work will touch; a round that
+classifies neither a diff nor a plan is refused. Each invocation reads only the inputs
+it is given, so re-run it after staffing a role or recording a decision and
+plan only once it exits 0. The declaration's fields, the
+decisions file and the answers each trigger accepts are in
+`skills/herdr-teamlead/references/specialists.md`.
+
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
-  --roles developer,tester,reviewer \
+  --roles <role[,role...]> [--requirements <requirements.json>] \
   [--exclude <role>=<agent>[,<agent>...]]... \
-  [--round <role>=<round-type>] [--round-context <evidence.json>] [--fix-round <N>]
+  [--round <role>=<round-type>] [--round-context <evidence.json>] \
+  --task <task-id> [--fix-round <N>] [--correction-plan <id> --work <work.json>]
 ```
 
 Pure computation over the newest snapshot plus the assignment ledger. Contacts
-no agent and appends no assignments. Loading older state may perform owner migrations. Emits `{"assignments":{"<role>":"<agent>"},"rationale":[...],"snapshot_ref":{...}}`.
+no agent and appends no assignments. Loading older state may perform owner migrations.
+Emits the assignment plan with `rationale`, `snapshot_ref`, task context, and
+normalized `requirements` when supplied. Qualified tier data accompanies tiered plans.
 Exit 1 names the reason it could not plan.
 
-`--exclude` bars agents from one role and repeats, once per role. Phase 2 bars
-the author of the branch from `reviewer` and `tester` (`rules/agent-team-operation.md`
-Review Before PR). Exit 1 covers an exclusion naming a role outside `--roles`,
-and an exclusion set no assignment satisfies.
+`--exclude` bars workers from one responsibility and repeats, once per role.
+The owner applies recorded contribution exclusions to task-bound reviewer and
+tester assignments. Add explicit exclusions for external contributors and
+authorship missing from the ledger; a clear, model switch or new label never
+establishes independence. See `skills/herdr-teamlead/references/specialists.md` for assessed contribution
+history. Exit 1 covers an unknown role, missing capability or tier, and any field
+that cannot fill the requested responsibilities. Resolve the actual diagnostic;
+never weaken required independence to fill a seat.
+
+Planning also refuses a field nothing could have been ranked in: a snapshot
+missing an agent `config.json` declares, an `--exclude` list naming nobody the
+snapshot measured, and a ranked seat measured against a single agent beside the
+pinned judge. Re-run Step 4's `measure` over the whole roster rather than
+planning from a single-worker snapshot; the pinned judge seat and a config whose
+rankable roster holds one worker are the only exemptions.
 
 For a retained fix, plan `--roles developer` and exclude every other rotating
 worker from that role. Use the task's existing developer, not a new headroom
@@ -141,17 +172,24 @@ winner. Reserve that developer through initial and early-fix verification before
 reusing it for another task or role. Plan the reviewer and tester separately for
 post-push verification.
 
-`--roles` keys the output document. `role_costs` in config.json re-weighs a
-seat per install. The weights, fill order, and tie-breaks are the planner's
-contract; see `skills/herdr-teamlead/teamlead/planner.py` — the `plan`
-docstring and `DEFAULT_ROLE_COSTS`.
+For a follow-up that will use `--retain-specialist`, plan the consultation alone
+with its original requirements and worker. Use exclusions to preserve that
+worker; a changed candidate requires a fresh handoff. Follow the owner checks in
+`skills/herdr-teamlead/references/dispatch-recovery.md` instead of treating a warm pane as dispatch proof.
+
+`--roles` keys the output document. Configured `role_costs` calibrate its costs.
+`skills/herdr-teamlead/teamlead/composition.py` owns capability, contribution and familiarity evidence;
+`skills/herdr-teamlead/teamlead/planner.py` owns affordability, fill order and headroom optimization.
+The same eligibility checks run before unsent apply. Familiarity reflects a
+matching dispatch, never expertise or completed work. Requirements do not change
+the reserved judge or the developer correction contract.
 
 Tiered configs select each candidate from its per-agent `tiers` table. A
 round choice never overrides a model. Supply the fix number when planning
 fixes; pass that same number at dispatch. Register the original task/base with
 `teamlead task` and use the same `--task` on plan and apply. Authorized extra
 fixes also share `--correction-plan` and `--work`; their owner-managed bounds
-are documented in `references/dispatch-recovery.md`. Keep YOLO mode and supported
+are documented in `skills/herdr-teamlead/references/dispatch-recovery.md`. Keep YOLO mode and supported
 UI options across worker restarts. The config, round-input, billing-evidence,
 and qualification contracts are in:
 
@@ -184,9 +222,10 @@ base. Never infer the base from `HEAD~1`. Set `REVIEW_BASE` and `REVIEW_HEAD`
 to those full SHAs. Rebuild for each changed range, including the final full
 review after scoped fixes.
 
-Before development, use the recorded base for both endpoints. That empty-range
-package is planning input, never evidence of a verified implementation.
-Developer-only, release, and judge briefs need no package; proceed to Step 7.
+For a pre-development tester plan, use the recorded base for both endpoints.
+That empty-range package is planning input, never verified implementation.
+Consultation, developer-only, release, and judge briefs need no package;
+proceed to Step 7. Reviewer briefs are post-push verification only.
 
 Success prints only the absolute artifact path, not JSON. The file contains
 the resolved range, commit list, stat, and patch. Set `TEAMLEAD_REPORTS_DIR`
@@ -253,10 +292,18 @@ What you decide, and it is the whole of your job here:
 - For reviewer and tester: `REVIEW_PACKAGE`, `REVIEW_BASE`, and `REVIEW_HEAD`
   from Step 6. Missing, empty, or non-file package paths refuse composition
   before any brief is written.
+- For advisor, investigator or architect: the bounded consultation values in
+  `skills/herdr-teamlead/references/specialists.md`; the composer selects `brief-specialist.md`.
+- For specialist developer, reviewer or tester work: `SPECIALIST_CONTEXT` in
+  the normal role brief, with the applicable expertise, inputs and capability gaps.
+- For a judge diagnosis under the role key `judge-diagnosis`:
+  `INVESTIGATION_REPORT` (the assessed investigator report the judge rules on),
+  `TASK`, `FIX_ROUNDS`, `REMAINING_WORK`, `ROUND_HISTORY`, `TREE`, and
+  `PRIOR_REMEDY` (any earlier remedy and what it changed, or "none").
 
 | Phase | Role | Mode | Output |
 | ----- | ---- | ---- | ------ |
-| 1 | reviewer | A | design note on the issue |
+| 1 or a needed consultation | architect, advisor or investigator | consultation | design, advice or diagnostic report |
 | 1 | tester | A or B | test plan, or acceptance tests as a patch |
 | 1 | developer | — | implementation, pushed branch, no PR |
 | 2 | reviewer | B | COMMENT review of the pushed branch |
@@ -267,8 +314,8 @@ Phase 2 briefs name the branch AND the commit SHA the worker must report
 against. A report against an older tip does not gate anything.
 
 Name the issue, file, finding, and report path in full in every brief.
-Context retention is limited to the same-role fix rounds in
-`rules/agent-team-operation.md` Fix Loops. Fresh-worker fix briefs include
+Context retention follows Fix Loops or Specialist Consultations in
+`rules/agent-team-operation.md`. Fresh-worker fix briefs include
 the prior attempt count and the ownership handoff that section requires.
 Reviewer and tester verification briefs name `full` or `scoped` review,
 the prior findings, and the follow-up issue for new advisories. The final
@@ -276,7 +323,8 @@ release-gating verification is `full`. Proceed immediately to Step 8.
 
 ## Step 8 — Provision the Worktrees
 
-One call per worker that writes anything:
+Run the prune in the skill's Step 8 first, every round. Then one call per
+worker that writes anything:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -293,7 +341,8 @@ contract; see the header of
 
 The lead provisions every worktree a brief names, so a worker never runs git
 against the shared checkout (`rules/agent-team-operation.md` Writers and
-Checkouts). A read-only Phase 1 reviewer needs none. Remove them per
+Checkouts). A consultation inspecting artifacts without git needs none. Provision
+a read-only checkout if its evidence work requires git. Remove worktrees per
 `rules/agent-worktree-isolation.md` Cleanup once the branch lands.
 
 On any non-zero exit, fix the input it names and re-run this step; do not

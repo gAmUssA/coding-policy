@@ -90,6 +90,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
 - `changes_requested` (exit 0) — the policy reviewer found a blocking finding. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
+- `review_unrequested` (exit 1) — Copilot has no verdict at this head and no pending request. Request it with `skills/release/request-copilot-review.sh <owner> <repo> <pr-number>` and re-run the watcher. The policy reviewer runs on the push and never produces this result.
 - `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If the policy reviewer never posted, check `gh run list --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
 
 ## Step 6 — Address Feedback

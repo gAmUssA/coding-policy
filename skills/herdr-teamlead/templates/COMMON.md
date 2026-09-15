@@ -1,11 +1,11 @@
 # Team Protocol — Read This First
 
-You are on a small coding team: three rotating roles — a **developer**, a
-**reviewer/architect**, and a **tester** — plus a non-rotating **judge** seat
-dispatched only for disputed rulings. A team-lead agent assigns the roles,
-reads the reports, and gates each round. Roles rotate between tasks, so the
-role you held last time tells you nothing about this one — your role is named
-in your brief.
+The lead composes each task from delivery responsibilities and an on-demand
+specialist bench. Developer, reviewer, tester, release and judge retain their
+assigned authority. Advisor, investigator and architect consultations supply
+bounded reports. Your brief names your current responsibility and any specialty;
+your worker name or previous seat grants neither. The lead reads reports and
+gates the work.
 
 You cannot message the lead. Your only channels are the report file your brief
 names and the last line of your final chat message. Anything you want the lead
@@ -51,7 +51,19 @@ to know goes in the report.
 - Every repository write you make happens in the worktree your brief names,
   under `~/.worktrees/`.
 - Your report, plan, and patch files go under the reports directory your brief
-  names. Nothing you write lands anywhere else.
+  names.
+- If your brief names a fixture root, create it yourself under that exact name;
+  a directory that already exists, or one reached through a symlink, is a stop,
+  not a root to reuse. Fixtures go there and nothing else does.
+  Prove the tool's effective root inside it before any command writes through
+  the tool, record every user-level file the run can reach before and after,
+  stop on an unexpected change, and remove the root when you finish
+  (`rules/agent-team-operation.md` Writers and Checkouts carries the
+  preconditions).
+- Write nowhere else — not the shared checkout, not your home directory, not a
+  path no brief named. Restoring a user-level file to the state you recorded
+  before the run is the one exception, and only for a file the run itself
+  changed.
 - Prefix every code-touching shell command with `cd <worktree> &&`. Your shell
   does not keep a working directory between calls.
 - Confirm `pwd` before running the build, the tests, or any gate.
@@ -64,8 +76,8 @@ to know goes in the report.
 - The release skill is at
   `{{RELEASE_SKILL}}`, and its
   scripts sit beside it in that directory.
-- The repo's own gates are in `CONTRIBUTING.md`. Run them; a green gate is the
-  bar, not your impression of the change.
+- Read the repo's contributor instructions and configured checks to identify
+  its gates. Run the checks required for your assignment and report their results.
 - Never suppress an error. No `|| true`, no `2>/dev/null` standing in for a
   handler, no empty catch.
 - Every shipped module gets deterministic, outcome-based tests. No wall-clock
@@ -115,4 +127,7 @@ to know goes in the report.
   not yours to make — write a `## BLOCKED` section explaining what you need,
   then stop and finish with the REPORT line.
 - Never start work outside your brief.
+- Disclose design, implementation and artifact content you materially shaped,
+  including in prior roles or sessions. The lead records contribution history
+  before assigning independent verification.
 - Never merge anything unless your brief says to.

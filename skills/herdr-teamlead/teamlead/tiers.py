@@ -37,6 +37,7 @@ DEFAULT_ROUNDS = {
     "developer": "build", "tester": "hostile_verify", "reviewer": "review",
     "release": "release_adjudication", "architect": "architect",
     "critic": "critic", "lead": "lead",
+    "advisor": "architect", "investigator": "reconciliation",
 }
 ROLE_ROUNDS = {
     "developer": frozenset({"build", "fix", "mechanical"}),
@@ -45,6 +46,8 @@ ROLE_ROUNDS = {
     "release": frozenset({"release_adjudication", "release_mechanics"}),
     "architect": frozenset({"architect", "reconciliation"}),
     "critic": frozenset({"critic"}), "lead": frozenset({"lead"}),
+    "advisor": frozenset({"architect"}),
+    "investigator": frozenset({"reconciliation"}),
 }
 MECHANICAL_TASKS = frozenset({
     "rebase", "restack", "apply_exact_patch", "docs_only", "check_rerun",
@@ -99,6 +102,10 @@ RESUME_REFUSALS = {
     "grok": frozenset({"-c", "--continue", "--fork-session", "-s", "--session-id", "--restore-code", "-w", "--worktree"}),
 }
 SESSION_UUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\Z")
+
+
+class MissingTierError(UsageError):
+    """A candidate lacks a required row; other candidates may still qualify."""
 
 
 def _error(message):
@@ -335,7 +342,7 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     if fix_round is not None and fix_round >= 4:
         chosen_round = "review"
     if chosen_round not in agent.tiers:
-        raise UsageError("Agent {} has no {!r} tier; add the required row before planning.".format(agent.name, chosen_round), {})
+        raise MissingTierError("Agent {} has no {!r} tier; add the required row before planning.".format(agent.name, chosen_round), {})
     tier = dict(agent.tiers[chosen_round])
     if round_type in {"mechanical", "release_mechanics"} and not mechanical_allowed(context):
         raise UsageError("Mechanical eligibility is unproven or an escape condition fired; use a judgment round with a fresh brief.", {})
@@ -352,7 +359,7 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
         # High risk also excludes a lower build/fix model, not only low effort.
         if tier["model"] not in TOP_MODELS[agent.kind]:
             if "review" not in agent.tiers:
-                raise UsageError("High-risk work needs the configured review tier.", {})
+                raise MissingTierError("Agent {} has no review tier for high-risk work; add and qualify its review row before assigning it this round.".format(agent.name), {})
             tier = dict(agent.tiers["review"])
             chosen_round = "review"
         if agent.kind in {"claude", "codex"} and tier["effort"] not in {"xhigh", "max"}:

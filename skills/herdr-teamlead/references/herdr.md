@@ -82,7 +82,7 @@ Claude Code and Codex need no restart for them
 A screen-derived state flickers by construction: it is whatever the pane looked
 like at the moment of the read. The report file plus the `REPORT: ` marker is
 the report-delivery signal. The lead assesses the actual work and records
-acceptance separately in `references/task-ledger.md`.
+acceptance separately in `skills/herdr-teamlead/references/task-ledger.md`.
 
 Observed in the 2026-09-01 round:
 
@@ -409,7 +409,7 @@ brief, so the brief does not land in the clearing dialog.
   the same tessl plugin installed, so the same hooks and skills load at session
   start and the same policy governs every role.
 - **Bare worker starts can enable permission prompts.** Follow the YOLO
-  launch contract in `references/model-tiers.md` for every start and restart.
+  launch contract in `skills/herdr-teamlead/references/model-tiers.md` for every start and restart.
   Read the installed CLI's help when upgrading an adapter; a runtime's default
   mode or an old pane banner never proves the required launch flags.
 - **One GitHub account.** The workers usually share the operator's GitHub

@@ -40,6 +40,13 @@ alwaysApply: true
 - Poll interval and give-up budget are script-owned constants, never numbers an agent picks per run
 - Never wrap a watch in an invented wall-clock `timeout` — a watcher gives up only at its own documented budget
 - The pre-merge review watch runs ONLY through `skills/release/watch-pr-reviews.sh` — never a hand-rolled poll loop
+- The pre-merge watch belongs to the merge decision; a stage that does not merge reads a snapshot instead
+- Reading an open PR's current gate evidence without merging runs `skills/release/poll-pr-reviews.sh` once, never the blocking watch
+- The snapshot's `requested` is exactly one fact: a review request for that login is still pending on the PR
+- It is false for a review that already posted, and false for a push-triggered reviewer, which is never requested at all
+- Resolve a reviewer's arrival by how it is triggered: a push-triggered review is owed by the push, a request-triggered one only once requested
+- A request-triggered lane with no posted review and no pending request is diagnosed and named, never waited out
+- Never wait on a request-triggered review the waiting role has no scope to request
 - A bot review is complete when its verdict posts (state leaves `none`), zero inline comments included — never wait for comments to appear
 - For a reviewer workflow, the run `conclusion` reports only that the workflow finished, never that the review happened — a fail-open gate can report `success` having reviewed nothing
 - Gate a reviewer workflow on its posted verdict, not the check's color; never promote it to a required branch-protection gate while a fail-open path exists

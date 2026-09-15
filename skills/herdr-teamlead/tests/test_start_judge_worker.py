@@ -55,8 +55,11 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
     def run_launcher(self, model="claude-fable-5-1", effort: str | None = "max", kind="claude", launch_args=None, **env):
         self.log.unlink(missing_ok=True)
         launch_state = self.root / ("state-" + str(len(list(self.root.glob("state-*.retrospectives")))) + ".json")
+        # The plan carries the seat's declared mode (#425); these fixtures
+        # exercise adjudication, which carries no assessment requirement.
         self.plan.write_text(json.dumps({"schema_version": 3, "assignments": {"judge": "judge"},
-            "judge": {"agent": "judge", "model": model, "effort": effort, "launch_args": launch_args or []}}), encoding="utf-8")
+            "judge": {"agent": "judge", "model": model, "effort": effort, "mode": "adjudication",
+                      "launch_args": launch_args or []}}), encoding="utf-8")
         return subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", kind,
                                "--state", str(launch_state), "--now", "2026-09-09T10:00:00+00:00", "--task", "judge-fixture"],
             env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log), **env},
@@ -101,6 +104,26 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
                 result = self.run_launcher(FAKE_ARGV=json.dumps(argv))
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(result.stdout, "")
+
+    def test_a_plan_with_no_declared_mode_never_starts(self):
+        # coding-policy#425: an undeclared mode is refused, never defaulted —
+        # defaulting would pick which of the two gates the seat is held to.
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(self.plan.read_text())
+        del plan["judge"]["mode"]
+        self.plan.write_text(json.dumps(plan), encoding="utf-8")
+        self.log.unlink(missing_ok=True)
+        launch_state = self.root / "state-no-mode.json"
+        result = subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", "claude",
+                                 "--config", str(self.root / "config.json"),
+                                 "--state", str(launch_state), "--now", "2026-09-09T10:00:00+00:00",
+                                 "--task", "judge-fixture"],
+            env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log)},
+            capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("re-plan with --judge-mode", result.stdout + result.stderr)
+        self.assertFalse(self.log.exists(), "no worker may be started without a declared mode")
 
     def test_invalid_config_never_starts(self):
         for model, effort, kind in (("", "max", "claude"), ("opus-5", "invalid", "claude"),

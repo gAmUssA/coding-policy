@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "package_roots": [
+    "skills/*",
+    "hooks",
+    "scripts",
+    ".github/actions/*"
+  ],
+  "package_change_lines": 400,
+  "trust_boundary_paths": [
+    ".github/workflows/*",
+    ".herdr/triggers.json",
+    "hooks/*",
+    "rules/*",
+    "skills/herdr-teamlead/*.sh",
+    "skills/herdr-teamlead/teamlead/*.py",
+    "skills/herdr-teamlead/verify-authority.sh",
+    "skills/onboard-repo/*",
+    "skills/onboard-repo/templates/*",
+    "skills/release/*"
+  ],
+  "cli_spec_paths": [
+    "skills/herdr-teamlead/teamlead/*.py",
+    "skills/*/*.sh",
+    "skills/*/*.py",
+    "scripts/*.sh",
+    "hooks/*.sh"
+  ],
+  "cli_surface_markers": [
+    "add_parser(",
+    "add_argument(",
+    "raise UsageError(",
+    "raise PlanError(",
+    "_fail(",
+    "usage:",
+    "Usage:",
+    "getopts",
+    ">&2"
+  ],
+  "user_doc_paths": [
+    "README.md",
+    "docs/*"
+  ]
+}

@@ -244,7 +244,8 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
         plan = self.root / "judge-plan.json"
         plan.write_text(json.dumps({"assignments": {"judge": "codex"},
                                    "task_context": {"task": "judge-task"},
-                                   "judge": {"agent": "codex", "model": "gpt-5.6-sol", "effort": "high"}}))
+                                   "judge": {"agent": "codex", "model": "gpt-5.6-sol", "effort": "high",
+                                             "mode": "adjudication"}}))
         self.runner.set("pane process-info", json.dumps({"result": {"process_info": {
             "pane_id": "w3:p1", "shell_pid": 100, "foreground_processes": [{"name": "zsh", "pid": 100, "argv": ["zsh"]}]}}}))
         def start(name, kind, pane, flags):
@@ -261,6 +262,29 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
         with self.assertRaises(UsageError):
             self.guard(task="another-task", no_clear=True).preflight([step])
         self.assertEqual(notes.load(self.path)["baseline_at"], AT)
+
+    def test_judge_start_refuses_while_a_decision_on_the_task_is_unanswered(self):
+        # coding-policy#399: a judge seat is dispatch too; the gate that
+        # refuses `apply` on an unanswered decision refuses `start-judge`.
+        from teamlead import attention
+        self.path = self.root / "gated-team.json"
+        plan = self.root / "gated-judge-plan.json"
+        plan.write_text(json.dumps({"assignments": {"judge": "codex"},
+                                   "task_context": {"task": "judge-task"},
+                                   "judge": {"agent": "codex", "model": "gpt-5.6-sol", "effort": "high",
+                                             "mode": "adjudication"}}))
+        attention.write(self.path, "record", {
+            "id": "judge-task-tester", "kind": "decision", "task": "judge-task", "title": "Choose the replacement tester",
+            "context": "The tester's provider refused the brief.", "consequence": "No tester report exists.",
+            "resolution_condition": "Record the user's choice of replacement tester.", "priority": 99,
+            "sources": [{"schema_version": 1, "kind": "user_message", "ref": "conversation/1/message/3"}]}, AT)
+        with patch.object(self.client, "agent_start") as start:
+            rc, out, err = self.invoke("start-judge", "--assignments", str(plan), "--pane", "w3:p1", "--kind", "codex", "--now", AT)
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertIn("judge-task-tester", err)
+        self.assertEqual(start.call_count, 0)
+        self.assertFalse(self.path.exists())
 
     def test_canonical_state_symlink_survives_owner_write(self):
         alias = self.root / "alias.json"

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teamlead.errors import ConfigError, HerdrError, UsageError
-from teamlead.tiers import launch_flags, mechanical_allowed, parse_tiers, select_tier as _select_tier, verify_argv, verify_worker_permissions, worker_launch_args
+from teamlead.tiers import MissingTierError, launch_flags, mechanical_allowed, parse_tiers, select_tier as _select_tier, verify_argv, verify_worker_permissions, worker_launch_args
 
 
 def select_tier(*args, **kwargs):
@@ -72,6 +72,32 @@ class TierConfigTest(unittest.TestCase):
 
 
 class SelectionTest(unittest.TestCase):
+    def test_only_missing_candidate_tiers_have_a_skippable_error(self):
+        worker = agent()
+        with self.assertRaisesRegex(MissingTierError, "architect"):
+            select_tier(worker, "advisor")
+        worker.tiers.pop("review")
+        with self.assertRaisesRegex(MissingTierError, "review tier"):
+            select_tier(worker, "developer", context={"prior_high_miss": True})
+        for role, requested, context in (("advisor", "build", {}), ("developer", "build", {"unknown": True})):
+            with self.subTest(role=role), self.assertRaises(UsageError) as caught:
+                select_tier(worker, role, requested, context)
+            self.assertNotIsInstance(caught.exception, MissingTierError)
+
+    def test_consultations_use_fixed_judgment_rounds(self):
+        worker = agent()
+        worker.tiers.update(parse_tiers({
+            "architect": {"model": "opus-5", "effort": "high"},
+            "reconciliation": {"model": "opus-5", "effort": "high"},
+        }, worker.kind))
+        for role, expected in (("advisor", "architect"), ("investigator", "reconciliation")):
+            with self.subTest(role=role):
+                self.assertEqual(select_tier(worker, role)["round"], expected)
+                self.assertEqual(select_tier(worker, role)["model"], "opus-5")
+                for forbidden in ("build", "fix", "mechanical", "release_mechanics", "review"):
+                    with self.assertRaisesRegex(UsageError, "cannot perform role"):
+                        select_tier(worker, role, forbidden, mechanical_context())
+
     def test_initial_build_and_late_fix_have_different_models(self):
         worker = agent()
         self.assertEqual(select_tier(worker, "developer")["model"], "sonnet-5")
