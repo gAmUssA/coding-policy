@@ -161,6 +161,16 @@ class RequirementsTest(TempCase):
                         "independent": False, "engagement": "boundary-review"}}}))
         self.assertEqual(triggers.load_requirements(self.path), {"security"})
 
+    def test_a_developer_specialty_covers_no_trigger(self):
+        # A developer with a security specialty is still the implementer, not
+        # the consultation Team Composition requires before the work.
+        path = self.tmp / "requirements.json"
+        path.write_text(json.dumps({"schema_version": triggers.REQUIREMENTS_SCHEMA_VERSION, "assignments": {
+            "developer": {"specialty": "security", "required_capabilities": ["threat"]},
+            "tester": {"specialty": "documentation"},
+            "advisor": {"specialty": "accessibility"}}}))
+        self.assertEqual(triggers.load_requirements(path), {"accessibility"})
+
     def test_absent_path_staffs_nothing(self):
         self.assertEqual(triggers.load_requirements(None), set())
 

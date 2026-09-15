@@ -197,7 +197,7 @@ independence. `engagement` identifies the bounded consultation across its
 follow-ups, not a new task or correction budget. Give each distinct engagement
 its own identity and preserve the parent task identity.
 
-The input parser in `teamlead/composition.py` owns the accepted keys and names.
+The input parser in `skills/herdr-teamlead/teamlead/composition.py` owns the accepted keys and names.
 Reviewer and tester requirements use `independent: true`. New advisor and
 investigator assignments require a requirements file; supply it for every new
 architect consultation too. Legacy architect records remain readable but establish
@@ -229,7 +229,7 @@ gap to resolve or report; do not claim visual inspection, user research,
 assistive technology coverage or measurements that the worker cannot perform.
 Avoid activating adjacent specialist workflows solely from a changed filename.
 
-Compose each consultation with `templates/brief-specialist.md` through the
+Compose each consultation with `skills/herdr-teamlead/templates/brief-specialist.md` through the
 composer; its canonical consultation roles select that shared template. Supply
 `TASK`, `SPECIALTY`, `RESPONSIBILITY`, `OBJECTIVE`, `ACCEPTANCE_CRITERIA`, `INPUTS`,
 `TOOLS_AND_SKILLS`, `SCOPE_LIMITS`, `CONTRIBUTION_HISTORY`, `KNOWLEDGE` and `REPORT`,
@@ -333,7 +333,7 @@ history retains unknown scope, and architecture work remains a possible
 contribution until assessed against actual output. The owner never infers
 independence from a newer schema stamp. External authors and work without usable
 task provenance still need the lead's explicit exclusions. Follow the planning
-contract in `references/round-setup.md` Step 5 rather than reclassifying history
+contract in `skills/herdr-teamlead/references/round-setup.md` Step 5 rather than reclassifying history
 from a worker's current label.
 
 Keep a useful worker idle after its report when follow-up is likely and capacity

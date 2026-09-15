@@ -121,7 +121,7 @@ before relying on its role. Proceed immediately to Step 5.
 ## Step 5 — Plan the Roles
 
 Choose the next needed responsibilities before selecting workers. Consult the
-profiles and requirement contract in `references/specialists.md`; available
+profiles and requirement contract in `skills/herdr-teamlead/references/specialists.md`; available
 profiles need no activation until a bounded question or deliverable warrants it.
 
 Run `detect-triggers` against the task's base first, with the roles and
@@ -154,7 +154,7 @@ Exit 1 names the reason it could not plan.
 The owner applies recorded contribution exclusions to task-bound reviewer and
 tester assignments. Add explicit exclusions for external contributors and
 authorship missing from the ledger; a clear, model switch or new label never
-establishes independence. See `references/specialists.md` for assessed contribution
+establishes independence. See `skills/herdr-teamlead/references/specialists.md` for assessed contribution
 history. Exit 1 covers an unknown role, missing capability or tier, and any field
 that cannot fill the requested responsibilities. Resolve the actual diagnostic;
 never weaken required independence to fill a seat.
@@ -189,7 +189,7 @@ round choice never overrides a model. Supply the fix number when planning
 fixes; pass that same number at dispatch. Register the original task/base with
 `teamlead task` and use the same `--task` on plan and apply. Authorized extra
 fixes also share `--correction-plan` and `--work`; their owner-managed bounds
-are documented in `references/dispatch-recovery.md`. Keep YOLO mode and supported
+are documented in `skills/herdr-teamlead/references/dispatch-recovery.md`. Keep YOLO mode and supported
 UI options across worker restarts. The config, round-input, billing-evidence,
 and qualification contracts are in:
 
@@ -293,7 +293,7 @@ What you decide, and it is the whole of your job here:
   from Step 6. Missing, empty, or non-file package paths refuse composition
   before any brief is written.
 - For advisor, investigator or architect: the bounded consultation values in
-  `references/specialists.md`; the composer selects `brief-specialist.md`.
+  `skills/herdr-teamlead/references/specialists.md`; the composer selects `brief-specialist.md`.
 - For specialist developer, reviewer or tester work: `SPECIALIST_CONTEXT` in
   the normal role brief, with the applicable expertise, inputs and capability gaps.
 - For a judge diagnosis under the role key `judge-diagnosis`:

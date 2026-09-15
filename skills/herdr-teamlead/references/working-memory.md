@@ -61,7 +61,7 @@ selected knowledge through `KNOWLEDGE` in the consultation brief or
 Before releasing a useful session, capture decisions, rejected alternatives,
 unresolved evidence and lessons that would otherwise disappear. Link the outgoing
 report, lead assessment and retrospective from the task handoff. A warm session
-can support follow-up under `references/dispatch-recovery.md`; it is never the
+can support follow-up under `skills/herdr-teamlead/references/dispatch-recovery.md`; it is never the
 only copy of valuable knowledge. Give a fresh worker the durable sources without
 claiming that recalled context proves present competence or independence.
 

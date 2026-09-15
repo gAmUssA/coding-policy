@@ -15,7 +15,7 @@ The shape of one task round, and what the lead does between the steps of
 | judge | none | binding dispute ruling |
 
 Activate the responsibilities the next task decision needs. Add specialty
-requirements through `references/specialists.md`; a profile on the bench needs
+requirements through `skills/herdr-teamlead/references/specialists.md`; a profile on the bench needs
 no worker or monitoring loop. One worker holds one assignment in a dispatch.
 Compatible expertise may share a responsibility. Consultations with the same
 canonical responsibility use separate dispatches, each with its own engagement.
@@ -67,7 +67,7 @@ not a review of the code that got written, and a test plan is not a test run.
 Phase 2 excludes actual design and implementation contributors from reviewer
 and tester. The owner applies recorded contribution history; use `--exclude`
 for relevant contributions outside it. Assess uncertain prior consultations
-under `references/specialists.md`. The reviewer responsibility is verification
+under `skills/herdr-teamlead/references/specialists.md`. The reviewer responsibility is verification
 only; it no longer carries pre-development Mode A. Historical reviewer
 responsibility remains unknown until its actual contribution is established.
 
@@ -106,18 +106,18 @@ assignment, or closes an investigation-only knowledge deliverable through Step 1
    It re-reads live status and refuses to type into a busy worker.
 9. **Observe** — `supervision-watch` observes every enrolled worker. Verify
    candidates with `wait-report.sh --once`, ledger outcomes, and acknowledge
-   handled events under `references/supervision.md`.
+   handled events under `skills/herdr-teamlead/references/supervision.md`.
 10. **Gate** — the lead reads every report in full and decides: another round,
    or the release hand-off.
 
 Before relying on consultation output, save the report delivery receipt and run
-`assess-specialist` under `references/specialists.md`. Record the accepted outcome
+`assess-specialist` under `skills/herdr-teamlead/references/specialists.md`. Record the accepted outcome
 in the task ledger and resolve its supervision obligations separately. Keep
 useful sessions available for likely follow-up, while preserving scoped lessons
 outside the session. No idle specialist counts as active work.
 
 The lead appends decisions throughout this flow to the persistent task ledger,
-including before pauses and handoffs. `references/task-ledger.md` separates
+including before pauses and handoffs. `skills/herdr-teamlead/references/task-ledger.md` separates
 dispatch and report observations from assignment acceptance and task completion.
 All references to the round log here mean that ledger.
 
@@ -354,7 +354,7 @@ spent, and `stop` is terminal, so a task takes at most five diagnoses. No
 operator sits in the path of any of them.
 
 `rules/agent-team-operation.md` Judge Seat carries the contract; the record
-shapes are the owner's, in `references/dispatch-recovery.md`.
+shapes are the owner's, in `skills/herdr-teamlead/references/dispatch-recovery.md`.
 
 It is read-only without exception in either mode: no file edit, no mutating
 git or `gh` command, no GitHub post, no subagent dispatch.
@@ -409,7 +409,7 @@ and no degraded ruling.
 ## Dispatch Results
 
 Step 10 of `skills/herdr-teamlead/SKILL.md` follows these outcomes. Before a
-finish, apply the whole-fleet pause/handoff contract in `references/supervision.md`.
+finish, apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/references/supervision.md`.
 
 - **Exit 0** — proceed to Step 11.
 - **Busy target** — no dispatch occurred. Wait for readiness or replan; stay
@@ -428,7 +428,7 @@ finish, apply the whole-fleet pause/handoff contract in `references/supervision.
 ## Ruling Outcomes
 
 Step 19 follows these branches. Before a finish, preserve any user question and
-apply the whole-fleet pause/handoff contract in `references/supervision.md`.
+apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/references/supervision.md`.
 
 The `RULING:` line binds the round. Only the operator overrides it.
 
@@ -457,7 +457,11 @@ authorization. A blocked ruling follows the operator-question path below.
 - **`REMEDY: stop`** — record the diagnosis, release what is clean, and record
   the remainder as a tracked accepted defect. The remedy carries that
   authority; do not re-escalate it. Proceed to Step 20 for what ships.
-- A remedy's bound exhausting with blocking work remaining returns to Step 13
-  for the next diagnosis, one rung down the ladder — or at the same rung once,
-  when the spent remedy made progress the new diagnosis records in `PROGRESS`.
-  Never re-enter above the last rung, and never repeat a rung twice.
+- A remedy's bound exhausting with blocking work remaining returns to Step
+  12's exhaustion workflow: record a new checkpoint, consult the investigator
+  again so an assessed consultation follows the latest developer attempt, then
+  take that assessment to Step 13 for the next diagnosis, one rung down the
+  ladder — or at the same rung once, when the spent remedy made progress the
+  new diagnosis records in `PROGRESS`. The previous assessment never satisfies
+  the new diagnosis. Never re-enter above the last rung, and never repeat a
+  rung twice.

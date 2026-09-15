@@ -178,8 +178,14 @@ def load_plan(path):
     return plan
 
 
+#: The responsibilities whose specialty answers a fired trigger. A developer
+#: carrying a specialty is still the implementer; Team Composition requires the
+#: consultation deliverable, or a recorded staffing decision, before the work.
+CONSULTATION_ROLES = frozenset({"advisor", "investigator", "architect"})
+
+
 def load_requirements(path):
-    """Collect the specialties a requirements file staffs, for trigger cover."""
+    """Collect the specialties the consultation seats staff, for trigger cover."""
     if path is None:
         return set()
     try:
@@ -195,7 +201,9 @@ def load_requirements(path):
             or not isinstance(payload["assignments"], dict)):
         raise UsageError("Requirements must be a schema_version {} object with an assignments map; use the documented requirements file.".format(REQUIREMENTS_SCHEMA_VERSION), {})
     found = set()
-    for record in payload["assignments"].values():
+    for role, record in payload["assignments"].items():
+        if role not in CONSULTATION_ROLES:
+            continue
         if isinstance(record, dict) and isinstance(record.get("specialty"), str):
             found.add(record["specialty"])
     return found

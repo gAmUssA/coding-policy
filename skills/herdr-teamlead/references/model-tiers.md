@@ -64,7 +64,7 @@ under the comment block above them. Tiered proof (`verify_argv`) stays exact
 and accepts no resume form.
 Do not clear a retained worker to repair a permission mismatch. Use the normal
 fresh-dispatch boundary once the current assignment is resolved, or the
-same-session restoration in `references/dispatch-recovery.md` when the
+same-session restoration in `skills/herdr-teamlead/references/dispatch-recovery.md` when the
 operator expressly requires YOLO for that retained developer.
 
 Recheck model availability and CLI flag spellings when upgrading a worker's
