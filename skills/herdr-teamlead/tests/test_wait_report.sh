@@ -783,7 +783,7 @@ ${base}"
   # nothing and is retryable, never completed-work recovery.
   printf 'older\n' > "$stall_wt/older.txt" || die "write failed"
   git -C "$stall_wt" add older.txt || die "git add failed"
-  git -C "$stall_wt" commit -q -m "older unpushed" || die "git commit failed"
+  git -C "$stall_wt" -c user.name=t -c user.email=t@t commit -q -m "older unpushed" || die "git commit failed"
   local later_base
   later_base="$(git -C "$stall_wt" rev-parse HEAD)" || die "rev-parse failed"
   stall_run "$stall_wt" --base "$later_base"
