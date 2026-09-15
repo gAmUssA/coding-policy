@@ -16,6 +16,7 @@ heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
 ### Fixed
 
+- **Two untracked-file blind spots in the synced upstream code.** The handoff hook's cleanliness reads ran `git status --porcelain` without `--untracked-files=all`, so a checkout configured with `status.showUntrackedFiles=no` could read a worktree holding untracked work as clean and list it for removal; every cleanliness read now passes the flag, as `prune-worktrees.sh` already did. `teamlead validate-partition` without `--head` read `git diff` alone, which excludes untracked files, so a partition could pass while a new file sat unowned; the working-tree path now folds `git ls-files --others --exclude-standard` into the changed set, as trigger detection does. Both caught by the policy review on #4 and worth offering upstream.
 - **The handoff hook sees every spent worktree.** A worktree that is clean and holds nothing the default branch lacks is reported removable whether or not its branch was ever pushed; dirty, unmerged, locked, and detached worktrees reach the operator on stderr with their reason and are never listed for removal. The supervision Stop hook no longer writes bytecode into the installed plugin. From upstream #433 and #385.
 
 ## 0.2.0 — 2026-09-09

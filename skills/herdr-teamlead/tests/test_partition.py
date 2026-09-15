@@ -125,8 +125,11 @@ class RunCommand(unittest.TestCase):
         self.path = self.tmp / "partition.json"
         self.path.write_text(json.dumps(document()))
 
-    def runner(self, changed):
+    def runner(self, changed, untracked=()):
         def run(args):
+            if "ls-files" in args:
+                self.assertIn("--others", args)
+                return "".join("{}\0".format(path) for path in untracked)
             self.assertIn("--name-status", args)
             return "".join("M\0{}\0".format(path) for path in changed)
         return run
@@ -136,6 +139,25 @@ class RunCommand(unittest.TestCase):
         result, failure = partition.run_command(args, runner=self.runner(["src/api/routes.py", "src/core/db.py"]))
         self.assertIsNone(failure)
         self.assertEqual([entry["name"] for entry in result["slices"]], ["api", "core"])
+
+    def test_an_untracked_file_counts_as_changed_in_the_working_tree(self):
+        args = SimpleNamespace(repo=str(self.tmp), base="BASE", head=None, partition=str(self.path))
+        with self.assertRaisesRegex(UsageError, "unowned"):
+            partition.run_command(args, runner=self.runner(["src/api/routes.py"], untracked=["new_module.py"]))
+
+    def test_an_owned_untracked_file_validates(self):
+        args = SimpleNamespace(repo=str(self.tmp), base="BASE", head=None, partition=str(self.path))
+        result, failure = partition.run_command(args, runner=self.runner(["src/api/routes.py"], untracked=["src/core/new.py"]))
+        self.assertIsNone(failure)
+        self.assertEqual([entry["name"] for entry in result["slices"]], ["api", "core"])
+
+    def test_a_pushed_head_reads_no_untracked_files(self):
+        args = SimpleNamespace(repo=str(self.tmp), base="BASE", head="HEAD", partition=str(self.path))
+        def run(arguments):
+            self.assertNotIn("ls-files", arguments)
+            return "M\0src/api/routes.py\0M\0src/core/db.py\0"
+        result, failure = partition.run_command(args, runner=run)
+        self.assertIsNone(failure)
 
     def test_an_unowned_changed_path_refuses_the_round(self):
         args = SimpleNamespace(repo=str(self.tmp), base="BASE", head=None, partition=str(self.path))

@@ -193,7 +193,7 @@ main() {
         [[ -n "$b" ]] || why="detached, ${why}"
         if [[ -d "$p" ]]; then
           local st strc=0
-          st="$(git -C "$p" status --porcelain 2>/dev/null)" || strc=$?
+          st="$(git -C "$p" status --porcelain --untracked-files=all 2>/dev/null)" || strc=$?
           if (( strc != 0 )); then
             warn "\`git status\` failed in ${p} (exit ${strc}) — its cleanliness is unknown; inspect that checkout by hand"
             why="unreadable, ${why}"
@@ -322,7 +322,7 @@ worktree_is_spent() { # <path> <branch|""> <default-ref>
     SPENT_REASON="missing"
     return 1
   fi
-  status="$(git -C "$path" status --porcelain 2>/dev/null)" || rc=$?
+  status="$(git -C "$path" status --porcelain --untracked-files=all 2>/dev/null)" || rc=$?
   if (( rc != 0 )); then
     warn "\`git status\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect that checkout by hand"
     return 1
@@ -493,7 +493,7 @@ collect_changed_lintable() {
 # A dirty working tree is report-only — often intentional WIP, never blocks alone.
 check_dirty_tree() {
   local status rc=0
-  status="$(git status --porcelain)" || rc=$?
+  status="$(git status --porcelain --untracked-files=all)" || rc=$?
   if (( rc != 0 )); then
     warn "git status failed (exit ${rc}) — skipping the dirty-tree report"
     return 0

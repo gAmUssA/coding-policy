@@ -225,6 +225,17 @@ main() {
      && [[ "$(cat "$TMP/r4d.err")" == *"r4d-dirty"* ]] && [[ "$(cat "$TMP/r4d.err")" == *"dirty"* ]]; then
     pass; else fail "dirty worktree: report, never remove: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4d.err")"; fi
 
+  # 4a-iv-b. `status.showUntrackedFiles=no` must not hide the untracked work:
+  # the cleanliness read passes --untracked-files=all, as prune-worktrees.sh does.
+  mk_origin o4j; clone_from "$BARE" "$TMP/r4j"
+  g -C "$TMP/r4j" worktree add -q "$TMP/r4j-hidden" -b review/hidden-untracked || die "r4j worktree add failed"
+  g -C "$TMP/r4j-hidden" config status.showUntrackedFiles no || die "r4j config failed"
+  printf 'untracked\n' > "$TMP/r4j-hidden/scratch.txt" || die "r4j write failed"
+  OUT="$(cd "$TMP/r4j" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4j.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4j-hidden" \
+     && [[ "$(cat "$TMP/r4j.err")" == *"r4j-hidden"* ]] && [[ "$(cat "$TMP/r4j.err")" == *"dirty"* ]]; then
+    pass; else fail "showUntrackedFiles=no must not make an untracked file invisible: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4j.err")"; fi
+
   # 4a-v. A worktree the check cannot read is never reported removable: the
   # guard fails closed rather than passing a tree it never inspected.
   mk_origin o4e; clone_from "$BARE" "$TMP/r4e"

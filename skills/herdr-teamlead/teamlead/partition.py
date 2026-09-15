@@ -36,7 +36,7 @@ import json
 from pathlib import Path
 
 from .errors import UsageError
-from .triggers import git_runner, parse_name_status
+from .triggers import _records, git_runner, parse_name_status
 
 #: The partition document's own version, so a later shape change is auditable
 #: (`rules/stateful-artifacts.md` Migration Policy).
@@ -166,4 +166,11 @@ def run_command(args, runner=None):
     head = getattr(args, "head", None)
     span = [args.base + "..." + head] if head else [args.base]
     changes = parse_name_status(run(["diff", "--no-renames", *span, "--name-status", "-z"]))
+    if not head:
+        # `git diff` reports tracked changes only, so a new file still sitting
+        # untracked would be invisible to the partition and could leave a
+        # changed path unowned. Fold the working tree's untracked files in,
+        # as trigger detection does; a pushed head has none.
+        for path in _records(run(["ls-files", "--others", "--exclude-standard", "-z"])):
+            changes[path] = "A"
     return validate(set(changes), partition), None
