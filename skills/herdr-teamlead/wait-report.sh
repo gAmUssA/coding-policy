@@ -487,7 +487,7 @@ confirmed_provider_refusal() { # <pane-id>
 # never fails the wait, because an unreadable worktree is `unknown`, not a
 # reason to lose the stall itself.
 classify_worktree() { # <worktree-path> [base-revision]
-  local tree="$1" base="${2:-}" status="" mid=false staged=0 modified=0 untracked=0 unpushed=0 own=-1 class
+  local tree="$1" base="${2:-}" status="" mid=false staged=0 modified=0 untracked=0 unpushed=0 own=-1 own_unpushed=-1 class
   if [[ -z "$tree" ]]; then
     # The stall is established without it; only the classification is missing.
     jq -n '{class: "unclassified", evidence: {worktree: null, readable: false}}'
@@ -575,19 +575,37 @@ classify_worktree() { # <worktree-path> [base-revision]
         '{class: "unknown", evidence: {worktree: $t, base: $b, readable: false, error: $e}}'
       return 0
     fi
+    # Unpushed commits INSIDE this dispatch's range. An unpushed commit that
+    # predates the base is the base's history, not this worker's work, and must
+    # not turn an untouched checkout into completed-work recovery.
+    rc=0
+    own_unpushed="$(git -C "$tree" rev-list --count "${base}..HEAD" --not --remotes 2>"$ERRFILE")" || rc=$?
+    if (( rc != 0 )) || [[ ! "$own_unpushed" =~ ^[0-9]+$ ]]; then
+      local why2
+      why2="$(tr '\n' ' ' < "$ERRFILE")"
+      warn "could not count this dispatch's unpushed commits in ${tree} against ${base}: ${why2:-unreadable rev-list output} — the stall is recorded, its classification is not; inspect that checkout by hand"
+      jq -n --arg t "$tree" --arg b "$base" --arg e "${why2:-unreadable rev-list output}" \
+        '{class: "unknown", evidence: {worktree: $t, base: $b, readable: false, error: $e}}'
+      return 0
+    fi
   fi
   # Order follows the recovery each class needs: partial work is preserved as
-  # evidence before anything else is read off the tree.
+  # evidence before anything else is read off the tree. With a base, the
+  # dispatch's own range decides: no commits beyond it is no_work whatever
+  # older unpushed history the base carries (Stalled Workers).
   if [[ "$mid" == true ]] || (( staged > 0 || modified > 0 || untracked > 0 )); then
     class="partial_work"
-  elif (( unpushed > 0 )); then
+  elif (( own == 0 )); then
+    class="no_work"
+  elif (( own > 0 && own_unpushed > 0 )); then
     class="unpushed_commits"
   elif (( own > 0 )); then
     # Pushed and unreported: completed work whose transport succeeded and whose
     # report did not. Recovery evidence, never a retryable dispatch.
     class="pushed_commits"
-  elif (( own == 0 )); then
-    class="no_work"
+  elif (( unpushed > 0 )); then
+    # No base to scope by: any unpushed commit is the best available evidence.
+    class="unpushed_commits"
   else
     # No base to judge against: a clean tree could be an untouched checkout or
     # a worker that already pushed. Say so rather than guess the retryable one.
@@ -595,11 +613,11 @@ classify_worktree() { # <worktree-path> [base-revision]
   fi
   jq -n --arg c "$class" --arg t "$tree" --arg b "$base" --argjson m "$mid" \
         --argjson s "$staged" --argjson d "$modified" --argjson u "$untracked" \
-        --argjson p "$unpushed" --argjson o "$own" \
+        --argjson p "$unpushed" --argjson o "$own" --argjson q "$own_unpushed" \
     '{class: $c, evidence: ({worktree: $t, readable: true, mid_operation: $m,
                              staged: $s, modified: $d, untracked: $u, unpushed_commits: $p}
                + (if $b == "" then {base: null, dispatch_commits: null}
-                  else {base: $b, dispatch_commits: $o} end))}'
+                  else {base: $b, dispatch_commits: $o, dispatch_unpushed_commits: $q} end))}'
   return 0
 }
 

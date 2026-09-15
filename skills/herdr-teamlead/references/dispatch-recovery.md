@@ -43,8 +43,8 @@ apply \
   --common <common-path> --retain-specialist [--dispatch-id <stable-id>]
 ```
 
-`teamlead/engagement.py` owns assessment-source and retired-enrollment validation;
-`teamlead/assign.py` owns retained responsibility, engagement, session and exact
+`skills/herdr-teamlead/teamlead/engagement.py` owns assessment-source and retired-enrollment validation;
+`skills/herdr-teamlead/teamlead/assign.py` owns retained responsibility, engagement, session and exact
 tier proof. Staffing follows `skills/herdr-teamlead/references/round-setup.md` Step 5.
 Follow the owner diagnostics before retrying.
 This mode carries no developer correction parameters and cannot replace the
@@ -239,7 +239,7 @@ run `retro-check` with one transition for this agent — `context: "start"`,
 `role: "developer"`, the same `task`, null `model` and `effort` for a
 non-tiered worker, its `pane`, and its outgoing `report` — and record the
 completed note with `triggers` including `transition` under
-`references/retrospectives.md`. That is the only retrospective the restoration
+`skills/herdr-teamlead/references/retrospectives.md`. That is the only retrospective the restoration
 carries: the later `apply --retain-context` targets the same role, task, and
 tier, so it demands no new transition coverage; only the daily cadence can
 refuse it.

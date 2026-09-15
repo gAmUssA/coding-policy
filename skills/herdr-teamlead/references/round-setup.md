@@ -133,7 +133,7 @@ classifies neither a diff nor a plan is refused. Each invocation reads only the 
 it is given, so re-run it after staffing a role or recording a decision and
 plan only once it exits 0. The declaration's fields, the
 decisions file and the answers each trigger accepts are in
-`references/specialists.md`.
+`skills/herdr-teamlead/references/specialists.md`.
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -175,11 +175,11 @@ post-push verification.
 For a follow-up that will use `--retain-specialist`, plan the consultation alone
 with its original requirements and worker. Use exclusions to preserve that
 worker; a changed candidate requires a fresh handoff. Follow the owner checks in
-`references/dispatch-recovery.md` instead of treating a warm pane as dispatch proof.
+`skills/herdr-teamlead/references/dispatch-recovery.md` instead of treating a warm pane as dispatch proof.
 
 `--roles` keys the output document. Configured `role_costs` calibrate its costs.
-`teamlead/composition.py` owns capability, contribution and familiarity evidence;
-`teamlead/planner.py` owns affordability, fill order and headroom optimization.
+`skills/herdr-teamlead/teamlead/composition.py` owns capability, contribution and familiarity evidence;
+`skills/herdr-teamlead/teamlead/planner.py` owns affordability, fill order and headroom optimization.
 The same eligibility checks run before unsent apply. Familiarity reflects a
 matching dispatch, never expertise or completed work. Requirements do not change
 the reserved judge or the developer correction contract.

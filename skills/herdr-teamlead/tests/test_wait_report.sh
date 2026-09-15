@@ -778,6 +778,19 @@ ${base}"
   if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "pushed_commits" and .stall.evidence.unpushed_commits == 0 and .stall.evidence.dispatch_commits >= 1' >/dev/null; then
     pass; else fail "pushed worktree: expected pushed_commits, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
 
+  # An unpushed commit that PREDATES the dispatch base is the base's history,
+  # not the worker's work: a checkout with nothing beyond that base produced
+  # nothing and is retryable, never completed-work recovery.
+  printf 'older\n' > "$stall_wt/older.txt" || die "write failed"
+  git -C "$stall_wt" add older.txt || die "git add failed"
+  git -C "$stall_wt" commit -q -m "older unpushed" || die "git commit failed"
+  local later_base
+  later_base="$(git -C "$stall_wt" rev-parse HEAD)" || die "rev-parse failed"
+  stall_run "$stall_wt" --base "$later_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "no_work" and .stall.evidence.unpushed_commits >= 1 and .stall.evidence.dispatch_commits == 0 and .stall.evidence.dispatch_unpushed_commits == 0' >/dev/null; then
+    pass; else fail "older unpushed history: expected no_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  git -C "$stall_wt" reset -q --hard HEAD~1 || die "reset failed"
+
   # An unreadable worktree loses the classification, never the stall.
   stall_run "$TMP/not-a-worktree" --base "$stall_base"
   if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unknown"' >/dev/null; then

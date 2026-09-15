@@ -282,7 +282,7 @@ work rather than its current role. The delivery file must be the successful
 `wait-report.sh` JSON receipt for that worker and report, with `found: true`, or
 the unchanged owner `recover-report` result for that exact dispatch and report.
 For native delivery missed by the watcher, complete recovery under
-`references/dispatch-recovery.md` first and save its actual output. The assessment
+`skills/herdr-teamlead/references/dispatch-recovery.md` first and save its actual output. The assessment
 owner checks recovered output against the saved recovery record; an edited or
 invented receipt does not establish delivery.
 Use an actual dispatch identity and matching report path; never invent history
