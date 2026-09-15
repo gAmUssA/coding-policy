@@ -33,10 +33,11 @@ role; a single-seat round needs none.
 
 ## Validate before planning
 
-```bash
-CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" validate-partition --repo <repo> --base <base> [--head <head>] \
-  --partition <partition.json>
+Run it through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
+Step 5. The argument contract:
+
+```text
+validate-partition --repo <repo> --base <base> [--head <head>] --partition <partition.json>
 ```
 
 Exit 0 emits the ownership payload — every slice with the changed paths it
