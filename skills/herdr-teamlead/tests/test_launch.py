@@ -1,6 +1,7 @@
 """Relaunches preserve pane ownership and prove the requested launch argv."""
 
 import copy
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -9,7 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teamlead.config import Agent
 from teamlead.errors import AgentBusyError, ConfigError, HerdrError
-from teamlead.launch import restart_worker, start_worker, verify_running
+from teamlead.launch import NAME_POLL_ATTEMPTS, NAME_TAKEN_RETRIES, restart_worker, start_worker, verify_running
+
+
+def herdr_error(code, message="refused"):
+    """A HerdrError carrying Herdr's own error code, the way the transport does."""
+    return HerdrError(message, {"stderr": json.dumps({"error": {"code": code, "message": message}})})
 
 
 class Client:
@@ -22,9 +28,22 @@ class Client:
         self.shell_returns = True
         self.reply_argv: list[str] | None = None
         self.composer = "❯ "
+        #: Reads of the stopped name that still answer before it is released.
+        #: Herdr holds the reservation briefly after the process exits (#379).
+        self.name_held_reads = 0
+        #: `agent_name_taken` refusals to raise before a start succeeds.
+        self.name_taken_starts = 0
+        self.released_pane: str | None = None
 
     def agent_get(self, name):
         self.calls.append(("get", name))
+        if self.terminated:
+            if self.released_pane is not None:
+                return {**copy.deepcopy(self.info), "pane_id": self.released_pane}
+            if self.name_held_reads > 0:
+                self.name_held_reads -= 1
+                return copy.deepcopy(self.info)
+            raise herdr_error("agent_not_found", "agent target claude not found")
         return copy.deepcopy(self.info)
 
     def agent_read(self, name, **kwargs):
@@ -41,6 +60,13 @@ class Client:
 
     def agent_start(self, name, kind, pane, flags):
         self.calls.append(("start", name, kind, pane, flags))
+        # Herdr refuses while it still holds the name, which is the whole
+        # failure #379 describes: a start issued too early costs an attempt.
+        if self.name_held_reads > 0:
+            raise herdr_error("agent_name_taken", "name in use")
+        if self.name_taken_starts > 0:
+            self.name_taken_starts -= 1
+            raise herdr_error("agent_name_taken", "name in use")
         return {"agent": self.info, "argv": self.reply_argv if self.reply_argv is not None else [kind] + flags}
 
     def process_args(self, pid):
@@ -62,6 +88,62 @@ class LaunchTest(unittest.TestCase):
         self.assertIn(("terminate", 200), client.calls)
         self.assertEqual(proof["argv"], ["claude", "--dangerously-skip-permissions", "--model", "opus-5", "--effort", "high"])
         self.assertEqual(proof["source"], "launch_argv")
+
+    def test_a_lagging_name_release_is_waited_out_before_the_start(self):
+        # coding-policy#379: the shell returns before Herdr releases the old
+        # name, and a start issued then refuses with agent_name_taken while the
+        # seat still reads Idle -- costing the dispatch an attempt.
+        client = Client()
+        client.name_held_reads = 3
+        proof = restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual(proof["source"], "launch_argv")
+        # The fake refuses a start while it still holds the name, so a single
+        # successful start is itself the proof that the wait preceded it.
+        starts = [index for index, call in enumerate(client.calls) if call[0] == "start"]
+        self.assertEqual(len(starts), 1)
+        reads_before_start = [call for call in client.calls[:starts[0]] if call[0] == "get"]
+        self.assertGreaterEqual(len(reads_before_start), 4)
+
+    def test_a_name_never_released_refuses_without_starting(self):
+        client = Client()
+        client.name_held_reads = NAME_POLL_ATTEMPTS + 1
+        with self.assertRaisesRegex(HerdrError, "still reserves the agent name"):
+            restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual([call for call in client.calls if call[0] == "start"], [])
+
+    def test_a_reservation_that_lapses_late_is_retried_bounded(self):
+        client = Client()
+        client.name_taken_starts = 1
+        proof = restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual(proof["source"], "launch_argv")
+        self.assertEqual(len([call for call in client.calls if call[0] == "start"]), 2)
+
+        exhausted = Client()
+        exhausted.name_taken_starts = NAME_TAKEN_RETRIES + 1
+        with self.assertRaises(HerdrError):
+            restart_worker(exhausted, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual(len([call for call in exhausted.calls if call[0] == "start"]), NAME_TAKEN_RETRIES + 1)
+
+    def test_a_name_bound_to_another_pane_refuses_without_starting(self):
+        client = Client()
+        client.released_pane = "w9:p9"
+        with self.assertRaisesRegex(HerdrError, "bound to pane"):
+            restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual([call for call in client.calls if call[0] == "start"], [])
+
+    def test_any_other_start_failure_is_never_retried(self):
+        client = Client()
+        original = client.agent_start
+
+        def failing(name, kind, pane, flags):
+            client.calls.append(("start", name, kind, pane, flags))
+            raise herdr_error("agent_not_ready", "agent blocked")
+
+        client.agent_start = failing
+        with self.assertRaises(HerdrError):
+            restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual(len([call for call in client.calls if call[0] == "start"]), 1)
+        self.assertIsNotNone(original)
 
     def test_busy_or_changed_pane_never_terminates(self):
         for state in ("working", "blocked", "unknown"):

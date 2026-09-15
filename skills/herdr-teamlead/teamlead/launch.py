@@ -6,8 +6,15 @@ JSON for both. Older builds without that contract fail before dispatch.
 https://herdr.dev/docs/socket-api/
 
 Relaunch terminates only the identified, idle foreground agent after an empty
-composer check, waits for its shell, then starts the selected tier. It never
-terminates a working/blocked agent or guesses a PID from a transcript.
+composer check, waits for its shell AND for Herdr to release the old agent
+name, then starts the selected tier. It never terminates a working/blocked
+agent or guesses a PID from a transcript.
+
+Herdr keeps the name reserved briefly after the process exits, so a start
+issued the moment the shell returns refuses with `agent_name_taken` while the
+seat reads Idle -- a fresh judge dispatch lost an attempt to exactly that
+(#379). The reservation is waited out, and a refusal that slips through is
+retried a bounded number of times, each time re-proving the pane and the name.
 """
 
 import time
@@ -15,11 +22,23 @@ from pathlib import PurePath
 
 from .composer import ensure_ready
 from .errors import AgentBusyError, HerdrError
-from .herdr import READY_STATES
+from .herdr import READY_STATES, error_code
+from .restoration import NAME_TAKEN, name_state
 from .tiers import launch_flags, verify_argv, verify_worker_permissions, worker_launch_args
 
 SHELL_POLL_ATTEMPTS = 30
 SHELL_POLL_INTERVAL = 0.2
+
+#: How many times to re-read the released name before giving up, and how long
+#: to wait between reads: 15 s in total, matching the restoration gate. A name
+#: Herdr has not released by then needs a human's eyes, not a longer loop.
+NAME_POLL_ATTEMPTS = 60
+NAME_POLL_INTERVAL = 0.25
+
+#: How many `agent_name_taken` refusals may each be followed by a fresh
+#: release wait and another start. Every other start failure ends the relaunch:
+#: Herdr may already have started the process, and a second start duplicates it.
+NAME_TAKEN_RETRIES = 2
 
 
 def foreground_agent(client, pane, kind):
@@ -52,7 +71,7 @@ def verify_running_permissions(client, agent, pane):
     verify_worker_permissions(agent.kind, process["argv"])
 
 
-def start_worker(client, agent, pane, tier, before_start=None):
+def start_worker(client, agent, pane, tier, before_start=None, sleep=time.sleep):
     launch_args = worker_launch_args(agent.kind, agent.launch_args)
     flags = launch_args + launch_flags(agent.kind, tier)
     if before_start is not None:
@@ -66,6 +85,41 @@ def start_worker(client, agent, pane, tier, before_start=None):
         raise HerdrError("Started worker identity or readiness differs from the requested pane and kind; no brief was sent.", {})
     proof = verify_argv(agent.kind, tier, result.get("argv"), launch_args)
     return {**proof, "pane_id": pane}
+
+
+def await_name_release(client, name, pane, sleep=time.sleep):
+    """Wait, bounded, for Herdr to release the stopped worker's name.
+
+    A name bound to ANOTHER pane is a refusal, never something to wait out.
+    """
+    state = None
+    for attempt in range(1, NAME_POLL_ATTEMPTS + 1):
+        state = name_state(client, name, pane)
+        if state == "released":
+            return attempt
+        if attempt < NAME_POLL_ATTEMPTS:
+            sleep(NAME_POLL_INTERVAL)
+    raise HerdrError(
+        "Herdr still reserves the agent name {!r} after {} reads; the pane returned to its shell but the seat cannot be re-started. Inspect `herdr agent list` and the pane by hand. No start or brief was sent.".format(name, NAME_POLL_ATTEMPTS),
+        {"agent": name, "pane": pane, "attempts": NAME_POLL_ATTEMPTS},
+    )
+
+
+def start_after_release(client, agent, pane, tier, sleep=time.sleep, before_start=None):
+    """Start the seat once the name reads released, retrying a reservation.
+
+    A refusal that slips through the wait is the reservation lapsing late, and
+    it started no process. Every other failure ends the relaunch untried.
+    """
+    retries = 0
+    while True:
+        await_name_release(client, agent.name, pane, sleep=sleep)
+        try:
+            return start_worker(client, agent, pane, tier, before_start=before_start, sleep=sleep)
+        except HerdrError as exc:
+            if error_code(exc) != NAME_TAKEN or retries >= NAME_TAKEN_RETRIES:
+                raise
+            retries += 1
 
 
 def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transition=None, before_start=None):
@@ -97,7 +151,7 @@ def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transitio
         if (isinstance(shell, int) and not isinstance(shell, bool) and shell > 0
                 and isinstance(foreground, list) and len(foreground) == 1
                 and isinstance(foreground[0], dict) and foreground[0].get("pid") == shell):
-            return start_worker(client, agent, pane, tier, before_start=before_start)
+            return start_after_release(client, agent, pane, tier, sleep=sleep, before_start=before_start)
         if attempt + 1 < SHELL_POLL_ATTEMPTS:
             sleep(SHELL_POLL_INTERVAL)
     raise HerdrError("Worker termination did not return the pane to its shell; inspect it before retrying. No start or brief was sent.", {})

@@ -694,6 +694,182 @@ ${base}"
     pass; else fail "checkpoint must retain consecutive confirmation for missing delivery markers"; fi
   CHECK_ONCE=0
 
+  # --- Stall classification at budget exhaustion (#418).
+  # The report never lands, the worker reads terminal, and the budget is
+  # spent: the wait ends naming the stall and what the worker left behind.
+  # A provisioned worker checkout, remote and all: without a remote-tracking
+  # ref every commit reads as unpushed, which no real worktree does.
+  local stall_origin="$TMP/stall-origin.git" stall_seed="$TMP/stall-seed" stall_wt="$TMP/stall-worktree"
+  git init -q --bare -b main "$stall_origin" || die "git init --bare failed"
+  git clone -q "$stall_origin" "$stall_seed" 2>/dev/null || die "git clone failed"
+  git -C "$stall_seed" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base || die "commit failed"
+  git -C "$stall_seed" push -q origin main || die "git push failed"
+  git clone -q "$stall_origin" "$stall_wt" 2>/dev/null || die "git clone (worktree) failed"
+
+  # The flagless form still reports the stall, with no classification.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=0 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle \
+    bash "$SCRIPT" worker "$missing" </dev/null 2>"$TMP/stall-none")"; RC=$?
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unclassified" and (has("reason") | not)' >/dev/null; then
+    pass; else fail "a stall without --worktree still reports the stall: RC=$RC OUT=$OUT"; fi
+
+  stall_run() { # <worktree> [--base <rev>]
+    local wt="$1"; shift
+    RUN_SEQ=$((RUN_SEQ+1))
+    OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=0 \
+      TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+      FAKE_MARKER=timeout FAKE_STATUS=idle \
+      bash "$SCRIPT" --worktree "$wt" "$@" worker "$missing" </dev/null 2>"$TMP/stall-err.$RUN_SEQ")"; RC=$?
+    ERRTEXT="$(cat "$TMP/stall-err.$RUN_SEQ")"
+  }
+  # The base this fixture's "dispatch" started from.
+  local stall_base
+  stall_base="$(git -C "$stall_wt" rev-parse HEAD)" || die "rev-parse failed"
+
+  # A clean tree produced nothing: the dispatch is retryable.
+  stall_run "$stall_wt" --base "$stall_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "no_work" and .stall.evidence.dispatch_commits == 0' >/dev/null; then
+    pass; else fail "clean worktree: expected no_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # The same tree with no base cannot claim no_work: it could be a worker that
+  # already pushed its commits and then stopped without reporting.
+  stall_run "$stall_wt"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unknown" and .stall.evidence.base == null' >/dev/null; then
+    pass; else fail "clean worktree without a base: expected unknown, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # Staged work the worker never committed is partial work, preserved as
+  # evidence — never adopted because the tree looks finished.
+  printf 'x\n' > "$stall_wt/f" || die "write failed"
+  git -C "$stall_wt" add f || die "git add failed"
+  stall_run "$stall_wt"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "partial_work" and .stall.evidence.staged == 1' >/dev/null; then
+    pass; else fail "staged worktree: expected partial_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  if printf '%s' "$ERRTEXT" | grep -q "never commit it"; then
+    pass; else fail "a stall warns against adopting partial work: ERR=$ERRTEXT"; fi
+
+  # A mid-merge tree with no other change is still partial work.
+  git -C "$stall_wt" -c user.name=t -c user.email=t@t commit -q -m staged || die "commit failed"
+  : > "$stall_wt/.git/MERGE_HEAD" || die "merge marker failed"
+  stall_run "$stall_wt"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "partial_work" and .stall.evidence.mid_operation == true' >/dev/null; then
+    pass; else fail "mid-merge worktree: expected partial_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  rm -f "$stall_wt/.git/MERGE_HEAD" || die "merge marker cleanup failed"
+
+  # A rebase paused at an `exec` or `break`: `rebase-merge/` with no
+  # REBASE_HEAD and a clean tree, which read as completed or retryable work.
+  mkdir -p "$stall_wt/.git/rebase-merge" || die "rebase state fixture failed"
+  stall_run "$stall_wt" --base "$stall_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "partial_work" and .stall.evidence.mid_operation == true' >/dev/null; then
+    pass; else fail "paused rebase: expected partial_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  rmdir "$stall_wt/.git/rebase-merge" || die "rebase state cleanup failed"
+
+  # Committed and unpushed is completed work with a failed transport.
+  stall_run "$stall_wt" --base "$stall_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unpushed_commits" and .stall.evidence.unpushed_commits >= 1' >/dev/null; then
+    pass; else fail "committed worktree: expected unpushed_commits, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # Pushed and unreported: the transport succeeded and the report did not, so
+  # the work is recovery evidence, never a retryable dispatch.
+  git -C "$stall_wt" push -q origin HEAD:main || die "git push failed"
+  git -C "$stall_wt" fetch -q origin || die "git fetch failed"
+  stall_run "$stall_wt" --base "$stall_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "pushed_commits" and .stall.evidence.unpushed_commits == 0 and .stall.evidence.dispatch_commits >= 1' >/dev/null; then
+    pass; else fail "pushed worktree: expected pushed_commits, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # An unreadable worktree loses the classification, never the stall.
+  stall_run "$TMP/not-a-worktree" --base "$stall_base"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unknown"' >/dev/null; then
+    pass; else fail "unreadable worktree: expected unknown, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # A checkpoint reaches the stall too, measured from the dispatch's own send
+  # time — without one, repeated checkpoints reset the clock forever (#418).
+  CHECK_ONCE=1
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=600 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle TEAMLEAD_NOW_EPOCH=1767229200 \
+    bash "$SCRIPT" --once --worktree "$stall_wt" --base "$stall_base" \
+    --since "2026-01-01T00:00:00+00:00" \
+    worker "$missing" </dev/null 2>"$TMP/once-stall")"; RC=$?
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '(.stall | type) == "object" and (.reason // "") != "checkpoint_pending"' >/dev/null; then
+    pass; else fail "a checkpoint past the budget reports the stall: RC=$RC OUT=$OUT"; fi
+
+  # Inside the budget the same checkpoint is still pending, not a stall.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=600 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle TEAMLEAD_NOW_EPOCH=1767225900 \
+    bash "$SCRIPT" --once --worktree "$stall_wt" --base "$stall_base" \
+    --since "2026-01-01T00:00:00+00:00" \
+    worker "$missing" </dev/null 2>"$TMP/once-fresh")"; RC=$?
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.reason == "checkpoint_pending" and (has("stall") | not)' >/dev/null; then
+    pass; else fail "a checkpoint inside the budget stays pending: RC=$RC OUT=$OUT"; fi
+
+  # A dispatch already past its budget stalls on the FIRST interval of a
+  # blocking wait, not after another full budget of this invocation's own.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=600 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle TEAMLEAD_NOW_EPOCH=1767229200 \
+    FAKE_GET_COUNTER="$TMP/expired-since-count" \
+    bash "$SCRIPT" --worktree "$stall_wt" --base "$stall_base" \
+    --since "2026-01-01T00:00:00+00:00" worker "$missing" </dev/null 2>"$TMP/expired-since")"; RC=$?
+  # One status read = one interval. `elapsed_seconds` comes from the real
+  # clock, so it cannot carry this assertion (rules/testing-standards.md).
+  expired_reads=0; [[ -r "$TMP/expired-since-count" ]] && read -r expired_reads < "$TMP/expired-since-count"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '(.stall | type) == "object"' >/dev/null && [[ "$expired_reads" == "1" ]]; then
+    pass; else fail "an expired dispatch stalls on the first interval: RC=$RC reads=$expired_reads OUT=$OUT"; fi
+
+  # Finding: a timezone offset is CONVERTED, never rewritten as Z. This stamp
+  # is 05:00Z — after the frozen now — so its budget has not started, let alone
+  # been spent. Rewriting the offset would read it as midnight and stall.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=600 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle TEAMLEAD_NOW_EPOCH=1767229200 \
+    bash "$SCRIPT" --once --worktree "$stall_wt" --base "$stall_base" \
+    --since "2026-01-01T00:00:00-05:00" worker "$missing" </dev/null 2>"$TMP/offset-since")"; RC=$?
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.reason == "checkpoint_pending" and (has("stall") | not)' >/dev/null; then
+    pass; else fail "a -05:00 stamp is converted, not rewritten as Z: RC=$RC OUT=$OUT"; fi
+
+  # The same instant written two ways reaches the same verdict.
+  for equivalent in "2026-01-01T00:00:00Z" "2025-12-31T19:00:00-05:00"; do
+    RUN_SEQ=$((RUN_SEQ+1))
+    OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=600 \
+      TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+      FAKE_MARKER=timeout FAKE_STATUS=idle TEAMLEAD_NOW_EPOCH=1767229200 \
+      bash "$SCRIPT" --once --worktree "$stall_wt" --base "$stall_base" \
+      --since "$equivalent" worker "$missing" </dev/null 2>"$TMP/equiv-since")"; RC=$?
+    if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '(.stall | type) == "object"' >/dev/null; then
+      pass; else fail "equivalent stamp ${equivalent} must reach the same stall: RC=$RC OUT=$OUT"; fi
+  done
+
+  # An unreadable --since is a usage/tool failure, never a silent stall.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=0 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 TEAMLEAD_REFUSAL_CONFIRM_SEC=0 FAKE_PANE_TEXT="nothing here" \
+    FAKE_MARKER=timeout FAKE_STATUS=idle \
+    bash "$SCRIPT" --once --since "not-a-timestamp" worker "$missing" </dev/null 2>"$TMP/once-bad-since")"; RC=$?
+  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "ISO-8601" "$TMP/once-bad-since"; then
+    pass; else fail "an unreadable --since is exit 2: RC=$RC OUT=$OUT"; fi
+  CHECK_ONCE=0
+
+  # A worker that delivers normally is unchanged by any of this.
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" TEAMLEAD_WAIT_INTERVAL_SEC=0 TEAMLEAD_WAIT_BUDGET_SEC=0 \
+    TEAMLEAD_BLOCKED_CONFIRM_SEC=0 FAKE_PANE_TEXT="REPORT: ${report}" \
+    FAKE_MARKER=found FAKE_STATUS=done \
+    bash "$SCRIPT" --worktree "$stall_wt" worker "$report" </dev/null 2>"$TMP/stall-ok")"; RC=$?
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.found == true and (has("stall") | not)' >/dev/null; then
+    pass; else fail "a delivered report is unaffected by --worktree: RC=$RC OUT=$OUT"; fi
+
+  # --worktree with no value is a usage error.
+  OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" bash "$SCRIPT" --worktree </dev/null 2>"$TMP/stall-usage")"; RC=$?
+  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "worktree" "$TMP/stall-usage"; then
+    pass; else fail "--worktree without a value must be a usage error: RC=$RC"; fi
+
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2

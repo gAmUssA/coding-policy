@@ -43,6 +43,28 @@ Each revision needs a new `id`; retain `lesson_id` and set `supersedes` to its c
 
 Scopes are exact labels chosen consistently by the lead; `*` applies globally. Multiple requested scopes select their union. `memory-list` returns the latest active revision of each matching lesson, including expired lessons labeled as expired. `--include-archived` includes current archived revisions. `memory-show --id <record-id>` returns that immutable record and its lesson's complete revision history.
 
+## Preserve specialist knowledge
+
+Use the same memory owner for specialist project knowledge. Add a consistent
+specialty label, such as `specialty:ux-product`, alongside the applicable project
+and task scopes. A worker proposes evidence-linked lessons in its report; the
+lead checks and curates them. Keep actual user decisions, contributor identities
+and assignment acceptance in the task ledger and owner state, with links from
+lessons when useful.
+
+Before a consultation, read the relevant project and specialty lessons and
+revalidate their sources. Scope selection is a union, so inspect every returned
+lesson's applicability before transferring it to another project. Supply the
+selected knowledge through `KNOWLEDGE` in the consultation brief or
+`SPECIALIST_CONTEXT` in a developer or verifier brief.
+
+Before releasing a useful session, capture decisions, rejected alternatives,
+unresolved evidence and lessons that would otherwise disappear. Link the outgoing
+report, lead assessment and retrospective from the task handoff. A warm session
+can support follow-up under `references/dispatch-recovery.md`; it is never the
+only copy of valuable knowledge. Give a fresh worker the durable sources without
+claiming that recalled context proves present competence or independence.
+
 ## Stow before replacing the lead
 
 Before planned lead context compaction, restart, model change or replacement, sweep the conversation for knowledge that is still only in context. Persist accepted decisions, unanswered questions, promised updates, unresolved work, assumptions and useful lessons in their appropriate owner artifacts. Put user-facing obligations in the attention queue; reference their durable ids in the stow. Do not treat displayed questions as answered.

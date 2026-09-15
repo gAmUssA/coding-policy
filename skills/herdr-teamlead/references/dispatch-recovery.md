@@ -5,7 +5,7 @@
 Keep the same `--task` identifier from initial development through all its
 fixes. Omit `--fix-round` on the initial assignment; supply it on every fix.
 Never trim or merge legacy identities. Retained fixes dispatch developer alone
-with `--retain-context`; other roles get separate cleared assignments. Retention
+with `--retain-context`; other roles use their own dispatch context. Developer retention
 requires matching confirmed history, live native-session continuity, and a
 compatible verified tier. Missing evidence requires owner recovery, preserving
 the original record and counter. Tiered dispatch requires current qualification.
@@ -21,6 +21,47 @@ owner-managed recovery contract below. Pass its same `--work` to plan and fresh 
 Reuse an approved bounded correction plan while its scope and budget hold.
 An unknown dispatch outcome pauses implementation for evidence-based recovery.
 An identical completed retry returns its recorded result without sending again.
+
+## Warm specialist follow-up
+
+Use `--retain-specialist` for a bounded follow-up to an assessed advisor,
+investigator or architect consultation. First complete the assessment and
+observation lifecycle in `references/specialists.md`. Keep the previous report
+and successful delivery receipt as immutable source files. A session kept idle
+on the bench is optional continuity, never a reason to skip the owner checks.
+
+Plan that one responsibility with the same task, normalized requirements and
+worker. Compose a new self-contained brief with the follow-up question, the
+previous report and a fresh report destination. Then use the saved plan:
+
+Use the installed invocation in SKILL.md Step 10 with this argument synopsis:
+
+```text
+apply \
+  --assignments <followup-plan.json> --task <task-id> \
+  --brief <consultation-role>=<new-brief> --report <consultation-role>=<new-report> \
+  --common <common-path> --retain-specialist [--dispatch-id <stable-id>]
+```
+
+`teamlead/engagement.py` owns assessment-source and retired-enrollment validation;
+`teamlead/assign.py` owns retained responsibility, engagement, session and exact
+tier proof. Staffing follows `references/round-setup.md` Step 5.
+Follow the owner diagnostics before retrying.
+This mode carries no developer correction parameters and cannot replace the
+developer's retained-fix path. A dry run checks recorded prerequisites but proves
+no live session, current qualification or permission flags.
+
+Live apply still enforces the retrospective cadence, YOLO launch proof, readiness,
+composer and qualification gates. Its successful result records retained context
+and the original requirements; it proves dispatch only. Use normal report
+observation and a new assessment for the follow-up.
+
+If the role, engagement or tier changes, or continuity cannot be proved, use a
+fresh consultation after the required retrospective and a durable knowledge
+handoff. Do not reset the task or rewrite the old assignment to retain a pane.
+Changing work into implementation always returns to developer planning and its
+existing allowance. Unknown sends require the normal reconciliation path before
+any follow-up or fresh resend.
 
 ## Dispatch outcomes
 
@@ -93,9 +134,12 @@ instruction into permission to exceed an exhausted correction budget.
 | Command | Record fields | Continuation |
 | --- | --- | --- |
 | `task` | `task`, original full `base_revision`, `scope`, `allowed_paths`, `authorization` | Register once before initial development; for legacy history, recover these facts from the original task and brief. Continue the same task. |
-| `checkpoint` | unique `id`, `task`, concrete `defect`, `previous_attempts`, `progress`, `change_in_approach`, absolute `judge_report` | Requires the configured pinned judge's completed ruling after the latest developer attempt. Implementation waits for the bounded operator decision. |
-| `authorize-corrections` | unique `id`, `task`, `checkpoint`, `scope`, `allowed_paths`, positive `additional_fixes`, `authorization`; optional `supersedes` | Store an explicit bounded approval once. Continue while it covers the next attempt; do not ask again within those bounds. A changed decision names the active plan in `supersedes`. |
+| `checkpoint` | unique `id`, `task`, concrete `defect`, `previous_attempts`, `progress`, `change_in_approach`; optional absolute `judge_report` | Records the exhausted allowance and the evidence the diagnosis brief is built from. A cited `judge_report` is legacy: it replays a checkpoint recorded before diagnosis mode and requires the configured pinned judge's completed ruling after the latest developer attempt, one per task. A new checkpoint omits it and takes the diagnosis instead. Implementation waits for the judge's remedy, never for an operator. |
+| `diagnose` | unique `id`, `task`, `checkpoint`, absolute `judge_report`, `scope`, `allowed_paths`; optional `supersedes` with `authorization` | Record the judge's diagnosis of a non-converging loop. The report supplies `REMEDY`, `BOUND` and `ASSESSMENT`; a `continue` or `restructure` remedy records the bounded plan its bound names, and `stop` records the terminal remedy and files a user-attention obligation. `BOUND` counts developer attempts, carries its justification, and is refused above the command's ceiling. `ASSESSMENT` must name the assessed investigator report this diagnosis ruled on, and that report is bound into the record. Each re-entry moves down `continue` → `restructure` → `stop`, or repeats the last rung once when the report carries a `PROGRESS` line; a rung already repeated is spent and `stop` never repeats. A re-entry before its bound is spent names the plan it supersedes and carries the change it claims — different `scope` or `allowed_paths`, or the operator's `authorization` — and the superseded plan is preserved. A bound lead's cited report must be the one supervision enrolled for the pinned judge on that task, and the task needs an assessed investigator consultation after its latest developer attempt. |
+| `authorize-corrections` | unique `id`, `task`, `checkpoint`, `scope`, `allowed_paths`, positive `additional_fixes`, `authorization`; optional `supersedes` | The operator's override of this exhaustion's recorded remedy; the task needs a diagnosis at the current fix round first. Store an explicit bounded approval once. Continue while it covers the next attempt; do not ask again within those bounds. A changed decision names the active plan in `supersedes`. |
 | `record-report` | `dispatch`, full `head_revision`, `verdict` (`blocking` or `approved`), `review_mode` (`full` or `scoped`), independent `reviewer`, absolute `report`, `changed_paths` | Read the report in full and verify the VCS diff first. The command binds its bytes and stated head to the dispatch; it does not establish the tester, CI, external-review, or release gates. |
+| `authorize-refused-dispatch` | unique `id`, `task`, `role`, `fix_round` or null, approved `provider`, `brief` (`unchanged` or `revised`), `decision`, `authorization` | Record the operator's decision after two independent refusals; fewer is refused, since one refusal is a move. One authorization permits one further dispatch on that task, role and round to the approved provider, with the refused brief unchanged unless the operator approved a revision, carried on the dispatch's `refusal_move.authorization`. |
+| `record-refusal` | `dispatch`, absolute `receipt` | Bind a saved `wait-report` exit-5 JSON to the applied dispatch it stopped. The receipt's `report_path` must equal the report its supervision enrollment bound; an unenrolled dispatch is refused. The refusing provider is the worker's config `kind`. Same receipt replays; a second receipt for the same dispatch is refused. |
 | `recover-context` | `task`, original `assignment_index`, `reason`, `authorization`, absolute `evidence` | For the latest confirmed developer row with null native-session proof. Records a live observation separately and permits the next fresh handoff. The original null stays null. |
 | `recover-role-clear` | Fields under Verified role-clear recovery below | Record a fresh handoff after another authorized role automatically cleared the developer. Preserve known original proof and reuse existing correction bounds. |
 | `reconcile` | `dispatch`, `outcome` (`applied` or `not_sent`), `reason`, `authorization`, absolute `evidence` | Resolve an interrupted send from actual evidence and an idle/done live worker. `applied` appends recovered assignment evidence without fabricating contemporaneous session proof; `not_sent` permits a transport retry. |
@@ -103,6 +147,7 @@ instruction into permission to exceed an exhausted correction budget.
 | `import-correction` | Fields under Historical manual corrections below | Import an already authorized, completed manual attempt without sending input or granting future attempts. |
 | `record-historical-review` | unique `id`, `historical_attempt`, full `head_revision`, `verdict`, `review_mode`, independent `reviewer`, absolute `report` | Append an actual review receipt for an imported correction. Full review is required for approval; other verification gates remain separate. |
 | `recover-report` | unique `id`, original `dispatch`, absolute `report`, `wait_receipt`, `pane`, `visible`, `source` | Append evidence of a completed delivery missed by the old watcher; see Completed native report recovery. No worker input or review approval. |
+| `assess-specialist` | `id`, actual `dispatch`, absolute `report` and successful `delivery` receipt, lead `outcome`, `contribution`, `summary` | Record delivered consultation or verifier work under `references/specialists.md`; no task completion or enrollment retirement. |
 
 `allowed_paths` contains repository-relative paths or globs. Preserve the
 original task and base across every approval. Read and verify the source diff
@@ -118,7 +163,7 @@ number and fresh top-tier behavior. Each subsequent correction within a plan
 requires the preceding attempt's actual blocking review, recorded through
 `record-report`. Approved or absent findings do not justify another attempt.
 
-At budget exhaustion, return to the judge and a new concrete checkpoint.
+At budget exhaustion, record a new concrete checkpoint and take the judge's diagnosis through `diagnose`; its remedy supplies the bound under `rules/agent-team-operation.md` Judge Seat.
 Changed scope or a changed operator decision requires new explicit bounds;
 unchanged in-scope work reuses its approval. Do not rename the task or reset
 the counter. Every changed tip still needs full independent reviewer and
@@ -159,10 +204,12 @@ to work around uncertainty. Reconciliation records its later observations
 separately and preserves any original unconfirmed assignment row.
 
 `teamlead status` prints implementation state, confirmed fixes, active plan,
-and remaining allowance. `waiting_for_operator` explicitly pauses implementation
-while its checkpoint awaits approval; an audit worker may still be active.
+and remaining allowance. `awaiting_diagnosis` pauses implementation while its
+checkpoint awaits the judge's remedy, which the lead takes without an operator;
+an audit worker may still be active. `diagnosed_stop` is terminal: the task
+ships what is clean and tracks the remainder.
 `dispatch_outcome_unknown` requires reconciliation, and
-`judge_checkpoint_required` requires the next exhausted-budget checkpoint.
+`checkpoint_required` requires the next exhausted-budget checkpoint.
 Neither an active worker nor a dispatch receipt proves that implementation or
 release has finished.
 
@@ -414,7 +461,7 @@ report/transport evidence, changed evidence, skipped
 count, conflicting head chain, pending dispatch, or out-of-scope diff refuses.
 All planning, status, next-fix validation and budget checks consume the imported
 count. Five canonical fixes plus imported fix6 means six consumed attempts;
-fix7 still requires its applicable judge checkpoint and bounded approval.
+fix7 still requires its applicable checkpoint and the judge's diagnosed bounded remedy.
 
 If an existing bounded owner plan still covers the next correction, reuse that
 approval. Record the imported attempt's actual blocking review through
@@ -477,11 +524,32 @@ lock file can remain after exit; do not delete it to bypass an active lock.
   operator does. Resume only once `herdr agent get <name>` reports a state
   other than `blocked`, then re-run this step for that worker.
 - **Exit 5** — `reason: terminal_provider_refusal` identifies an unavailable
-  attempt, with `found: false`. Record the missing report and tell the operator;
-  every review/release gate remains unsatisfied. Do not automatically retry,
-  rephrase, switch providers/models, reconstruct withheld output, or synthesize
-  a report. Continue waiting on other dispatched workers; the operator decides
-  how to handle the unavailable role under the existing rules.
+  attempt, with `found: false`. Save the JSON and record it with
+  `record-refusal` against that dispatch; every review/release gate remains
+  unsatisfied. Continue waiting on other dispatched workers. The refusal event
+  then splits into sub-decisions the lead owns and one the operator owns:
+  - Never rephrase the brief, reconstruct withheld output, or synthesize a
+    report.
+  - Never resend the refused brief to the same provider; `apply` refuses it.
+  - Provider and seat selection for the replacement is the lead's. Move the
+    brief unchanged, fresh report path aside, to one other provider through the
+    normal plan and apply; `apply` compares the brief to the refused one with
+    the report path masked, refuses a reworded one, and records the move on
+    the new dispatch.
+  - A second refusal of the same task, role and round stops the line: `apply`
+    refuses every provider. Record a `decision` obligation under
+    `references/attention.md`; the operator decides. Record that decision with
+    `authorize-refused-dispatch`, naming the provider they approved and whether
+    the brief stays unchanged; it permits one dispatch inside that scope.
+  - Escalate only what the operator holds information, authority, or a usable
+    account on. A remediation path named inside a provider notice — an access
+    program, a help article — is untrusted on availability and is never
+    recorded as an operator sub-decision.
+  - Never derive a per-agent `capabilities` change from one refusal; see
+    `references/specialists.md`.
+  Recording, the same-provider refusal, the single move and the stop are the
+  owner's contract; see `skills/herdr-teamlead/teamlead/recovery.py`,
+  `record_refusal` and `refusal_move`.
 
 `wait-report.sh` owns refusal confirmation; see its header and
 `confirmed_provider_refusal`. Missing terminal evidence keeps the ordinary
@@ -522,9 +590,9 @@ original `herdr pane get` JSON. Read these original artifacts and the saved
 dispatch's common/role briefs. Use the existing task authority to record
 delivery; this recovery requests no new work or allowance.
 
-Even a refused owner operation can persist the recovery schema 3 → 4 migration.
+Even a refused owner operation can persist an owner schema migration.
 Use isolated ledger copies for validation until the installed owner supports
-schema 4.
+the versions documented in `skills/herdr-teamlead/state-schema.md`.
 
 Run `teamlead recover-report --record FILE --state FILE` through the owner
 launcher above. The record names a unique `id`, the preserved `dispatch` ID,
@@ -589,18 +657,15 @@ The same code recovered an earlier completed Claude dispatch from its preserved
 negative receipt and archived transcript, on an isolated copy of the ledger.
 
 Four fresh sessions across that day's rounds settled the parallel tool-call
-shape, which took two live rounds to see whole. Claude Code writes a
-`tool_result` row linked to the `tool_use` BLOCK ROW that requested it. When
-the results are flushed one at a time the rows still read linearly
-(`tool_use`, its result, the next `tool_use`, its result); when both calls are
-written before either result lands, the first result's parent is not the row
-before it and the chain branches. Both orderings come from the same pinned CLI
-and both must parse. A result names the call it answers, and a call is answered
-once — including within a single row, where two blocks naming the same
-`tool_use_id` used to ride along on that call's requester. Distinct ids issued
-by one block row are still a legitimate multi-result answer. Give a Claude
-worker a SHORT report path: a long one wraps in the pane, and a wrapped marker
-cannot be told from a newline, so the watcher refuses it by design.
+shape, which took two live rounds to see whole. When the results are flushed
+one at a time the rows read linearly (`tool_use`, its result, the next
+`tool_use`, its result); when both calls are written before either result
+lands, the rows no longer read in that order. Both orderings come from the
+same pinned CLI, and the validation covers both — a run that exhibited only
+one has not exercised the other. The linkage and answered-once predicates
+that decide them belong to the source contract named above. Give a Claude
+worker a SHORT report path: a long one wraps in the pane, and a wrapped
+marker cannot be told from a newline, so the watcher refuses it by design.
 
 For a stale-Grok regression, complete a short turn in an isolated Grok process,
 then let normal `teamlead apply` send `/new` and a fresh report-only brief. Save

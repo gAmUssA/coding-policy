@@ -24,6 +24,7 @@ CLEARED = "2026-02-03T08:30:00+00:00"
 COMPLETED = "2026-02-03T09:00:00+00:00"
 TASK = recovery_fixture.TASK
 AUTH = recovery_fixture.AUTH
+REQUEST = recovery_fixture.REQUEST
 SCOPE = recovery_fixture.WORK["scope"]
 
 
@@ -78,14 +79,18 @@ class HistoricalCommandsTest(fixture.CliCase):
         # the public owner command without altering any historical evidence.
         state["schema_version"] = 4
         state.pop("recovery")
+        state.pop("specialist_assessments")
         for row in state["assignments"]:
             row["schema_version"] = 4
+            row.pop("requirements")
+            row.pop("reviewer_scope")
         self.state.write_text(json.dumps(state))
         original = copy.deepcopy(state["assignments"])
         code, _, err = self.invoke(["state"])
         self.assertEqual(code, 0, err)
         for expected, actual in zip(original, self.saved()["assignments"]):
-            expected["schema_version"] = actual["schema_version"]
+            expected.update(schema_version=actual["schema_version"], requirements=None,
+                            reviewer_scope="unknown" if expected["role"] == "reviewer" else None)
             self.assertEqual(actual, expected)
         code, _, err = self.owner("task", {"task": TASK, "base_revision": self.base_revision,
             "scope": SCOPE, "allowed_paths": ["src/*"], "authorization": AUTH})
@@ -268,10 +273,10 @@ class HistoricalCommandsTest(fixture.CliCase):
                 code, _, err = self.owner("checkpoint", {"id": "chronological-checkpoint", "task": TASK,
                     "defect": "F1 remains blocking", "previous_attempts": "Five completed fixes",
                     "progress": "Other findings resolved", "change_in_approach": "Correct the boundary case",
-                    "judge_report": str(judge)})
+                    "judge_report": str(judge), "requested_by": REQUEST})
                 self.assertEqual(code, expected, err)
                 if expected:
-                    self.assertIn("pinned judge after the latest developer", err)
+                    self.assertIn("pinned judge's completed assignment after the latest developer", err)
                 self.assertEqual(self.saved()["assignments"], preserved)
 
     def test_migrated_manual_fix_import_is_idempotent_and_next_fix_is_two(self):
@@ -332,7 +337,7 @@ class HistoricalCommandsTest(fixture.CliCase):
         code, out, err = self.invoke(["status"])
         self.assertEqual(code, 0, err)
         status = json.loads(out)["tasks"][TASK]
-        self.assertEqual((status["confirmed_fixes"], status["remaining_fixes"], status["status"]), (6, 0, "judge_checkpoint_required"))
+        self.assertEqual((status["confirmed_fixes"], status["remaining_fixes"], status["status"]), (6, 0, "checkpoint_required"))
         before = self.state.read_bytes()
         for args in (self.apply_args("developer", 7), ["plan", "--roles", "developer", "--snapshot", str(self.snapshot),
                     "--task", TASK, "--fix-round", "7", "--now", AT]):
@@ -427,10 +432,25 @@ class HistoricalCommandsTest(fixture.CliCase):
         self.assertIn("exceeds the recorded task or correction scope", err)
         self.assertEqual(self.state.read_bytes(), before)
 
+    def investigation(self):
+        """A real investigator report the diagnosis verifies live."""
+        path = self.tmp / "investigation.md"
+        if not path.exists():
+            path.write_text("Reproduction, causal assessment and discriminating experiment.\n")
+        return str(path)
+
+    def investigation_sha(self):
+        import hashlib
+        import pathlib
+        return hashlib.sha256(pathlib.Path(self.investigation()).read_bytes()).hexdigest()
+
     def test_import_with_remaining_existing_plan_still_requires_actual_blocking_review(self):
         self.seed(5)
         state = self.saved()
-        add_assignment(state, COMPLETED, "judge", "claude", task=TASK)
+        add_assignment(state, "2026-03-01T13:00:00+00:00", "investigator", "grok", task=TASK)
+        investigator_index = len(state["assignments"]) - 1
+        state["assignments"][investigator_index]["status"] = "applied"
+        add_assignment(state, "2026-03-01T15:00:00+00:00", "judge", "claude", task=TASK)
         save_state(self.state, state)
         config = json.loads(self.config.read_text())
         config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
@@ -439,10 +459,37 @@ class HistoricalCommandsTest(fixture.CliCase):
         judge.write_text("RULING: amend — correct F1\nACTION: Fix the remaining parser case\n")
         code, _, err = self.owner("checkpoint", {"id": "cap-5", "task": TASK, "defect": "Blocking F1",
             "previous_attempts": "Five completed fixes", "progress": "Most fixtures pass",
-            "change_in_approach": "Correct the remaining case", "judge_report": str(judge)})
+            "change_in_approach": "Correct the remaining case", "judge_report": str(judge), "requested_by": REQUEST})
+        self.assertEqual(code, 0, err)
+        # The diagnosis rules on a prepared causal assessment (#408), and the
+        # operator's budget overrides the remedy it returns (#407). The
+        # consultation precedes the judge dispatch that rules on it.
+        state = self.saved()
+        index = investigator_index
+        state["recovery"]["dispatches"].append({
+            "schema_version": 1, "at": "2026-03-01T13:00:00+00:00", "id": "investigator-dispatch",
+            "fingerprint": "e" * 64, "role": "investigator", "agent": "grok", "task": TASK,
+            "fix_round": None, "plan": None, "work": None, "status": "applied", "assignment_index": index,
+            "result": {"schema_version": 1, "task": TASK, "role": "investigator", "agent": "grok",
+                       "fix_round": None, "status": "applied"}, "report": None})
+        state["specialist_assessments"].append({
+            "schema_version": 1, "at": "2026-03-01T14:00:00+00:00", "id": "inv-1",
+            "dispatch": "investigator-dispatch", "assignment_index": index, "task": TASK,
+            "role": "investigator", "agent": "grok", "report": self.investigation(),
+            "delivery": "/reports/delivery.json", "outcome": "delivered", "contribution": "design",
+            "summary": "The loop did not converge on surface area.",
+            "report_evidence": {"path": self.investigation(), "sha256": self.investigation_sha()},
+            "delivery_evidence": {"path": "/reports/delivery.json", "sha256": "b" * 64}})
+        save_state(self.state, state)
+        diagnosis = self.tmp / "diagnosis.md"
+        diagnosis.write_text("DIAGNOSIS: the loop did not converge\nREMEDY: continue — one more round\n"
+                             "BOUND: 1 — one attempt per open finding\nASSESSMENT: " + self.investigation() + "\nEVIDENCE: the five completed fixes\nUNVERIFIED: none\n")
+        code, _, err = self.owner("diagnose", {"id": "diag-cap", "task": TASK, "checkpoint": "cap-5",
+            "judge_report": str(diagnosis), "scope": SCOPE, "allowed_paths": ["src/*"]})
         self.assertEqual(code, 0, err)
         code, _, err = self.owner("authorize-corrections", {"id": "two-fixes", "task": TASK, "checkpoint": "cap-5",
-            "scope": SCOPE, "allowed_paths": ["src/*"], "additional_fixes": 2, "authorization": AUTH})
+            "scope": SCOPE, "allowed_paths": ["src/*"], "additional_fixes": 2, "authorization": AUTH,
+            "supersedes": "diag-cap:plan"})
         self.assertEqual(code, 0, err)
         code, _, err = self.owner("import-correction", self.attempt(6))
         self.assertEqual(code, 0, err)
@@ -479,7 +526,7 @@ class HistoricalCommandsTest(fixture.CliCase):
         code, _, err = self.invoke(args, self.fresh_client("manual-6-session", "fix-7"))
         self.assertEqual(code, 0, err)
         self.assertEqual(self.saved()["assignments"][-1]["fix_round"], 7)
-        self.assertEqual(len(self.saved()["recovery"]["plans"]), 1)
+        self.assertEqual([row["id"] for row in self.saved()["recovery"]["plans"] if not row.get("supersedes")], ["diag-cap:plan"])
 
     def test_verified_hand_clear_unlocks_correctly_counted_fresh_fix_without_permission(self):
         original = self.seed(1, release=True)
@@ -620,12 +667,15 @@ class HistoricalCommandsTest(fixture.CliCase):
         del original["recovery"]["historical_attempts"]
         del original["recovery"]["role_clearances"]
         del original["recovery"]["delivery_recoveries"]
+        del original["recovery"]["refusal_authorizations"]
+        del original["recovery"]["diagnoses"]
+        del original["recovery"]["legacy_ruling_recoveries"]
         self.state.write_text(json.dumps(original))
         code, _, err = self.invoke(["state"])
         self.assertEqual(code, 0, err)
         result = self.saved()
         self.assertEqual(result["assignments"], original["assignments"])
-        expected = {**original["recovery"], "schema_version": 4, "hand_clearances": [], "historical_attempts": [], "role_clearances": [], "delivery_recoveries": []}
+        expected = {**original["recovery"], "schema_version": 9, "hand_clearances": [], "historical_attempts": [], "role_clearances": [], "delivery_recoveries": [], "refusal_authorizations": [], "diagnoses": [], "legacy_ruling_recoveries": []}
         self.assertEqual(result["recovery"], expected)
 
 

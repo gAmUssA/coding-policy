@@ -25,7 +25,12 @@
 #
 # Blocking findings (gate the stop, once):
 #   - Leftover local branches whose upstream is gone (merged then remote-deleted).
-#   - Orphaned linked worktrees whose branch's upstream is gone.
+#   - Orphaned linked worktrees: clean AND either the branch's upstream is gone,
+#     or the tree holds nothing the default branch does not already have. The
+#     upstream test alone saw only worktrees whose branch had been pushed, so
+#     every review, test and judge seat -- which pin a tip and report to a file,
+#     and never push -- was invisible to it (#433). Detached worktrees are read
+#     the same way, against their HEAD.
 #   - Diagnostics findings in the CHANGED set only (uncommitted .sh/.py):
 #     lint the .sh with shellcheck, the .py with pyright. Skipped when nothing
 #     lintable changed, so a clean handoff costs nothing. An absent engine is
@@ -102,7 +107,7 @@ is_herdr_worker() {
 
 main() {
   local input active inside
-  local -a gone_branches=() wt_paths=() wt_branches=() leftover=() orphaned=() changed=()
+  local -a gone_branches=() wt_paths=() wt_branches=() wt_locked=() leftover=() orphaned=() spent_detached=() held=() changed=()
   local -a blocking=() reports=()
 
   # jq is required to read stop_hook_active and to emit the block JSON safely.
@@ -155,9 +160,56 @@ main() {
     for b in ${gone_branches[@]+"${gone_branches[@]}"}; do
       in_list "$b" ${wt_branches[@]+"${wt_branches[@]}"} || leftover+=("$b")
     done
+    local base=""
+    base="$(default_branch_ref)" || base=""
+    if [[ -z "$base" ]]; then
+      warn "could not resolve origin's default branch — reporting only worktrees whose upstream is gone"
+    fi
+    # `rules/agent-team-operation.md` Writers and Checkouts: the lead removes
+    # only a merged, clean worktree, and reports a dirty, unmerged, locked or
+    # detached one to the operator. So removal ALWAYS requires clean and
+    # contained -- a gone upstream is a reason to look, never a licence, since
+    # an upstream can vanish while its tree is dirty or ahead.
+    local spent
     for (( i = 0; i < ${#wt_paths[@]}; i++ )); do
       b="${wt_branches[$i]}"; p="${wt_paths[$i]}"
-      if in_list "$b" ${gone_branches[@]+"${gone_branches[@]}"}; then orphaned+=("${p} (branch ${b})"); fi
+      if [[ "${wt_locked[$i]}" == "1" ]]; then
+        held+=("${p}$([[ -n "$b" ]] && printf ' (branch %s)' "$b" || printf ' (detached)') — locked")
+        continue
+      fi
+      spent=0; SPENT_REASON="unreadable"
+      if [[ -n "$base" ]] && worktree_is_spent "$p" "$b" "$base"; then spent=1; fi
+      local named
+      named="${p}$([[ -n "$b" ]] && printf ' (branch %s)' "$b" || printf ' (detached)')"
+      if (( spent )) && [[ -n "$b" ]]; then
+        orphaned+=("${p} (branch ${b}, nothing ${base} lacks)")
+      elif (( spent )); then
+        spent_detached+=("${p} (detached, nothing ${base} lacks)")
+      elif [[ -z "$base" ]]; then
+        # No default branch to judge containment against. What IS observable
+        # still reaches the operator: a detached tree is detached whatever the
+        # base, and `status` needs none.
+        local why="containment unknown — no default branch resolved"
+        [[ -n "$b" ]] || why="detached, ${why}"
+        if [[ -d "$p" ]]; then
+          local st strc=0
+          st="$(git -C "$p" status --porcelain 2>/dev/null)" || strc=$?
+          if (( strc != 0 )); then
+            warn "\`git status\` failed in ${p} (exit ${strc}) — its cleanliness is unknown; inspect that checkout by hand"
+            why="unreadable, ${why}"
+          elif [[ -n "$st" ]]; then
+            why="dirty, ${why}"
+          fi
+        else
+          warn "worktree ${p} is listed but its directory is missing — inspect it by hand"
+          why="missing, ${why}"
+        fi
+        held+=("${named} — ${why}")
+      else
+        # Every protected state reaches the operator, whatever its upstream:
+        # a never-pushed dirty or unmerged tree has no upstream to be gone.
+        held+=("${named} — ${SPENT_REASON}")
+      fi
     done
 
     build_branch_findings
@@ -193,10 +245,11 @@ collect_gone_branches() {
 }
 
 # Populate wt_paths/wt_branches for LINKED worktrees only (the first porcelain
-# record is the main worktree and is skipped). Detached worktrees have no branch
-# and are skipped.
+# record is the main worktree and is skipped). A detached worktree is recorded
+# with an EMPTY branch rather than dropped: it can be as merged and as removable
+# as any other, and a branch-name predicate could never see it (#433).
 collect_worktrees() {
-  local out rc=0 line key val cur_path="" cur_branch="" first=1
+  local out rc=0 line key val cur_path="" cur_branch="" cur_locked=0 first=1
   out="$(git worktree list --porcelain)" || rc=$?
   if (( rc != 0 )); then
     warn "git worktree list failed (exit ${rc}) — skipping the orphaned-worktree check"
@@ -204,8 +257,10 @@ collect_worktrees() {
   fi
   flush() {
     if (( first )); then first=0
-    elif [[ -n "$cur_branch" ]]; then wt_paths+=("$cur_path"); wt_branches+=("$cur_branch"); fi
-    cur_path=""; cur_branch=""
+    elif [[ -n "$cur_path" ]]; then
+      wt_paths+=("$cur_path"); wt_branches+=("$cur_branch"); wt_locked+=("$cur_locked")
+    fi
+    cur_path=""; cur_branch=""; cur_locked=0
   }
   while IFS= read -r line; do
     if [[ -z "$line" ]]; then flush; continue; fi
@@ -213,10 +268,93 @@ collect_worktrees() {
     case "$key" in
       worktree) cur_path="$val" ;;
       branch)   cur_branch="${val#refs/heads/}" ;;
+      locked)   cur_locked=1 ;;
     esac
   done <<< "$out"
   [[ -n "$cur_path" ]] && flush   # flush a trailing record with no blank line
   return 0
+}
+
+# Echo the default branch's ref (`origin/main`), or return 1 when none can be
+# confirmed. Named explicitly rather than read off the current checkout: this
+# hook can run from a linked worktree, whose HEAD is not the default branch.
+default_branch_ref() {
+  local out rc=0 cand
+  # `--quiet` makes exit 1 the expected "no such symbolic ref"; any other exit
+  # is git failing, and reading it as an absent ref would hide the fault behind
+  # the main/master fallback (rules/error-handling.md).
+  out="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)" || rc=$?
+  if (( rc == 0 )) && [[ "$out" == refs/remotes/origin/* ]]; then
+    printf 'origin/%s' "${out#refs/remotes/origin/}"
+    return 0
+  fi
+  if (( rc != 0 && rc != 1 )); then
+    warn "git symbolic-ref refs/remotes/origin/HEAD failed (exit ${rc}) — falling back to origin/main or origin/master; run \`git remote set-head origin --auto\` if the fallback is wrong"
+  fi
+  for cand in main master; do
+    rc=0
+    git show-ref --verify --quiet "refs/remotes/origin/${cand}" || rc=$?
+    case "$rc" in
+      0) printf 'origin/%s' "$cand"; return 0 ;;
+      1) ;;  # the expected "no such ref"; try the next candidate
+      *) warn "\`git show-ref --verify refs/remotes/origin/${cand}\` failed (exit ${rc}) — cannot confirm the default branch; no worktree is reported removable this run"
+         return 1 ;;
+    esac
+  done
+  return 1
+}
+
+# Does <path> hold nothing the default branch does not already have?
+#
+# 0 = clean and fully contained, 1 = no (dirty, ahead, or unreadable). FAIL
+# CLOSED: a check that cannot run returns 1, so a tree this never inspected is
+# never reported removable. Reading an unreadable tree as clean is how the
+# first hand-rolled version of this passed trees it had never looked at (#433).
+#: Why the last `worktree_is_spent` said no, for the operator-facing report:
+#: `dirty`, `unmerged` or `unreadable`. Empty when it said yes.
+SPENT_REASON=""
+
+worktree_is_spent() { # <path> <branch|""> <default-ref>
+  local path="$1" branch="$2" base="$3" status rc=0 ahead head
+  SPENT_REASON="unreadable"
+  if [[ ! -d "$path" ]]; then
+    warn "worktree ${path} is listed but its directory is missing — not reporting it as removable; run \`git worktree prune\` after confirming it by hand"
+    SPENT_REASON="missing"
+    return 1
+  fi
+  status="$(git -C "$path" status --porcelain 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    warn "\`git status\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect that checkout by hand"
+    return 1
+  fi
+  if [[ -n "$status" ]]; then SPENT_REASON="dirty"; return 1; fi
+  if [[ -n "$branch" ]]; then
+    rc=0
+    ahead="$(git -C "$path" rev-list --count "${base}..${branch}" 2>/dev/null)" || rc=$?
+    if (( rc != 0 )) || [[ ! "$ahead" =~ ^[0-9]+$ ]]; then
+      warn "\`git rev-list --count ${base}..${branch}\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect its history by hand"
+      return 1
+    fi
+    if [[ "$ahead" != "0" ]]; then SPENT_REASON="unmerged"; return 1; fi
+    SPENT_REASON=""
+    return 0
+  fi
+  rc=0
+  head="$(git -C "$path" rev-parse --verify HEAD 2>/dev/null)" || rc=$?
+  if (( rc != 0 )) || [[ -z "$head" ]]; then
+    warn "\`git rev-parse HEAD\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect that checkout by hand"
+    return 1
+  fi
+  # merge-base exits 1 for the expected "not an ancestor"; anything else is a
+  # tool failure and must not read as a plain negative.
+  rc=0
+  git -C "$path" merge-base --is-ancestor "$head" "$base" 2>/dev/null || rc=$?
+  case "$rc" in
+    0) SPENT_REASON=""; return 0 ;;
+    1) SPENT_REASON="unmerged"; return 1 ;;
+    *) warn "\`git merge-base --is-ancestor\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect its history by hand"
+       return 1 ;;
+  esac
 }
 
 # Turn leftover branches and orphaned worktrees into blocking-finding sections.
@@ -239,12 +377,20 @@ build_branch_findings() {
     blocking+=("$section")
   fi
   if (( ${#orphaned[@]} > 0 )); then
-    section="Orphaned worktrees (branch merged, upstream deleted) — remove them:"
+    section="Orphaned worktrees (clean, holding nothing the default branch lacks) — remove them:"
     for p in "${orphaned[@]}"; do
       section+=$'\n'"  - ${p}: git worktree remove <path> && git branch -d <branch>"
     done
     blocking+=("$section")
   fi
+  # Report-only, never an instruction to remove: a detached, locked, dirty or
+  # unmerged worktree is the operator's call under Writers and Checkouts.
+  for p in ${spent_detached[@]+"${spent_detached[@]}"}; do
+    reports+=("Detached worktree holding nothing new: ${p} — report it to the operator; the lead never removes a detached worktree.")
+  done
+  for p in ${held[@]+"${held[@]}"}; do
+    reports+=("Worktree left for the operator: ${p} — the lead never removes a dirty, unmerged, locked or detached worktree.")
+  done
   return 0
 }
 

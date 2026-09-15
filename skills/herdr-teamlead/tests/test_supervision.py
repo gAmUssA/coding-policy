@@ -502,5 +502,28 @@ class SupervisionTest(unittest.TestCase):
                 self.assertEqual(json.loads(result.stdout)["decision"], "block")
 
 
+    def test_wrapper_leaves_no_bytecode_cache_in_the_installed_tree(self):
+        """The evaluator's read-only contract covers incidental caches too (#385)."""
+        self.member()
+        native_root = self.root / "xdg" / "teamlead" / "supervision-bindings"
+        store.bind(self.path, self.who, AT, root=native_root)
+        repo = Path(_ROOT).parent.parent
+        plugin = self.root / "fresh plugin"
+        shutil.copytree(Path(_ROOT) / "teamlead", plugin / "skills/herdr-teamlead/teamlead",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        (plugin / "hooks").mkdir()
+        script = plugin / "hooks/herdr-supervision-stop.sh"
+        shutil.copyfile(repo / "hooks/herdr-supervision-stop.sh", script)
+        self.assertEqual(list(plugin.rglob("__pycache__")), [])
+        environment = {**os.environ, **self.environ, "XDG_STATE_HOME": str(self.root / "xdg")}
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        result = subprocess.run(["bash", str(script)], input=json.dumps(self.payload), env=environment,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+        self.assertEqual([str(path.relative_to(plugin)) for path in plugin.rglob("__pycache__")], [])
+        self.assertEqual([str(path.relative_to(plugin)) for path in plugin.rglob("*.pyc")], [])
+
+
 if __name__ == "__main__":
     unittest.main()

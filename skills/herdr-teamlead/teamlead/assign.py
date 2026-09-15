@@ -60,11 +60,13 @@ from .recovery import empty_recovery, fresh_transition, task_record, validate_wo
 from .launch import restart_worker, verify_running, verify_running_permissions
 from .tiers import launch_flags, worker_launch_args
 from .qualification import require_qualification
+from .composition import normalize_requirement, parse_requirements
 
 # Version 3 adds verified model-tier metadata to context and task/fix evidence.
-APPLY_SCHEMA_VERSION = 6
+APPLY_SCHEMA_VERSION = 7
 
 RETAIN_CONTEXT_ROUNDS = frozenset({1, 2, 3})
+CONSULTATION_ROLES = frozenset({"advisor", "investigator", "architect"})
 
 # Some native clients publish SessionStart only after their first prompt. The
 # post-dispatch handshake polls the official integration, never pane labels.
@@ -237,10 +239,27 @@ def validate_agents(assignments, agents_by_name):
             )
 
 
-def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None):
+def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None):
     """Validate the explicit context choice before any herdr operation."""
+    parse_requirements(
+        {"schema_version": 1, "assignments": requirements} if requirements else None,
+        list(assignments), task,
+    )
     if no_clear and retain_context:
         raise UsageError("Choose --no-clear or --retain-context, never both.", {})
+    if retain_specialist:
+        if no_clear or retain_context:
+            raise UsageError("Choose --retain-specialist alone; omit --no-clear and --retain-context.", {})
+        if len(assignments) != 1 or not set(assignments) <= CONSULTATION_ROLES:
+            raise UsageError("--retain-specialist requires one advisor, investigator or architect assignment; use the normal fresh role or developer fix path for other work.", {})
+        if fix_round is not None or plan_id is not None or work is not None:
+            raise UsageError("A retained consultation cannot carry correction parameters. Dispatch implementation through the original developer task and fix allowance.", {})
+        if not isinstance(task, str) or not task.strip():
+            raise UsageError("Pass the original --task with --retain-specialist; a warm session cannot establish its task identity.", {})
+        role = next(iter(assignments))
+        requirement = (requirements or {}).get(role)
+        if normalize_requirement(requirement, role) != requirement:
+            raise UsageError("Retained consultation requires its normalized specialty, required_capabilities, independent and engagement requirements; restore the original engagement before dispatch.", {})
     if task is not None and (not isinstance(task, str) or not task.strip()):
         raise UsageError("Pass a non-empty --task label, or omit it.", {})
     if isinstance(task, str) and task != task.strip():
@@ -318,6 +337,25 @@ def validate_retained_history(assignments, history, task, fix_round):
     return prior
 
 
+def validate_specialist_history(assignments, history, task, requirements, tiers):
+    """Retain only the latest unchanged consultation with recorded tier proof."""
+    role, name = next(iter(assignments.items()))
+    latest = latest_assignment(history or [], agent=name)
+    prior = latest[1] if latest is not None else None
+    if (prior is None or prior.get("status") != "applied"
+            or prior.get("role") != role or prior.get("task") != task
+            or prior.get("requirements") != requirements[role]
+            or prior.get("fix_round") is not None):
+        raise UsageError("Cannot retain {}: its latest confirmed assignment must preserve the same task, consultation role and engagement requirements. Use a fresh brief with retrospective coverage for a changed engagement.".format(name), {"agent": name, "role": role, "task": task})
+    previous_tier = prior.get("tier")
+    wanted = (tiers or {}).get(role)
+    if (not isinstance(previous_tier, dict) or not isinstance(previous_tier.get("verified"), dict)
+            or not isinstance(wanted, dict)
+            or any(previous_tier.get(key) != wanted.get(key) for key in ("kind", "model", "effort"))):
+        raise UsageError("Cannot retain {}: the consultation needs its recorded verified model and effort unchanged. Use the fresh assignment and retrospective path to establish or change its tier.".format(name), {"agent": name})
+    return prior
+
+
 def native_context_session(info, kind):
     """Read the official integration's native session reference, never a label.
 
@@ -389,7 +427,7 @@ def correlate_dispatch_session(client, agent, pane_id, previous, before_prompt, 
     return None
 
 
-def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, track_context=False, tiers=None):
+def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, track_context=False, tiers=None, requirements=None):
     """Build the per-role command plan. Pure with respect to herdr: nothing runs.
 
     This is what `--dry-run` prints, and what the live path walks. `panes` maps
@@ -470,7 +508,7 @@ def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear
                     "first Enter (Codex's autocomplete popup eats it)",
                 )
             )
-        if track_context and role == "developer":
+        if track_context and (role == "developer" or role in CONSULTATION_ROLES and (requirements or {}).get(role) is not None):
             commands.append(client.argv_agent_get(name))
         commands.extend(composer_reads)
         # The assignment is real message text, so pasting it is correct.
@@ -540,7 +578,7 @@ def check_all_ready(client, assignments, agents_by_name, warn=None):
     return statuses
 
 
-def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, qualifications=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None):
+def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, qualifications=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None, retain_specialist=False, requirements=None):
     """Hand each agent its brief using the selected context mode.
 
     `on_assigned(role, agent, at, status, context)` is called after each hand-off so the
@@ -551,10 +589,12 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     """
     validate_agents(assignments, agents_by_name)
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
-                                       recovery=recovery, history=history, plan_id=plan_id, work=work)
+                                       recovery=recovery, history=history, plan_id=plan_id, work=work,
+                                       retain_specialist=retain_specialist, requirements=requirements)
     validate_fix_history(assignments, history, task, fix_round)
     prior = validate_retained_history(assignments, history, task, fix_round) if retain_context else None
     tiers = dict(tiers or {})
+    specialist_prior = validate_specialist_history(assignments, history, task, requirements, tiers) if retain_specialist else None
     if prior is not None and tiers.get("developer"):
         previous_tier = prior.get("tier")
         wanted = tiers["developer"]
@@ -571,8 +611,8 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
         if role != "judge":
             proof = require_qualification({**tier, "qualification": (qualifications or {}).get(role, [])}, role, at)
             tiers[role] = {**tier, "qualification": proof}
-    skip_clear = no_clear or retain_context
-    clear_reason = "retained" if retain_context else "hand" if no_clear else "automatic"
+    skip_clear = no_clear or retain_context or retain_specialist
+    clear_reason = "retained" if retain_context or retain_specialist else "hand" if no_clear else "automatic"
     # Resolve the sink once. Every helper below defaults it too, but this
     # function calls it directly on the label path, and a None there would
     # raise instead of warning -- exactly when something already went wrong.
@@ -583,6 +623,9 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     if prior is not None:
         name = assignments["developer"]
         verify_live_retention(prior, statuses[name]["context_session"], name)
+    if specialist_prior is not None:
+        name = next(iter(assignments.values()))
+        verify_live_retention(specialist_prior, statuses[name]["context_session"], name)
     steps = build_steps(
         client,
         assignments,
@@ -594,11 +637,14 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
         start_timeout_ms=start_timeout_ms,
         track_context=task is not None,
         tiers=tiers,
+        requirements=requirements,
     )
     # Prove every pre-existing legacy worker before any role receives input.
     # The team lead starts these workers manually; apply never guesses a tier
     # or silently restarts a retained session to repair its permission mode.
     for step in steps:
+        if requirements is not None and step["role"] in requirements:
+            step["requirements"] = requirements[step["role"]]
         if step["pane_id"] == PANE_ID_PLACEHOLDER:
             raise UsageError("Herdr reported no pane for {!r}; inspect `herdr agent list` before dispatch so live YOLO arguments can be verified.".format(step["agent"]), {})
         if not step["tier"]:
@@ -629,6 +675,9 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
                 verify_running_permissions(client, agent, step["pane_id"])
             if retrospective_guard is not None:
                 retrospective_guard.before(step)
+            if specialist_prior is not None:
+                live = check_all_ready(client, {step["role"]: name}, agents_by_name, warn=warn)
+                verify_live_retention(specialist_prior, live[name]["context_session"], name)
 
         if not tier:
             # Earlier roles and their callbacks may replace a later worker.
@@ -687,12 +736,16 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             if retrospective_guard is not None:
                 retrospective_guard.after_transition(step)
         context_session = None
-        if task is not None and step["role"] == "developer":
+        tracks_session = task is not None and (step["role"] == "developer"
+            or step["role"] in CONSULTATION_ROLES and (requirements or {}).get(step["role"]) is not None)
+        if tracks_session:
             # Query again after the clear, or immediately before retaining.
             # A pre-clear reference cannot stand in for the new conversation.
             context_session = native_context_session(client.agent_get(name), agent.kind)
             if prior is not None:
                 verify_live_retention(prior, context_session, name)
+            elif specialist_prior is not None:
+                verify_live_retention(specialist_prior, context_session, name)
             elif cleared and context_session == statuses[name]["context_session"]:
                 context_session = None
         grok_new = agent.kind == "grok" and cleared and not tier
@@ -720,7 +773,7 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             start_timeout_ms=start_timeout_ms,
             before_input=before_input,
         )
-        if task is not None and step["role"] == "developer" and prior is None:
+        if tracks_session and prior is None and specialist_prior is None:
             context_session = (correlate_dispatch_session(
                 client, agent, step["pane_id"], statuses[name]["context_session"], context_session,
                 cleared=cleared, warn=warn, sleep=sleep, settle_sec=settle_sec, grok_new=grok_new,
@@ -755,6 +808,8 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             "at": at,
             "context_transition": transition if step["role"] == "developer" else None,
         }
+        if "requirements" in step:
+            record["requirements"] = step["requirements"]
         # Persist the dispatch outcome before optional UI work. A broken pipe
         # during pane relabeling must never erase a confirmed handoff.
         if on_assigned is not None:
@@ -794,7 +849,7 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     }
 
 
-def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, retain_context=False, task=None, fix_round=None, tiers=None, recovery=None, history=None, plan_id=None, work=None):
+def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, retain_context=False, task=None, fix_round=None, tiers=None, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None):
     """Print the plan without contacting herdr at all.
 
     Deliberately makes zero herdr calls, including the status check: a dry run
@@ -802,12 +857,15 @@ def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_t
     `apply` re-checks status for real before sending anything.
     """
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
-                                       recovery=recovery, history=history, plan_id=plan_id, work=work)
-    return {
+                                       recovery=recovery, history=history, plan_id=plan_id, work=work,
+                                       retain_specialist=retain_specialist, requirements=requirements)
+    if retain_specialist:
+        validate_specialist_history(assignments, history, task, requirements, tiers)
+    result = {
         "schema_version": APPLY_SCHEMA_VERSION,
         "dry_run": True,
         "sent": False,
-        "clear_reason": "retained" if retain_context else "hand" if no_clear else "automatic",
+        "clear_reason": "retained" if retain_context or retain_specialist else "hand" if no_clear else "automatic",
         "task": task,
         "fix_round": fix_round,
         "context_transition": transition,
@@ -816,9 +874,14 @@ def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_t
             assignments,
             agents_by_name,
             paths,
-            no_clear=no_clear or retain_context,
+            no_clear=no_clear or retain_context or retain_specialist,
             settle_timeout_ms=settle_timeout_ms,
             track_context=task is not None,
             tiers=tiers,
+            requirements=requirements,
         ),
     }
+    for step in result["steps"]:
+        if requirements is not None and step["role"] in requirements:
+            step["requirements"] = requirements[step["role"]]
+    return result

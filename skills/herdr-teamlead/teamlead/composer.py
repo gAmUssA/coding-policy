@@ -37,6 +37,12 @@ COMPOSER_READ_LINES = 20
 #: Seconds to let a TUI repaint before re-reading. Injected in tests.
 COMPOSER_SETTLE_SEC = 1.0
 
+#: How many times to look for the worker's own prompt before refusing, and how
+#: long to wait between looks: 10 s in total. A runtime that has not drawn its
+#: composer by then is drawing something else over it (#393).
+COMPOSER_VISIBLE_ATTEMPTS = 20
+COMPOSER_VISIBLE_INTERVAL = 0.5
+
 #: Re-reads allowed while waiting for the screen to change after a clear.
 SCREEN_CHANGE_ATTEMPTS = 3
 
@@ -430,19 +436,40 @@ def _stuck_composer_error(agent, pane_id, composer, reason):
 
 
 def ensure_ready(client, agent, pane_id=None, session=None, sleep=time.sleep, warn=None, settle_sec=COMPOSER_SETTLE_SEC, text=None, ansi=True, before_input=None):
-    """Return pane text once the composer is empty.
+    """Return pane text once the worker's own composer is on screen and empty.
 
     Recovery keys are sent only when every condition in `recovery_allowed`
     holds, and then EXACTLY once. Anything else refuses and names the pane:
     a keystroke into a composer teamlead cannot account for is how an idle
     Codex got killed. `before_input` revalidates the caller's live guard before
     recovery keys, after the composer read that could have observed a switch.
+
+    The composer must be VISIBLE before its content is judged. An absent
+    composer holds no content, so a modal drawn over the prompt read as an
+    empty one: Codex's startup review dialog took a whole assignment that way,
+    and the apply returned `sent_but_not_started` with no model turn and no
+    assignment in the transcript (#393). A prompt that has not appeared yet is
+    waited out, bounded; one that never appears refuses before any input.
     """
     warn = warn or stderr_warn
     session = session if session is not None else DispatchSession()
     if text is None:
         text, ansi = read_pane(client, agent, warn=warn)
     composer = inspect_composer(text, agent, ansi=ansi)
+    if checkable(agent) and not composer.visible:
+        for attempt in range(1, COMPOSER_VISIBLE_ATTEMPTS + 1):
+            if attempt < COMPOSER_VISIBLE_ATTEMPTS:
+                sleep(COMPOSER_VISIBLE_INTERVAL)
+            text, ansi = read_pane(client, agent, warn=warn)
+            composer = inspect_composer(text, agent, ansi=ansi)
+            if composer.visible:
+                break
+        else:
+            raise HerdrError(
+                "{}'s prompt is not on screen in pane {} after {} reads; something is drawn over it -- a startup review or permission dialog takes the input meant for the worker. Read the pane, clear what is on it, and retry. Nothing was sent.".format(
+                    agent.name, pane_id, COMPOSER_VISIBLE_ATTEMPTS),
+                {"agent": agent.name, "pane": pane_id, "attempts": COMPOSER_VISIBLE_ATTEMPTS},
+            )
     if not composer.occupied:
         return text
 

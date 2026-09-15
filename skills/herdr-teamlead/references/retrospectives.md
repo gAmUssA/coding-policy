@@ -20,6 +20,11 @@ transition requirement; missing history or unknown session evidence does not
 prove that exemption. Ordinary readiness, recovery, and acceptance gates still
 apply after a retrospective.
 
+A retained specialist follow-up remains subject to the daily cadence. Use
+`context: "retain"` in its check request; the continuation owner verifies the
+unchanged engagement under `references/dispatch-recovery.md`. A changed specialty
+or engagement uses the normal fresh assignment and transition path.
+
 One retrospective can cover the daily cadence and a batch of planned transitions.
 Bind each worker independently to its outgoing assignment, native session and
 process evidence, source report bytes, and proposed transition. Completing the
@@ -35,6 +40,9 @@ findings, test and publish results, and measured headroom where available. Read
 the previous retrospective and its open actions. Workers' normal reports include
 handoff observations; use them without sending another prompt or clearing context.
 Read-only status and process inspection may establish transition evidence.
+Include saved specialist requirements, lead contribution assessments, and the
+decisions that used or declined their output. An unused profile has no missing
+report; distinguish unneeded expertise from expertise the task lacked.
 
 Record participants whose saved observations were considered and workers whose
 input is unavailable, with reasons. A busy or blocked worker receives no
@@ -66,6 +74,10 @@ Address these five questions with evidence and the lead's reasoning:
 4. **Seats and models:** How well did the assignments fit the work? Use observed
    results, measured headroom, and available cost evidence; record absent data
    explicitly. A model name alone does not establish capacity or effectiveness.
+   Which specialist changed a decision or prevented rework? Who arrived too late,
+   and which consultation consumed time without a useful result? Evaluate whether
+   a retained session or durable handoff preserved the knowledge the next worker
+   needed. Separate measured costs from impressions.
 5. **Improvements:** Which small set of changes should the team try next? Give
    each action an owner, next checkpoint, and observable success criterion. Revisit
    earlier actions as completed with evidence, still open, or superseded with a
@@ -89,6 +101,10 @@ facts to the task ledger and project-wide changes through the normal authorized
 work flow. Save user decisions, review requests, and promised follow-ups through
 `skills/herdr-teamlead/references/attention.md`. These records supplement the
 completed note; they never rewrite it or silently change policy.
+Use these findings to refine future capability declarations, briefing questions
+and consultation timing. Validate the relevant skills, tools and observed work
+before updating staffing assumptions; retrospective recommendations create no
+automatic model promotion or new standing seat.
 
 ## Persistence and retrieval
 

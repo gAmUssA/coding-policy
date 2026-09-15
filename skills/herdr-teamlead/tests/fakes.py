@@ -31,6 +31,9 @@ class FakeRunner:
         self.raises = raises or {}
         self.calls = []
         self.observed_agents = {}
+        #: True between a terminate and the next start, when Herdr has released
+        #: the stopped worker's name.
+        self.killed = False
 
     def set(self, prefix, stdout="", returncode=0, stderr=""):
         self.responses[prefix] = FakeCompleted(returncode, stdout, stderr)
@@ -39,6 +42,17 @@ class FakeRunner:
     def __call__(self, argv):
         self.calls.append(list(argv))
         joined = shlex.join(argv[1:])
+        # Herdr releases a stopped worker's name: once its process is killed,
+        # `agent get` answers agent_not_found until the seat is started again.
+        # A scripted record that outlives the kill would keep the name reserved
+        # forever, which no real relaunch sees (#379).
+        if joined.startswith("kill -TERM") or joined.startswith("-TERM"):
+            self.killed = True
+        elif joined.startswith("agent start"):
+            self.killed = False
+        elif self.killed and joined.startswith("agent get"):
+            return FakeCompleted(1, "", json.dumps(
+                {"error": {"code": "agent_not_found", "message": "agent target not found"}}))
         for prefix in sorted(self.raises, key=len, reverse=True):
             if joined.startswith(prefix):
                 raise self.raises[prefix]

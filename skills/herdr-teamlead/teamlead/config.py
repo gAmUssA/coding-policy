@@ -8,14 +8,16 @@ with an actionable message instead of silently inventing agents.
 import json
 import math
 import os
+import re
 from pathlib import Path
 
-from .errors import ConfigError
+from .errors import ConfigError, TeamLeadError
 from .herdr import SLASH_DELIVERIES, SLASH_DELIVERY_PASTE
 from .tiers import parse_launch_args, parse_tiers
 
-CONFIG_SCHEMA_VERSION = 2
-READABLE_CONFIG_VERSIONS = frozenset({1, 2})
+CONFIG_SCHEMA_VERSION = 3
+READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3})
+CAPABILITY_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 REQUIRED_AGENT_FIELDS = ("name", "kind", "usage_prompt", "usage_marker", "usage_read_source", "clear_prompt")
 
@@ -58,9 +60,10 @@ class Agent:
         "window_group",
         "tiers",
         "launch_args",
+        "capabilities",
     )
 
-    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=()):
+    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=()):
         self.name = name
         self.kind = kind
         self.usage_prompt = usage_prompt
@@ -90,6 +93,7 @@ class Agent:
         self.window_group = window_group
         self.tiers = tiers or {}
         self.launch_args = tuple(launch_args)
+        self.capabilities = tuple(capabilities)
         # "paste" (agent prompt) or "type" (pane send-text plus Enter).
         self.slash_delivery = slash_delivery
         # The prompt glyph that marks the composer row, so teamlead can see
@@ -123,7 +127,21 @@ class Agent:
             record["tiers"] = self.tiers
         if self.launch_args:
             record["launch_args"] = list(self.launch_args)
+        if self.capabilities:
+            record["capabilities"] = list(self.capabilities)
         return record
+
+
+def parse_capabilities(value, source="capabilities", error_type: type[TeamLeadError] = ConfigError):
+    """Normalize explicit eligibility tags; a model name never supplies them."""
+    if (not isinstance(value, list)
+            or any(not isinstance(item, str) or not CAPABILITY_ID.fullmatch(item) for item in value)
+            or len(set(value)) != len(value)):
+        raise error_type(
+            "{} must be an array of distinct lowercase capability names using letters, digits, underscores or hyphens; start each name with a letter.".format(source),
+            {"source": source},
+        )
+    return sorted(value)
 
 
 def default_config_path():
@@ -204,6 +222,9 @@ def parse_config(payload, source="<memory>"):
         name = entry["name"]
         if "tiers" in entry and version < 2:
             raise ConfigError("Tier tables need config schema_version 2; upgrade the operator-owned config.", {"source": source})
+        if "capabilities" in entry and version < 3:
+            raise ConfigError("Capability declarations need config schema_version 3; upgrade the operator-owned config without changing its existing launch or tier settings.", {"source": source})
+        capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(
                 "Config at {}: agent name {!r} appears twice - herdr agent "
@@ -306,6 +327,7 @@ def parse_config(payload, source="<memory>"):
                 window_group=window_group,
                 tiers=parse_tiers(entry.get("tiers"), entry["kind"]),
                 launch_args=parse_launch_args(entry.get("launch_args", []), entry["kind"]),
+                capabilities=capabilities,
                 slash_enter_count=enters,
                 **lists
             )

@@ -240,6 +240,21 @@ class EnsureReadyTest(unittest.TestCase):
         self._ready(runner)
         self.assertEqual(runner.writes(), [])
 
+    def test_a_modal_over_the_prompt_refuses_before_any_input(self):
+        # coding-policy#393: Codex drew its startup review dialog over the
+        # prompt. An absent composer holds no content, so the content check
+        # read it as ready and the assignment went into the dialog.
+        runner = self._runner(["A startup review dialog and no prompt row"] * 40)
+        with self.assertRaises(HerdrError) as caught:
+            self._ready(runner)
+        self.assertIn("prompt is not on screen", str(caught.exception))
+        self.assertEqual(runner.writes(), [])
+
+    def test_a_prompt_that_appears_late_is_waited_out(self):
+        runner = self._runner(["still starting up", "still starting up", CODEX_EMPTY])
+        self._ready(runner)
+        self.assertEqual(runner.writes(), [])
+
     def test_text_teamlead_did_not_type_is_refused_not_cleared(self):
         runner = self._runner([CODEX_HELD])
         with self.assertRaises(HerdrError) as caught:

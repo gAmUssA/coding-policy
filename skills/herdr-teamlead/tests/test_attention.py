@@ -347,6 +347,80 @@ class AttentionTest(unittest.TestCase):
         with self.assertRaises(UsageError):
             attention.run_command(parser.parse_args(["attention-record", "--record", str(record)]), self.path, LATER)
 
+    def gate(self, task="owner/repo#5", at=LATER):
+        return [row["id"] for row in attention.dispatch_gate(self.path, task, at)]
+
+    def test_dispatch_gate_reads_open_decisions_and_blockers_on_the_task_only(self):
+        # coding-policy#399: an unanswered decision that changes no behavior is
+        # not a question. The gate is by kind and task, never by priority.
+        self.assertEqual(self.gate(), [])
+        self.record(obligation("d1", "decision", priority=10))
+        self.record(obligation("b1", "blocker", priority=5))
+        self.record(obligation("q1", "question", priority=99))
+        for kind in ("review", "failure", "followup", "update"):
+            self.record({**obligation("k-" + kind, kind, priority=99), "options": [], "recommendation": None})
+        self.record({**obligation("other", "decision", priority=99), "task": "owner/repo#6"})
+        self.record({**obligation("untasked", "decision", priority=99), "task": None})
+        self.assertEqual(self.gate(), ["b1", "d1"])
+        self.assertEqual(self.gate("owner/repo#6"), ["other"])
+        self.assertEqual(self.gate("owner/repo#7"), [])
+        self.assertEqual(attention.dispatch_gate(self.path, None, LATER), [])
+        row = attention.dispatch_gate(self.path, "owner/repo#5", LATER)[0]
+        self.assertEqual((row["kind"], row["resolution_condition"], row["resurfaced"]),
+                         ("blocker", obligation()["resolution_condition"], False))
+        with self.assertRaises(UsageError) as caught:
+            attention.require_dispatch_clear(self.path, "owner/repo#5", LATER)
+        self.assertIn("blocker b1", caught.exception.message)
+        self.assertIn(obligation()["resolution_condition"], caught.exception.message)
+        self.assertEqual([row["id"] for row in caught.exception.details["gating"]], ["b1", "d1"])
+        self.assertIsNone(attention.require_dispatch_clear(self.path, "owner/repo#7", LATER))
+
+    def test_dispatch_gate_follows_the_lifecycle_and_never_presentation(self):
+        self.record(obligation("d1", "decision"))
+        self.update("present", event_id="shown-1", name="d1",
+                    evidence=evidence("delivery", "Presented in the catch-up message."))
+        self.assertEqual(self.gate(), ["d1"])
+        self.update("defer", event_id="defer-1", name="d1", revision=2, until=DUE,
+                    evidence=evidence("source", "Lead recorded the deferral rationale."))
+        self.assertEqual(self.gate(at=LATER), [])
+        self.assertEqual(self.gate(at=AFTER), ["d1"])
+        self.assertTrue(attention.dispatch_gate(self.path, "owner/repo#5", AFTER)[0]["resurfaced"])
+        self.update("reopen", event_id="reopen-1", name="d1", revision=3, at=AFTER,
+                    evidence=evidence("source", "The deferral is over."))
+        self.assertEqual(self.gate(at=AFTER), ["d1"])
+        self.update("resolve", event_id="answer-1", name="d1", revision=4, at=AFTER, evidence=evidence())
+        self.assertEqual(self.gate(at=AFTER), [])
+        self.record(obligation("b1", "blocker"), at=AFTER)
+        self.record(obligation("b2", "blocker"), at=AFTER)
+        self.update("supersede", event_id="super-1", name="b1", at=AFTER, replacement="b2",
+                    evidence=evidence("source", "b2 restates the blocker."))
+        self.assertEqual(self.gate(at=AFTER), ["b2"])
+        self.update("resolve", event_id="recovered-1", name="b2", at=AFTER,
+                    evidence=evidence("verified_outcome", "The blocker recovered."))
+        self.assertEqual(self.gate(at=AFTER), [])
+
+    def test_dispatch_gate_refuses_a_malformed_history_instead_of_reading_it_as_clear(self):
+        self.record(obligation("d1", "decision"))
+        attention.storage_path(self.path).write_text("{", encoding="utf-8")
+        with self.assertRaises(StateError):
+            attention.dispatch_gate(self.path, "owner/repo#5", LATER)
+        with self.assertRaises(StateError):
+            attention.require_dispatch_clear(self.path, "owner/repo#5", LATER)
+        with self.assertRaises(UsageError):
+            attention.dispatch_gate(self.path, "owner/repo#5", "not-a-time")
+
+    def test_dispatch_gate_refuses_a_checkpoint_before_the_latest_saved_event(self):
+        # A deferral due at DUE must not read as pending under an earlier --now.
+        self.record(obligation("d1", "decision"))
+        self.update("defer", event_id="defer-1", name="d1", until=DUE, at=LATER,
+                    evidence=evidence("source", "Lead recorded the deferral rationale."))
+        with self.assertRaisesRegex(UsageError, "precedes saved attention events"):
+            attention.dispatch_gate(self.path, "owner/repo#5", AT)
+        with self.assertRaisesRegex(UsageError, "precedes saved attention events"):
+            attention.require_dispatch_clear(self.path, "owner/repo#5", AT)
+        self.assertEqual(self.gate(at=LATER), [])
+        self.assertEqual(self.gate(at=AFTER), ["d1"])
+
 
 if __name__ == "__main__":
     unittest.main()

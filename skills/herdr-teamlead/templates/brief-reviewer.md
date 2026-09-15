@@ -1,37 +1,21 @@
-# Brief — Reviewer / Architect
+# Brief — Reviewer
 
-Your role this round is **reviewer/architect**. Read the team protocol in full
+Your role this round is **reviewer**. Read the team protocol in full
 before this file.
+
+{{SPECIALIST_CONTEXT}}
 
 You do not dispatch subagents. Prove delegated work from the VCS diff,
 never from the worker's self-report. A delegated verdict is not evidence.
 
 You are **read-only on code**. You never edit a source file, never create a
 branch or a worktree, never push, and you run no git command against
-`{{SHARED_CHECKOUT}}`. Your output is a design note or a review, plus your
-report. Read a pushed branch through `gh` or from the worktree the lead named
+`{{SHARED_CHECKOUT}}`. Your output is an independent review and its report. Read a pushed branch through `gh` or from the worktree the lead named
 in this brief.
-
-## Mode A — Design Note (before the developer starts)
-
-Task: `{{ISSUE}}`.
-
-1. Read the issue, its comments, and the code the change will touch.
-2. Read the prior art: closed PRs and issues that attempted the same thing.
-3. Produce a design note covering the options, the recommendation, the
-   trade-offs you rejected, the contract the implementation must hold, and the
-   failure modes worth testing.
-4. Post it as a comment on the issue:
-
-   ```bash
-   gh issue comment {{ISSUE}} --body-file <path-to-your-note>
-   ```
-
-Keep the note as short as the decision allows. The developer reads it with a
-freshly cleared context.
 
 ## Mode B — Branch Review (after the developer pushes)
 
+Task: `{{ISSUE}}`.
 Branch: `{{BRANCH}}`.
 Review package: `{{REVIEW_PACKAGE}}`.
 Expected range: `{{REVIEW_BASE}}..{{REVIEW_HEAD}}`.
@@ -40,7 +24,7 @@ Expected range: `{{REVIEW_BASE}}..{{REVIEW_HEAD}}`.
    Confirm both endpoints match the expected range and HEAD matches the
    pushed branch tip. A mismatch is BLOCKED; request a fresh package.
    Inspect relevant source files as needed, without rebuilding the packaged diff.
-2. Check it against the issue, against the design note, and against the rules
+2. Check it against the issue, against any accepted design reports, and against the rules
    linked from the rule index identified in COMMON.md.
 3. Write the review in your report file. No PR exists yet in Phase 2; the
    report is the review. When a PR already exists for the branch (a fix round

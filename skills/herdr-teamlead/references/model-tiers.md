@@ -57,11 +57,11 @@ For initial manual starts through Herdr, pass the runtime's YOLO options after
 brief. Existing workers, including non-tiered workers, require that same proof.
 A non-tiered existing process also proves permission in the documented resume
 form: the runtime's resume option or subcommand naming one explicit session
-UUID as a separate token, plus its explicit YOLO flags. The accepted and
-refused resume tokens are `RESUME_OPTIONS`, `RESUME_SUBCOMMANDS`,
-`RESUME_REFUSALS`, and `SESSION_UUID` in the same module; pickers, most-recent
-selectors, titles, forks, new session IDs, and prompt operands refuse. Tiered
-proof (`verify_argv`) stays exact and accepts no resume form.
+UUID as a separate token, plus its explicit YOLO flags. Which selectors that
+form accepts and which it refuses is the grammar in the same module —
+`RESUME_OPTIONS`, `RESUME_SUBCOMMANDS`, `RESUME_REFUSALS` and `SESSION_UUID`,
+under the comment block above them. Tiered proof (`verify_argv`) stays exact
+and accepts no resume form.
 Do not clear a retained worker to repair a permission mismatch. Use the normal
 fresh-dispatch boundary once the current assignment is resolved, or the
 same-session restoration in `references/dispatch-recovery.md` when the

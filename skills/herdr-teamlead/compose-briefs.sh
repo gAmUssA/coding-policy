@@ -12,6 +12,8 @@
 #            "roles":  {"<role>": {"KEY": "value", ...}, ...}}
 #           `shared` fills COMMON.md and every brief; a role's own values win
 #           on a collision. Roles map to `brief-<role>.md` in the templates dir.
+#           advisor/investigator/architect fall back to brief-specialist.md.
+#           SPECIALIST_CONTEXT defaults to empty only where the template uses it.
 #   stdout: one JSON object —
 #           {"common":"<path>","briefs":{"<role>":"<path>", ...}}
 #   stderr: diagnostics only.
@@ -46,6 +48,16 @@ PLACEHOLDER_RE='\{\{[A-Z0-9_]+\}\}'
 TEAMLEAD_REPORT_PATH_MAX_COLS="${TEAMLEAD_REPORT_PATH_MAX_COLS:-100}"
 
 warn() { printf 'compose-briefs: %s\n' "$1" >&2; }
+
+template_for_role() { # <templates> <role>
+  local path="${1}/brief-${2}.md"
+  if [[ ! -r "$path" ]]; then
+    case "$2" in
+      advisor|investigator|architect) path="${1}/brief-specialist.md" ;;
+    esac
+  fi
+  printf '%s\n' "$path"
+}
 
 # Echo every distinct placeholder name in <file>, one per line.
 placeholders_in() { # <file>
@@ -196,14 +208,15 @@ main() {
   shared="$(printf '%s' "$values" | jq -c '.shared // {}')"
 
   # Every source file must exist before anything is written.
-  local common_tpl="${templates}/COMMON.md" role
+  local common_tpl="${templates}/COMMON.md" role role_tpl
   if [[ ! -r "$common_tpl" ]]; then
     warn "template not found: ${common_tpl}"
     return 1
   fi
   while IFS= read -r role; do
-    if [[ ! -r "${templates}/brief-${role}.md" ]]; then
-      warn "template not found: ${templates}/brief-${role}.md — roles are named by their template"
+    role_tpl="$(template_for_role "$templates" "$role")"
+    if [[ ! -r "$role_tpl" ]]; then
+      warn "template not found: ${role_tpl} — supply the packaged role template"
       return 1
     fi
   done <<< "$roles"
@@ -243,6 +256,7 @@ main() {
   out_bodies+=("$common_body")
 
   while IFS= read -r role; do
+    role_tpl="$(template_for_role "$templates" "$role")"
     local policy_override
     policy_override="$(printf '%s' "$values" | jq -r --arg r "$role" '.roles[$r] | has("POLICY_INDEX") or has("RELEASE_SKILL")')" || return 2
     if [[ "$policy_override" == true ]]; then
@@ -251,6 +265,18 @@ main() {
     fi
     merged="$(jq -c -n --argjson a "$shared" --argjson b "$(printf '%s' "$values" | jq -c --arg r "$role" '.roles[$r]')" '$a * $b')"
     validate_values "$merged" "the values for role '${role}'" || return 2
+    known="$(placeholders_in "$role_tpl")" || return 3
+    if [[ $'\n'"${known}"$'\n' == *$'\nSPECIALIST_CONTEXT\n'* ]]; then
+      merged="$(printf '%s' "$merged" | jq -c '{SPECIALIST_CONTEXT:""} * .')" || return 2
+    fi
+    case "$role" in
+      advisor|investigator|architect)
+        if ! printf '%s' "$merged" | jq -e --arg role "$role" '.RESPONSIBILITY == $role' >/dev/null; then
+          warn "RESPONSIBILITY must match consultation role '${role}' — preserve the assigned responsibility in its brief"
+          return 2
+        fi
+        ;;
+    esac
     # Validate in JSON before command substitution can strip trailing newlines
     # or discard a NUL byte from the path.
     if ! printf '%s' "$merged" | jq -e '.REPORT | if type == "string" then explode | all(. >= 32 and . != 127) else false end' >/dev/null; then
@@ -278,7 +304,7 @@ main() {
       warn "REPORT for role '${role}' is ${#report} characters; the limit is ${TEAMLEAD_REPORT_PATH_MAX_COLS} so the worker's \`REPORT: <path>\` line fits one pane row and the wait can confirm it — use a shorter reports directory (e.g. one under \$HOME/.local/state) and re-run"
       return 2
     fi
-    rendered="$(substitute "${templates}/brief-${role}.md" "$merged")"
+    rendered="$(substitute "$role_tpl" "$merged")"
     scan_rc=0
     leftovers="$(leftover_placeholders "$rendered")" || scan_rc=$?
     if (( scan_rc != 0 )); then return 3; fi
@@ -292,7 +318,6 @@ main() {
     # whenever grep exits early on a match and SIGPIPEs the producer, which
     # reads as "not found" for every key that IS found.
     supplied="$(printf '%s' "$merged" | jq -r 'keys[]')"
-    known="$(placeholders_in "${templates}/brief-${role}.md")" || return 3
     common_known="$(placeholders_in "$common_tpl")" || return 3
     known+=$'\n'"$common_known"
     unused=""

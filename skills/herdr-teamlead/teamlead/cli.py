@@ -11,6 +11,7 @@ I/O contract:
 """
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -22,7 +23,7 @@ from types import SimpleNamespace
 from . import __version__
 from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
-from . import attention, historical, memory, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime
+from . import attention, composition, engagement, historical, memory, partition, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
 from .errors import PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
@@ -40,7 +41,7 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import parse_launch_args, parse_tiers, select_tier
+from .tiers import MissingTierError, parse_launch_args, parse_tiers, select_tier
 from .qualification import require_qualification
 from .launch import start_worker, verify_running
 from .state import (
@@ -114,6 +115,8 @@ def build_parser():
     judge_parser.add_argument("--pane", required=True)
     judge_parser.add_argument("--kind", choices=("claude", "codex", "grok"), default="claude")
     judge_parser.add_argument("--task")
+    judge_parser.add_argument("--judge-mode", choices=recovery.JUDGE_MODES,
+                              help="What this judge seat is for; the plan's recorded mode when omitted.")
     judge_parser.add_argument("--now", metavar="ISO")
 
     for command in ("retro-check", "retro-record"):
@@ -130,6 +133,9 @@ def build_parser():
     attention.register_commands(sub, common)
     supervision_runtime.register_commands(sub, common)
     restoration.register_commands(sub, common)
+    partition.register_commands(sub, common)
+
+    triggers.register_command(sub, common)
 
     measure_parser = sub.add_parser(
         "measure",
@@ -232,8 +238,12 @@ def build_parser():
                              help="Choose a configured round type for a role; never a model override.")
     plan_parser.add_argument("--round-context", metavar="FILE",
                              help="JSON object keyed by role with mechanical/risk evidence for this round.")
+    plan_parser.add_argument("--judge-mode", choices=recovery.JUDGE_MODES,
+                             help="What this round's judge seat is for. Required with --roles judge.")
     plan_parser.add_argument("--fix-round", type=int, help="Task fix number; late fixes use the top tier.")
     plan_parser.add_argument("--task", help="Original task identity; preserve it through every correction.")
+    plan_parser.add_argument("--requirements", metavar="FILE",
+                             help="Versioned per-role specialty, capabilities, independence and engagement requirements.")
     plan_parser.add_argument("--preview-tiers", action="store_true",
                              help="Preview unqualified tiers. Live apply still requires complete qualification evidence.")
     plan_parser.add_argument("--now", metavar="ISO-8601", help="Reference time for qualification expiry (default: current UTC time).")
@@ -252,6 +262,10 @@ def build_parser():
         required=True,
         metavar="FILE_OR_JSON",
         help="`teamlead plan` output, a {role: agent} object, or a path to either.",
+    )
+    apply_parser.add_argument(
+        "--judge-mode", choices=recovery.JUDGE_MODES,
+        help="What this dispatch's judge seat is for. Required when the batch holds a judge.",
     )
     apply_parser.add_argument(
         "--brief",
@@ -289,6 +303,10 @@ def build_parser():
     context_flags.add_argument(
         "--retain-context", action="store_true",
         help="Keep the same developer's context for fix rounds 1–3; requires --task and --fix-round.",
+    )
+    context_flags.add_argument(
+        "--retain-specialist", action="store_true",
+        help="Follow up on an assessed consultation in its verified unchanged task, engagement and session.",
     )
     apply_parser.add_argument(
         "--fix-round", type=int, metavar="N",
@@ -344,7 +362,7 @@ def build_parser():
     report_parser.add_argument("--report", required=True)
     report_parser.add_argument("--lines", type=int, required=True)
 
-    for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report"):
+    for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist"):
         record_parser = sub.add_parser(command, parents=[common], help="Record owner-managed {} evidence.".format(command))
         record_parser.add_argument("--record", required=True, metavar="FILE", help="Structured evidence JSON; see dispatch-recovery.md.")
         record_parser.add_argument("--now", metavar="ISO8601")
@@ -519,7 +537,7 @@ def _round_inputs(args, roles):
     return rounds
 
 
-def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualified_at=None):
+def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualified_at=None, excludes=None):
     tiered = any(agent.tiers for agent in agents)
     if not tiered and not (judge and "judge" in roles):
         if rounds:
@@ -529,6 +547,8 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualifie
     for role in roles:
         inputs = rounds.get(role, {})
         for agent in agents:
+            if agent.name in (excludes or {}).get(role, []):
+                continue
             if judge and agent.name == judge.agent:
                 if role == "judge":
                     candidates[role][agent.name] = {"round": "judge", "tier_row": "judge", "kind": agent.kind,
@@ -541,7 +561,11 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualifie
                 if not tiered:
                     candidates[role][agent.name] = None
                 continue
-            tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round)
+            try:
+                tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round)
+            except MissingTierError:
+                # A valid round can lack a configured row on one candidate.
+                continue
             if tier is None:
                 continue
             if qualified_at is not None:
@@ -617,8 +641,41 @@ def cmd_measure(args, client=None, warn=None, trace=None):
     }
 
 
+def _judge_mode_for(args, document):
+    """The judge seat's mode: the plan's, and a supplied one must agree.
+
+    The plan records the choice the lead made when it composed the brief. A
+    flag that differs would hold the seat to the other gate than the one it was
+    planned for -- a diagnosis plan passing the adjudication gate -- so the
+    mismatch refuses before any worker contact (#425).
+    """
+    supplied = getattr(args, "judge_mode", None)
+    block = document.get("judge") if isinstance(document, dict) else None
+    if not isinstance(block, dict):
+        # Not a plan document -- a bare {role: agent} map carries no seat, so
+        # the flag is the only source there is.
+        return supplied
+    planned = block.get("mode")
+    if planned is None:
+        # A plan that seats the judge and declares no mode is a plan from
+        # before the mode existed. Re-plan rather than let a flag supply what
+        # its brief was never composed for (state-schema.md, plan schema 6).
+        raise UsageError(
+            "This plan seats the judge without a declared mode; re-plan with --judge-mode {} rather than supplying one here.".format(" | ".join(recovery.JUDGE_MODES)),
+            {},
+        )
+    if supplied and supplied != planned:
+        raise UsageError(
+            "This plan seats the judge for {!r} and --judge-mode says {!r}; the plan's mode is the one its brief was composed for. Re-plan for the other mode rather than overriding it here.".format(planned, supplied),
+            {"planned": planned, "supplied": supplied},
+        )
+    return planned
+
+
 def cmd_plan(args, client=None, warn=None, trace=None):
     roles = [role.strip() for role in args.roles.split(",") if role.strip()]
+    if "judge" in roles:
+        recovery.require_judge_mode(getattr(args, "judge_mode", None))
     excludes = _parse_excludes(args.excludes)
     role_costs = load_role_costs(_config_path(args))
     judge = load_judge(_config_path(args))
@@ -626,14 +683,12 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     agents = load_config(_config_path(args)) if _config_path(args).exists() else []
     state_path = _state_path(args)
     state = load_state(state_path, warn=warn)
+    requirements = composition.parse_requirements(_read_record(args.requirements) if args.requirements else None, roles, args.task)
     work = _read_record(args.work) if args.work else None
     recovery.validate_work(state["recovery"], state["assignments"], args.task, args.fix_round,
                            args.correction_plan, work, implementation="developer" in roles)
     if args.task:
         validate_fix_history({role: None for role in roles}, state["assignments"], args.task, args.fix_round)
-    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge,
-                                      None if args.preview_tiers else (args.now or now_iso()))
-
     if args.snapshot:
         snapshot_path = Path(args.snapshot)
         try:
@@ -671,6 +726,17 @@ def cmd_plan(args, client=None, warn=None, trace=None):
             {"source": source},
         )
 
+    operator_excludes = {role: list(names) for role, names in excludes.items()}
+    constraints = composition.selection_constraints(
+        roles, agents, requirements, state["assignments"], args.task,
+        dispatches=state["recovery"]["dispatches"], assessments=state["specialist_assessments"],
+        candidate_names=snapshot.get("agents", {}).keys() if isinstance(snapshot.get("agents"), dict) else (),
+    )
+    for role, names in constraints["exclude"].items():
+        excludes[role] = sorted(set(excludes.get(role, [])) | set(names))
+    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge,
+                                      None if args.preview_tiers else (args.now or now_iso()), excludes=excludes)
+
     result = build_plan(
             roles,
             snapshot,
@@ -685,14 +751,33 @@ def cmd_plan(args, client=None, warn=None, trace=None):
             }
             if judge
             else None,
+            judge_mode=getattr(args, "judge_mode", None),
             snapshot_ref={"source": source, "measured_at": snapshot.get("measured_at")},
             warn=warn,
             tier_candidates=tier_candidates,
             rounds=rounds,
+            requirements=requirements,
+            familiarity=constraints["familiarity"],
+            selection_rationale=constraints["rationale"],
+            roster=[agent.name for agent in agents],
+            operator_exclude=operator_excludes,
         )
     result["task_context"] = ({"task": args.task, "fix_round": args.fix_round,
                                "plan": args.correction_plan, "work": work} if args.task else None)
     return result, None
+
+
+def _refusal_moves(store, agents_by_name, assignments, roles, args, paths, reports):
+    """Return the refusal move each fresh role carries; see recovery.refusal_move."""
+    moves = {}
+    for role in roles:
+        name = assignments[role]
+        if name in agents_by_name:
+            move = recovery.refusal_move(store, args.task, role, args.fix_round, agents_by_name[name].kind,
+                                         recovery.brief_identity(paths, role, reports.get(role)), reports.get(role))
+            if move is not None:
+                moves[role] = move
+    return moves
 
 
 def cmd_apply(args, client=None, warn=None, trace=None):
@@ -700,6 +785,10 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     agents_by_name = {agent.name: agent for agent in agents}
     document = _load_assignments(args.assignments, document=True)
     assignments = normalize_assignments(document)
+    requirements = composition.parse_requirements(
+        {"schema_version": 1, "assignments": document["requirements"]} if "requirements" in document else None,
+        list(assignments), args.task, allow_historical_architect=True,
+    )
     rounds = document.get("rounds", {}) if "assignments" in document else {}
     if not isinstance(rounds, dict) or set(rounds) - set(assignments):
         raise UsageError("Plan rounds must map only assigned roles to round inputs.", {})
@@ -722,6 +811,8 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     paths = resolve_paths(assignments, _parse_briefs(args.briefs), args.common)
     reports = _parse_reports(args.reports, assignments)
     supervised = supervision.dispatch_binding(state_path) is not None
+    if requirements and not args.dry_run and not supervised:
+        raise UsageError("Bind the lead with supervision-bind before dispatching specialist requirements; every specialist needs durable observation ownership.", {})
     if supervised and (not args.task or set(reports) != set(assignments)):
         raise UsageError("Bound team rounds require --task and one --report ROLE=ABS_PATH for every assigned role before any worker input.", {})
     replayed = []
@@ -729,10 +820,16 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     # Check retry identities before next-attempt validation: a completed retry
     # returns its original outcome and never consumes a second attempt.
     if args.task and not args.dry_run:
+        resolved = []
         for role, name in assignments.items():
+            options = {**task_context, "rounds": rounds, "retain_context": args.retain_context, "no_clear": args.no_clear}
+            if requirements:
+                options["requirements"] = requirements
+            if args.retain_specialist:
+                options["retain_specialist"] = True
             identifier, fingerprint = recovery.dispatch_identity(
                 args.task, role, name, args.fix_round, paths, args.dispatch_id,
-                options={**task_context, "rounds": rounds, "retain_context": args.retain_context, "no_clear": args.no_clear})
+                options=options)
             if supervised:
                 # Keep legacy retry IDs, while new bound dispatch fingerprints
                 # also bind the explicit report path. Existing legacy receipts
@@ -741,6 +838,19 @@ def cmd_apply(args, client=None, warn=None, trace=None):
                 if old is None or old["fingerprint"] != fingerprint:
                     fingerprint = supervision.report_bound_fingerprint(fingerprint, reports[role])
             prior = recovery.prior_dispatch(store, identifier, fingerprint)
+            resolved.append((role, name, identifier, fingerprint, prior))
+        fresh = [role for role, _name, _identifier, _fingerprint, prior in resolved if not (prior and prior["status"] == "applied")]
+        moves = {}
+        if fresh:
+            # The batch holds a new send. An unanswered decision or blocker on
+            # the task, a same-provider resend of a refused brief, a reworded
+            # brief, or a second move refuses it here (#399), before a
+            # replayed sibling's enrollment is re-saved, so a refused apply
+            # writes nothing. A batch of replays alone returns its saved
+            # receipts unconsulted.
+            attention.require_dispatch_clear(state_path, args.task, at)
+            moves = _refusal_moves(store, agents_by_name, assignments, fresh, args, paths, reports)
+        for role, name, identifier, fingerprint, prior in resolved:
             if supervised:
                 saved_result = prior["result"] if prior and prior["status"] == "applied" else {}
                 _supervision_enrollment(state_path, identifier, args.task, role, name, reports[role], at,
@@ -751,15 +861,50 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             else:
                 dispatches[role] = {"id": identifier, "fingerprint": fingerprint, "role": role, "agent": name,
                                     "task": args.task, "fix_round": args.fix_round,
-                                    "plan": args.correction_plan, "work": work}
+                                    "plan": args.correction_plan, "work": work,
+                                    "brief_identity": recovery.brief_identity(paths, role, reports.get(role)),
+                                    "provider": agents_by_name[name].kind}
+                if role in moves:
+                    dispatches[role]["refusal_move"] = moves[role]
+                if role in requirements:
+                    dispatches[role]["requirements"] = requirements[role]
+                if role == "reviewer":
+                    dispatches[role]["reviewer_scope"] = "design" if rounds.get(role, {}).get("type") in {"architect", "reconciliation"} else "verification"
         if len(replayed) == len(assignments):
             return {"schema_version": APPLY_SCHEMA_VERSION, "dry_run": False, "applied_at": at, "applied": replayed}, None
         assignments = {role: name for role, name in assignments.items() if role in dispatches}
+        requirements = {role: value for role, value in requirements.items() if role in assignments}
     elif args.dispatch_id and not args.task:
         raise UsageError("--dispatch-id requires --task; preserve the task's identity for retry accounting.", {})
+    elif args.task:
+        # A dry run rehearses a send and meets the same gates (#399).
+        attention.require_dispatch_clear(state_path, args.task, at)
+        _refusal_moves(store, agents_by_name, assignments, list(assignments), args, paths, reports)
+    # A fresh judge seat at an exhausted allowance waits for the assessment it
+    # rules on, dry runs included. A completed replay has left `assignments`
+    # already, so it is not re-gated (#408).
+    judge_mode = None
+    if "judge" in assignments:
+        judge_mode = recovery.require_judge_mode(
+            _judge_mode_for(args, document if isinstance(document, dict) else None))
+    if args.task and "judge" in assignments:
+        # The RESOLVED mode, not the flag: a planned diagnosis dispatched
+        # without one would otherwise reach the gate as None and skip the stop
+        # refusal it owes (#425).
+        recovery.require_investigation_before_judge(store, state["assignments"], args.task,
+                                                    state["specialist_assessments"],
+                                                    mode=judge_mode)
     recovery.validate_work(store, state["assignments"], args.task, args.fix_round,
                            args.correction_plan, work, implementation="developer" in assignments)
-    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge)
+    constraints = composition.selection_constraints(
+        list(assignments), agents, {role: value for role, value in requirements.items() if role in assignments},
+        state["assignments"], args.task, dispatches=store["dispatches"],
+        assessments=state["specialist_assessments"], candidate_names=assignments.values(),
+    )
+    for role, name in assignments.items():
+        if name in constraints["exclude"].get(role, []):
+            raise UsageError("Assigned worker {} is ineligible for {} under current capabilities or contribution history; replan an independent capable worker.".format(name, role), {})
+    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge, excludes=constraints["exclude"])
     tiers = {}
     if candidates is not None:
         for role, name in assignments.items():
@@ -771,6 +916,9 @@ def cmd_apply(args, client=None, warn=None, trace=None):
         if "tiers" in document and saved_tiers != tiers:
             raise UsageError("Plan tiers differ from current config or fix context; re-run plan before dispatch.", {})
     client = client if client is not None else _client(args, trace=trace)
+
+    if args.retain_specialist:
+        engagement.require_followup(state, state_path, assignments)
 
     if args.dry_run:
         return (
@@ -786,6 +934,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
                 settle_timeout_ms=args.settle_timeout,
                 tiers=tiers,
                 recovery=store, history=state["assignments"], plan_id=args.correction_plan, work=work,
+                retain_specialist=args.retain_specialist, requirements=requirements,
             ),
             None,
         )
@@ -823,7 +972,11 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             save_state(state_path, state)
 
     def record(result):
+        if result["role"] == "reviewer":
+            result["reviewer_scope"] = "design" if rounds.get("reviewer", {}).get("type") in {"architect", "reconciliation"} else "verification"
         context = {key: result[key] for key in ("cleared", "clear_reason", "task", "fix_round", "context_session", "tier")}
+        context["requirements"] = result.get("requirements")
+        context["reviewer_scope"] = result.get("reviewer_scope")
         add_assignment(state, at, result["role"], result["agent"], status=result["status"], **context)
         if args.task:
             result["dispatch_id"] = dispatches[result["role"]]["id"]
@@ -852,12 +1005,13 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             recovery=store, plan_id=args.correction_plan, work=work,
             warn=warn,
             task=args.task,
+            retain_specialist=args.retain_specialist, requirements=requirements,
             settle_sec=args.composer_settle,
             start_timeout_ms=args.start_timeout,
             allow_recovery=args.allow_recovery,
             tiers=tiers,
             retrospective_guard=retrospective_runtime.Guard(state_path, state, client, agents_by_name, at,
-                                                          task=args.task, retain=args.retain_context, no_clear=args.no_clear),
+                                                          task=args.task, retain=args.retain_context or args.retain_specialist, no_clear=args.no_clear),
             qualifications={role: [record for entry in agents_by_name[name].tiers.values()
                                    for record in entry.get("qualification", [])]
                             for role, name in assignments.items()},
@@ -895,6 +1049,49 @@ def cmd_status(args, client=None, warn=None, trace=None):
             "tasks": recovery.task_statuses(state["recovery"], state["assignments"])}, None
 
 
+def _require_independent_report(state, task, reviewer):
+    """Apply the same contribution evidence to live and imported reviews."""
+    if not isinstance(reviewer, str):
+        return  # The owning receipt validator reports malformed input.
+    constraints = composition.selection_constraints(
+        ["reviewer"], [], {}, state["assignments"], task,
+        dispatches=state["recovery"]["dispatches"],
+        assessments=state["specialist_assessments"], candidate_names=[reviewer],
+    )
+    if reviewer in constraints["exclude"]["reviewer"]:
+        raise UsageError("This reviewer contributed to the task; collect an independent report before recording approval.", {})
+
+
+def _record_stopped_task(state_path, diagnosis, at):
+    """Surface a terminal diagnosis to the operator.
+
+    A `stop` remedy ends implementation and records the remainder as a tracked
+    accepted defect, and no exhausted allowance waits on an operator decision.
+    The operator still holds the override, and cannot exercise one they never
+    learn they have (#415), so the terminal remedy lands in the attention queue
+    the catch-up presents. Its kind sits outside `attention.GATING_KINDS`: this
+    surfaces the outcome, it never gates the next dispatch.
+
+    The obligation identity is derived from the diagnosis identity, which is
+    free text, so the digest keeps it inside the queue's identifier alphabet
+    and keeps a replayed diagnosis on its original obligation.
+    """
+    name = "diagnosis-stop-" + hashlib.sha256(diagnosis["id"].encode("utf-8")).hexdigest()[:16]
+    return attention.write(state_path, "record", {
+        "id": name,
+        "kind": "failure",
+        "task": diagnosis["task"],
+        "priority": 80,
+        "title": "Task {} stopped at the judge's diagnosis".format(diagnosis["task"])[:300],
+        "context": "Diagnosis {} returned REMEDY: stop at fix round {}, ruling on the investigator's assessment.".format(
+            diagnosis["id"], diagnosis["fix_round"]),
+        "consequence": "Implementation on this task has ended. What is clean ships; the remainder is a tracked accepted defect under rules/review-severity.md Judge-Accepted Defect Carve-Out.",
+        "resolution_condition": "Record the acknowledgement, or authorize a plan over this remedy to override it.",
+        "sources": [{"schema_version": attention.SCHEMA_VERSION, "kind": "artifact",
+                     "ref": diagnosis["judge_evidence"]["path"]}],
+    }, at)
+
+
 def cmd_recovery(args, client=None, warn=None, trace=None):
     state_path = _state_path(args)
     state = _load_state_for_write(state_path, warn)
@@ -907,15 +1104,63 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
         result = recovery.checkpoint(store, history, data, at, judge.agent if judge else None)
     elif args.command == "authorize-corrections":
         result = recovery.authorize_plan(store, history, data, at)
+    elif args.command == "diagnose":
+        judge = load_judge(_config_path(args))
+        # Supervision knows where the pinned judge's report was meant to land;
+        # a dispatch marked applied proves only the send (#407). The
+        # enrollment is resolved by that dispatch's own identity, so an older
+        # enrollment for the same task and judge cannot stand in for it
+        # (#412).
+        enrolled = None
+        if judge is not None and isinstance(data, dict):
+            dispatch = recovery.applied_judge_dispatch(store, history, data.get("task"), judge.agent)
+            if dispatch is not None:
+                member = next((item for item in supervision.load(state_path)["members"]
+                               if item["id"] == dispatch["id"]), None)
+                if member is not None:
+                    enrolled = supervision.expected_assignment(member)["report"]
+        result = recovery.diagnose(store, history, data, at, judge.agent if judge else None, enrolled,
+                                   supervision.dispatch_binding(state_path) is not None,
+                                   state["specialist_assessments"])
+        if result["remedy"] == "stop":
+            _record_stopped_task(state_path, result, at)
     elif args.command == "record-report":
+        if isinstance(data, dict):
+            dispatch = next((item for item in store["dispatches"] if item["id"] == data.get("dispatch")), None)
+            if dispatch is not None:
+                _require_independent_report(state, dispatch["task"], data.get("reviewer"))
         result = recovery.record_report(store, data, at)
+    elif args.command == "authorize-refused-dispatch":
+        result = recovery.authorize_refused_dispatch(store, data, at)
+    elif args.command == "record-refusal":
+        agents_by_name = {agent.name: agent for agent in load_config(_config_path(args))}
+        dispatch = next((item for item in store["dispatches"] if isinstance(data, dict) and item["id"] == data.get("dispatch")), None)
+        if dispatch is not None and dispatch["agent"] not in agents_by_name:
+            raise UsageError("Refused worker {} is not in config.json; restore its entry so the refusing provider is recorded.".format(dispatch["agent"]), {})
+        member = next((row for row in supervision.load(state_path)["members"] if dispatch is not None and row["id"] == dispatch["id"]), None)
+        # The refined assignment, not the original: supervision fills in a
+        # pane id the enrollment did not know, and wait-report may have been
+        # given that one (#403).
+        report, aliases = None, ()
+        if member is not None:
+            expected = supervision.expected_assignment(member)
+            report = expected["report"]
+            aliases = (expected["pane_id"], member["assignment"]["pane_id"])
+        result = recovery.record_refusal(store, data, at, agents_by_name[dispatch["agent"]].kind if dispatch else None,
+                                         report, aliases=aliases)
     elif args.command == "recover-report":
         result = report_delivery.recover(store, history, data, at)
+    elif args.command == "assess-specialist":
+        result = engagement.record_assessment(state, state_path, data, at)
     elif args.command == "import-correction":
         result = historical.import_attempt(store, history, data, at)
         if result["assignment_index"] == len(history):
             add_assignment(state, data["occurred_at"], "developer", data["agent"], task=data["task"], fix_round=data["fix_round"])
     elif args.command == "record-historical-review":
+        if isinstance(data, dict):
+            attempt = next((item for item in store["historical_attempts"] if item["id"] == data.get("historical_attempt")), None)
+            if attempt is not None:
+                _require_independent_report(state, attempt["task"], data.get("reviewer"))
         result = historical.record_review(store, data, at)
     else:
         agents = {agent.name: agent for agent in load_config(_config_path(args))}
@@ -940,10 +1185,20 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
                              "cleared": context.get("cleared"), "clear_reason": context.get("clear_reason", "unknown"),
                              "context_session": None, "tier": context.get("tier"),
                              "recovered": True, "dispatch_id": result["id"]}
-                add_assignment(state, at, recovered["role"], name, status="applied", **{
-                    key: recovered[key] for key in ("cleared", "clear_reason", "task", "fix_round", "context_session", "tier")})
+                if result.get("requirements") is not None:
+                    recovered["requirements"] = result["requirements"]
+                if result.get("reviewer_scope") is not None:
+                    recovered["reviewer_scope"] = result["reviewer_scope"]
+                add_assignment(
+                    state, at, recovered["role"], name, status="applied",
+                    cleared=recovered["cleared"], clear_reason=recovered["clear_reason"],
+                    task=recovered["task"], fix_round=recovered["fix_round"],
+                    context_session=recovered["context_session"], tier=recovered["tier"],
+                    requirements=recovered.get("requirements"), reviewer_scope=recovered.get("reviewer_scope"),
+                )
                 recovery.finish_dispatch(store, result["id"], recovered, len(history) - 1, at)
     recovery.validate_store(store, history)
+    engagement.validate_assessments(state)
     save_state(state_path, state)
     return result, None
 
@@ -955,6 +1210,9 @@ def cmd_start_judge(args, client=None, warn=None, trace=None):
         raise UsageError("Plan has no usable judge tier; run plan --roles judge.", {})
     if normalize_assignments(document).get("judge") != tier["agent"]:
         raise UsageError("Plan judge tier and assignment name different workers; replan.", {})
+    # The plan carries the mode the lead declared; the flag overrides it, and
+    # neither present is a refusal rather than a default (#425).
+    judge_mode = recovery.require_judge_mode(_judge_mode_for(args, document))
     parsed = parse_tiers({"build": {"model": tier.get("model"), "effort": tier.get("effort")}}, args.kind)["build"]
     agent = SimpleNamespace(name=tier["agent"], kind=args.kind, idle_markers=(), working_markers=(),
                             launch_args=parse_launch_args(tier.get("launch_args", []), args.kind))
@@ -964,10 +1222,18 @@ def cmd_start_judge(args, client=None, warn=None, trace=None):
     planned_task = (document.get("task_context") or {}).get("task")
     if args.task is not None and planned_task is not None and args.task != planned_task:
         raise UsageError("Judge --task differs from its plan; use the original task identity.", {})
+    at = args.now or now_iso()
+    attention.require_dispatch_clear(state_path, args.task or planned_task, at)
+    # The judge rules on the investigator's assessment, so the seat is never
+    # started at an exhausted allowance before that assessment exists (#408).
+    full = _load_state_for_write(state_path, warn, persist_migration=False)
+    recovery.require_investigation_before_judge(full["recovery"], full["assignments"],
+                                                args.task or planned_task, full["specialist_assessments"],
+                                                mode=judge_mode)
     item = retrospective_runtime.request({"transitions": [{"agent": agent.name, "role": "judge",
         "model": parsed["model"], "effort": parsed["effort"], "context": "start", "task": args.task or planned_task,
         "pane": args.pane}]})["transitions"][0]
-    guard = retrospective_runtime.Guard(state_path, state, client, {agent.name: agent}, args.now or now_iso())
+    guard = retrospective_runtime.Guard(state_path, state, client, {agent.name: agent}, at)
     proof = start_worker(client, agent, args.pane, parsed, before_start=lambda: guard.before_start(item))
     guard.after_transition({"agent": agent.name}, launch_proof=verify_running(client, agent, args.pane, parsed))
     return {"agent": agent.name, "model": parsed["model"], "effort": parsed["effort"],
@@ -1028,6 +1294,14 @@ def cmd_retrospective(args, client=None, warn=None, trace=None):
     return retrospective.record(path, data, result["coverage"], at), None
 
 
+def cmd_detect_triggers(args, client=None, warn=None, trace=None):
+    return triggers.run_command(args)
+
+
+def cmd_validate_partition(args, client=None, warn=None, trace=None):
+    return partition.run_command(args)
+
+
 def cmd_probe_report(args, client=None, warn=None, trace=None):
     if not Path(args.report).is_absolute() or any(ord(char) < 32 for char in args.report) or args.lines < 1:
         raise UsageError("Report probing needs an absolute one-row report path and positive --lines.", {})
@@ -1062,7 +1336,9 @@ COMMANDS = {
     "apply": cmd_apply,
     "state": cmd_state,
     "status": cmd_status,
-    **{command: cmd_recovery for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report")},
+    **{command: cmd_recovery for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist")},
+    "detect-triggers": cmd_detect_triggers,
+    "validate-partition": cmd_validate_partition,
     "start-judge": cmd_start_judge,
     "probe-report": cmd_probe_report,
     **{command: cmd_retrospective for command in ("retro-check", "retro-record", "retro-list", "retro-show")},
@@ -1089,7 +1365,7 @@ def main(argv=None, stdout=None, stderr=None, client=None):
     try:
         # Commands that may migrate or write state share its canonical lock.
         # Dry runs, probes, and retrospective reads remain read-only.
-        readonly = args.command in {"probe-report", "retro-check", "retro-list", "retro-show"} or getattr(args, "dry_run", False)
+        readonly = args.command in {"probe-report", "detect-triggers", "validate-partition", "retro-check", "retro-list", "retro-show"} or getattr(args, "dry_run", False)
         separate_owner = args.command in memory.COMMANDS | attention.COMMANDS | SUPERVISION_COMMANDS | restoration.COMMANDS
         lock = nullcontext() if readonly or separate_owner else state_lock(retrospective.canonical_state(_state_path(args)))
         with lock:

@@ -4,6 +4,20 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.3.0 — 2026-09-15
+
+### Added
+
+- **Herdr fleet synced to upstream 0.3.232.** Twenty-seven upstream releases in five days, taken wholesale into `skills/herdr-teamlead`, `skills/herdr-standup`, `rules/agent-team-operation.md`, and the Herdr hooks, with our five local reconciliations re-applied on top (report-file Phase 2 reviews, the release worker's worktree-only Step 7, no AI disclosure in briefs, full reference paths, and the standup prose trims). What arrived, in the order upstream shipped it: an on-demand specialist bench (UX/product, accessibility, investigator, architect, security, performance/reliability, documentation) with capability and contribution based staffing; a planner that refuses a field it could not have ranked; an open decision or blocker on a task that stops further dispatch on that task; provider refusals recorded, moved once unchanged, then stopped; `prune-worktrees.sh` run before provisioning and after the merge; an exhausted fix allowance that goes to the investigator and then to the judge in a second, diagnosis mode returning `DIAGNOSIS` / `REMEDY: continue | restructure | stop` / `BOUND` / `ASSESSMENT` / `EVIDENCE` / `UNVERIFIED`, with a remedy ladder that only descends; five composition triggers detected mechanically by `teamlead detect-triggers` from the round's diff against `.herdr/triggers.json`; a stall outcome in `wait-report.sh` (report absent, status terminal, budget spent) with the stalled worktree classified as evidence; review partitions validated by `teamlead validate-partition`; a task-owned fixture root carve-out; judge dispatches that declare adjudication or diagnosis mode; and the ledger and recovery fixes from #436 through #442.
+- **This repo's trigger declaration.** `.herdr/triggers.json` names the package roots, trust boundaries (workflows, hooks, rules, the Herdr scripts and Python, the reviewer templates, the release scripts), CLI surfaces, and user docs the detector classifies a round against. It is `.tesslignore`d: consumers write their own.
+- **`review_unrequested` in the pre-merge watch.** `poll-pr-reviews.sh` reports `requested` per reviewer lane from GraphQL (the REST endpoint omits bot reviewers), and `watch-pr-reviews.sh` ends at once with `review_unrequested` when Copilot has no verdict at the head and no pending request, naming the request command instead of spending its budget. `rules/ci-safety.md` Always Watch CI now separates the merge decision's blocking watch from a non-merging stage's single snapshot, and resolves a reviewer's arrival by how it is triggered. From upstream #369.
+- **Judge-Accepted Defect Carve-Out in `rules/review-severity.md`.** A `stop` diagnosis may ship the clean scope with the remaining blocking finding recorded as a tracked accepted defect, every other gate held. From upstream #407.
+- **`scripts/tests/test_source_index.py`.** The manifest's `rules` array, the maintainer index's `@`-imports, and `rules/*.md` on disk must agree, and every tracked Python file must sit under a pyright include. Adapted from upstream #368 to accept directory includes, which this repo uses.
+
+### Fixed
+
+- **The handoff hook sees every spent worktree.** A worktree that is clean and holds nothing the default branch lacks is reported removable whether or not its branch was ever pushed; dirty, unmerged, locked, and detached worktrees reach the operator on stderr with their reason and are never listed for removal. The supervision Stop hook no longer writes bytecode into the installed plugin. From upstream #433 and #385.
+
 ## 0.2.0 — 2026-09-09
 
 ### Added

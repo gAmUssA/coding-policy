@@ -95,6 +95,13 @@ gh() {
       esac
       ;;
     api)
+      # `gh api graphql -f query=... --jq ...` — the pending review requests.
+      # GraphQL, not REST: the REST endpoint omits bot reviewers entirely
+      # (#276), so every bot lane would read "never requested" there (#369).
+      if [[ "${2:-}" == "graphql" ]]; then
+        printf '%s' "${MOCK_REQUESTED_BODY:-[]}"
+        return 0
+      fi
       # gh api --paginate repos/<o>/<r>/pulls/<N>/reviews?per_page=100
       # gh api --paginate repos/<o>/<r>/pulls/<N>/comments?per_page=100
       # The script pipes the raw paginated output through `jq -s` itself,
@@ -123,6 +130,49 @@ gh() {
 }
 
 # --- test bodies ---
+
+# --- pending review requests (#369) ---
+# A lane nobody requested is not a lane that is running late: a developer
+# reading its own current-tip evidence must be able to tell the two apart
+# without sitting out a pre-merge budget on a review it cannot itself request.
+
+t_requested_among_matches_a_pending_bot() {
+  local out
+  out=$(requested_among '["copilot-pull-request-reviewer"]' "copilot-pull-request-reviewer[bot]")
+  assert_eq "requested" "true" "$out"
+}
+
+t_requested_among_is_false_when_nobody_asked() {
+  local out
+  out=$(requested_among '[]' "copilot-pull-request-reviewer[bot]")
+  assert_eq "requested" "false" "$out"
+}
+
+t_requested_among_ignores_another_reviewer() {
+  local out
+  out=$(requested_among '["some-human"]' "copilot-pull-request-reviewer[bot]")
+  assert_eq "requested" "false" "$out"
+}
+
+t_main_marks_an_unrequested_lane() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REQUESTED_BODY='[]'
+  local out
+  out=$(main owner repo 1)
+  assert_eq "copilot state"     "none"  "$(echo "$out" | jq -r '.reviews.copilot.state')" || return 1
+  assert_eq "copilot requested" "false" "$(echo "$out" | jq -r '.reviews.copilot.requested')" || return 1
+  assert_eq "copilot stale"     "false" "$(echo "$out" | jq -r '.reviews.copilot.stale')"
+}
+
+t_main_marks_a_pending_lane_requested() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REQUESTED_BODY='["copilot-pull-request-reviewer"]'
+  local out
+  out=$(main owner repo 1)
+  assert_eq "copilot state"     "none" "$(echo "$out" | jq -r '.reviews.copilot.state')" || return 1
+  assert_eq "copilot requested" "true" "$(echo "$out" | jq -r '.reviews.copilot.requested')"
+}
+
 
 t_fetch_merge_state_clean_returns_mergeable_envelope() {
   MOCK_MERGE_STATE=clean
@@ -580,6 +630,12 @@ run "main fails loudly on an empty headRefOid"                        t_main_no_
 run "ci.status: success next to a cancelled twin is success (#182)"   t_ci_status_cancel_with_success_is_success
 run "ci.status: only-cancels reads pending (#182)"                    t_ci_status_only_cancels_is_pending
 run "ci.status: a real fail next to a cancel still fails (#182)"      t_ci_status_fail_with_cancel_is_failure
+
+run "requested_among: a pending bot request matches (#369)"           t_requested_among_matches_a_pending_bot
+run "requested_among: no pending request reads false (#369)"          t_requested_among_is_false_when_nobody_asked
+run "requested_among: another reviewer's request is not this one"     t_requested_among_ignores_another_reviewer
+run "main marks a lane nobody requested (#369)"                       t_main_marks_an_unrequested_lane
+run "main marks a requested-and-pending lane (#369)"                  t_main_marks_a_pending_lane_requested
 
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 [[ "$FAIL_COUNT" -eq 0 ]]

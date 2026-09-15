@@ -157,6 +157,106 @@ main() {
      && ! reason_has "Leftover local branches"; then
     pass; else fail "orphaned worktree: expected worktree block only, got RC=$RC OUT=$OUT"; fi
 
+  # 4a-i. A never-pushed worktree, clean and holding nothing main lacks: the
+  # majority shape of the herdr flow, and invisible to the upstream test (#433).
+  mk_origin o4a; clone_from "$BARE" "$TMP/r4a"
+  g -C "$TMP/r4a" worktree add -q "$TMP/r4a-review" -b review/never-pushed || die "r4a worktree add failed"
+  run_hook "$TMP/r4a" '{"stop_hook_active":false}'
+  if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees" && reason_has "r4a-review"; then
+    pass; else fail "never-pushed worktree: expected an orphaned report, got RC=$RC OUT=$OUT"; fi
+
+  # 4a-ii. A DETACHED worktree at a commit main already has. No branch name
+  # could ever have matched it — and the lead never removes one
+  # (rules/agent-team-operation.md Writers and Checkouts), so it is surfaced on
+  # stderr and never listed under "remove them".
+  mk_origin o4b; clone_from "$BARE" "$TMP/r4b"
+  g -C "$TMP/r4b" worktree add -q --detach "$TMP/r4b-detached" || die "r4b detached add failed"
+  ERRFILE="$TMP/r4b.err"
+  OUT="$(cd "$TMP/r4b" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$ERRFILE")"; RC=$?
+  ERRTEXT="$(cat "$ERRFILE")"
+  if [[ $RC -eq 0 ]] && [[ "$ERRTEXT" == *"r4b-detached"* ]] \
+     && [[ "$ERRTEXT" == *"never removes a detached worktree"* ]] \
+     && ! reason_has "r4b-detached"; then
+    pass; else fail "detached worktree: expected a report, not a removal instruction, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # 4a-ii-b. A LOCKED worktree is reported to the operator and never listed
+  # under "remove them": Writers and Checkouts requires both.
+  mk_origin o4f; clone_from "$BARE" "$TMP/r4f"
+  g -C "$TMP/r4f" worktree add -q "$TMP/r4f-locked" -b review/locked || die "r4f worktree add failed"
+  g -C "$TMP/r4f" worktree lock "$TMP/r4f-locked" || die "r4f lock failed"
+  OUT="$(cd "$TMP/r4f" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4f.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4f-locked" \
+     && [[ "$(cat "$TMP/r4f.err")" == *"r4f-locked"* ]] \
+     && [[ "$(cat "$TMP/r4f.err")" == *"locked"* ]]; then
+    pass; else fail "locked worktree must be reported, never listed for removal: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4f.err")"; fi
+
+  # 4a-ii-c. A gone upstream is a reason to look, never a licence: a tree with
+  # unmerged commits is reported, not listed for removal, even then.
+  mk_origin o4g; clone_from "$BARE" "$TMP/r4g"
+  g -C "$TMP/r4g" worktree add -q "$TMP/r4g-wt" -b feat/gone-ahead || die "r4g worktree add failed"
+  make_gone_branch "$TMP/r4g-wt" feat/gone-ahead
+  printf 'ahead\n' > "$TMP/r4g-wt/h" || die "r4g write failed"
+  g -C "$TMP/r4g-wt" add h || die "r4g add failed"
+  g -C "$TMP/r4g-wt" commit -q -m ahead || die "r4g commit failed"
+  g -C "$TMP/r4g" fetch -q --prune || die "r4g prune failed"
+  OUT="$(cd "$TMP/r4g" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4g.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4g-wt" && [[ "$(cat "$TMP/r4g.err")" == *"r4g-wt"* ]]; then
+    pass; else fail "a gone upstream with unmerged work must be reported, not removed: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4g.err")"; fi
+
+  # 4a-iii. Real unmerged work is NOT reported, on a branch or detached.
+  mk_origin o4c; clone_from "$BARE" "$TMP/r4c"
+  g -C "$TMP/r4c" worktree add -q "$TMP/r4c-work" -b feat/ahead || die "r4c worktree add failed"
+  printf 'new\n' > "$TMP/r4c-work/g" || die "r4c write failed"
+  g -C "$TMP/r4c-work" add g || die "r4c add failed"
+  g -C "$TMP/r4c-work" commit -q -m ahead || die "r4c commit failed"
+  OUT="$(cd "$TMP/r4c" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4c.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4c-work" \
+     && [[ "$(cat "$TMP/r4c.err")" == *"r4c-work"* ]] && [[ "$(cat "$TMP/r4c.err")" == *"unmerged"* ]]; then
+    pass; else fail "unmerged worktree: report, never remove: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4c.err")"; fi
+
+  # 4a-iv. A dirty worktree is not reported either, even when its commits are
+  # all in main: the uncommitted work is the thing that would be lost.
+  mk_origin o4d; clone_from "$BARE" "$TMP/r4d"
+  g -C "$TMP/r4d" worktree add -q "$TMP/r4d-dirty" -b review/dirty || die "r4d worktree add failed"
+  printf 'uncommitted\n' > "$TMP/r4d-dirty/scratch.txt" || die "r4d write failed"
+  g -C "$TMP/r4d-dirty" add scratch.txt || die "r4d add failed"
+  OUT="$(cd "$TMP/r4d" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4d.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4d-dirty" \
+     && [[ "$(cat "$TMP/r4d.err")" == *"r4d-dirty"* ]] && [[ "$(cat "$TMP/r4d.err")" == *"dirty"* ]]; then
+    pass; else fail "dirty worktree: report, never remove: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4d.err")"; fi
+
+  # 4a-v. A worktree the check cannot read is never reported removable: the
+  # guard fails closed rather than passing a tree it never inspected.
+  mk_origin o4e; clone_from "$BARE" "$TMP/r4e"
+  g -C "$TMP/r4e" worktree add -q "$TMP/r4e-gone" -b review/vanished || die "r4e worktree add failed"
+  rm -rf "$TMP/r4e-gone" || die "r4e rm failed"
+  OUT="$(cd "$TMP/r4e" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4e.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4e-gone" && [[ "$(cat "$TMP/r4e.err")" == *"r4e-gone"* ]]; then
+    pass; else fail "unreadable worktree: report, never remove: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4e.err")"; fi
+
+  # 4a-ii-d. With no default branch to judge containment against, what IS
+  # observable still reaches the operator, and nothing is listed for removal.
+  mk_origin o4h; clone_from "$BARE" "$TMP/r4h"
+  g -C "$TMP/r4h" worktree add -q "$TMP/r4h-wt" -b review/nobase || die "r4h worktree add failed"
+  g -C "$TMP/r4h" remote remove origin || die "r4h remote remove failed"
+  OUT="$(cd "$TMP/r4h" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4h.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4h-wt" \
+     && [[ "$(cat "$TMP/r4h.err")" == *"r4h-wt"* ]] \
+     && [[ "$(cat "$TMP/r4h.err")" == *"containment unknown"* ]]; then
+    pass; else fail "no default branch: report what is observable, remove nothing: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4h.err")"; fi
+
+  # 4a-ii-e. With no base AND an unreadable tree, the failure is named rather
+  # than passing as clean.
+  mk_origin o4i; clone_from "$BARE" "$TMP/r4i"
+  g -C "$TMP/r4i" worktree add -q "$TMP/r4i-wt" -b review/nobase-gone || die "r4i worktree add failed"
+  g -C "$TMP/r4i" remote remove origin || die "r4i remote remove failed"
+  rm -rf "$TMP/r4i-wt" || die "r4i rm failed"
+  OUT="$(cd "$TMP/r4i" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4i.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4i-wt" \
+     && [[ "$(cat "$TMP/r4i.err")" == *"r4i-wt"* ]] \
+     && [[ "$(cat "$TMP/r4i.err")" == *"missing"* ]]; then
+    pass; else fail "no base + missing tree: name the failure: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4i.err")"; fi
+
   # 4b. The same orphaned worktree, seen from INSIDE a linked worktree with
   # HERDR_ENV set: that is a worker session, and removing a worktree is the
   # lead's job (rules/agent-team-operation.md). Blocking here would force the

@@ -41,9 +41,11 @@ class EmptyStateTest(unittest.TestCase):
         self.assertEqual(
             empty_state(),
             {"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "assignments": [],
-             "recovery": {"schema_version": 4, "tasks": {}, "checkpoints": [], "plans": [],
+             "specialist_assessments": [],
+             "recovery": {"schema_version": 9, "tasks": {}, "checkpoints": [], "plans": [],
                           "dispatches": [], "context_permissions": [], "events": [],
-                          "hand_clearances": [], "historical_attempts": [], "role_clearances": [], "delivery_recoveries": []}},
+                          "hand_clearances": [], "historical_attempts": [], "role_clearances": [], "delivery_recoveries": [],
+                          "refusal_authorizations": [], "diagnoses": [], "legacy_ruling_recoveries": []}},
         )
 
 
@@ -133,6 +135,7 @@ class MigrationTest(unittest.TestCase):
         self.write(
             {
                 "schema_version": STATE_SCHEMA_VERSION,
+                "specialist_assessments": [],
                 "snapshots": [],
                 "assignments": [{"at": "2026-01-01T00:00:00+00:00", "role": "reviewer", "agent": "claude"}],
             }
@@ -174,14 +177,15 @@ class MigrationTest(unittest.TestCase):
                "role": "developer", "agent": "grok", "status": "applied"}
         for version in (2, STATE_SCHEMA_VERSION):
             with self.subTest(document_version=version):
-                self.write({"schema_version": version, "snapshots": [snapshot],
-                            "assignments": [row]})
+                self.write({**({"specialist_assessments": []} if version == STATE_SCHEMA_VERSION else {}),
+                            "schema_version": version, "snapshots": [snapshot], "assignments": [row]})
                 migrated = self.load()
                 self.assertEqual(migrated["schema_version"], STATE_SCHEMA_VERSION)
                 self.assertEqual(migrated["snapshots"], [{"schema_version": 3, "agents": {"grok": {"window_group": "pool", "tier_billing": {}}}}])
                 self.assertEqual(migrated["assignments"], [dict(
                     row, schema_version=STATE_SCHEMA_VERSION, cleared=None,
                     clear_reason="unknown", task=None, fix_round=None, context_session=None, tier=None,
+                    requirements=None, reviewer_scope=None,
                 )])
                 self.assertEqual(role_counts(migrated), {"developer": {"grok": 1}})
                 self.assertEqual(self.on_disk(), migrated)
@@ -228,6 +232,7 @@ class MigrationTest(unittest.TestCase):
         self.write(
             {
                 "schema_version": STATE_SCHEMA_VERSION,
+                "specialist_assessments": [],
                 "snapshots": [],
                 "assignments": [
                     {
@@ -315,6 +320,8 @@ class AssignmentRecordTest(unittest.TestCase):
                 "fix_round": None,
                 "context_session": None,
                 "tier": None,
+                "requirements": None,
+                "reviewer_scope": None,
             },
         )
 
