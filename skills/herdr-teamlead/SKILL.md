@@ -425,10 +425,10 @@ Optional. Modes, triggers and both report contracts are in
 disagreement inside Step 20 returns here first). No trigger — proceed to
 Step 20.
 
-For a dispute, compose from `templates/brief-judge.md` through Step 7: the
+For a dispute, compose from `skills/herdr-teamlead/templates/brief-judge.md` through Step 7: the
 dispute, both positions with report paths, the governing rule, the tree.
 
-For an exhausted allowance, compose from `templates/brief-judge-diagnosis.md`
+For an exhausted allowance, compose from `skills/herdr-teamlead/templates/brief-judge-diagnosis.md`
 through Step 7 under the role key `judge-diagnosis`, which writes
 `brief-judge-diagnosis.md`: the assessed investigator report, the task, rounds
 spent, remaining blocking work, the per-round history, the tree, and any prior
@@ -518,7 +518,7 @@ Continue immediately to the step named by that outcome.
 
 The release is one more assignment, never a prompt into the developer's
 existing context. Return to Step 7 with the role `release` for
-the developer's agent (template `templates/brief-release.md`, the same
+the developer's agent (template `skills/herdr-teamlead/templates/brief-release.md`, the same
 `WORKTREE` and `BRANCH`, a fresh `REPORT`), run Step 8 (it reports
 `already-provisioned`), dispatch through Step 10 so the context is cleared and
 the brief is fresh, and wait on the report in Step 11. A source-changing
