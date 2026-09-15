@@ -60,7 +60,9 @@
 #            "branches_deleted":["<name>"],
 #            "branches_kept":[{"branch","reason"}],
 #            "failed":[{"target","error"}]}
-#           reason is one of: checked-out (a worktree claimed the branch after
+#           reason is one of: moved (the branch advanced between its
+#           ancestry check and the removal, so the worktree was kept for the
+#           next run), checked-out (a worktree claimed the branch after
 #           the inventory was taken), default-branch, detached, dirty, locked,
 #           outside-root, prunable (its directory is gone; a live run's
 #           metadata prune removes it), unmerged.
@@ -367,6 +369,18 @@ decide_worktree() { # <shared> <abs_root> <default> <dry-run 0|1> <path> <branch
   fi
   if (( dry )); then
     row removed "$path" "$branch" ""; return 0
+  fi
+  # Re-read the tip immediately before the removal. A commit landing after
+  # the ancestry check would leave a now-unmerged checkout to be removed, which
+  # Writers and Checkouts forbids; the compare-and-delete below protects the
+  # branch, this protects the worktree. A moved tip is kept and re-judged on
+  # the next run.
+  local now_tip
+  if ! now_tip="$(branch_tip "$shared" "$branch")"; then
+    row failed "$path" "$branch" "cannot re-read the tip of ${branch} before removal: $(tr '\n' ' ' < "$ERRFILE")"; return 0
+  fi
+  if [[ "$now_tip" != "$tip" ]]; then
+    row kept "$path" "$branch" moved; return 0
   fi
   if ! git -C "$shared" worktree remove "$path" 2>"$ERRFILE"; then
     row failed "$path" "$branch" "git worktree remove failed: $(tr '\n' ' ' < "$ERRFILE")"; return 0

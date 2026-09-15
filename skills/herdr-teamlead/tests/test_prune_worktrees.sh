@@ -39,6 +39,7 @@
 #  20. Untraversable parent-> absence is not confirmed; failed row, metadata
 #                             kept, exit 2 (skipped as root).
 #  21. Raced branch        -> a tip that moved after its ancestry check is kept.
+#  21b. Raced removal      -> a tip that moved before the removal keeps its worktree (reason moved).
 #  22. Half-done removal   -> a removal is reported even when its branch
 #                             deletion then fails.
 #  23. Deferred prunable   -> a prunable branch survives a skipped prune.
@@ -288,20 +289,20 @@ SHIM
   cat > "$TMP/shim21/git" <<SHIM || die "shim write failed"
 #!/usr/bin/env bash
 set -euo pipefail
-# Move the branch on the SECOND read of its tip — after the worktree is gone,
+# Move the branch on the THIRD read of its tip — after the pre-removal recheck
+# and the worktree removal,
 # so the move is allowed, and before the compare-and-delete reads it. The new
 # tip is merged too, so only the guard can keep the branch. A move that fails
 # breaks the fixture's premise: say so and stop rather than let the run pass.
 case "\$*" in *"refs/heads/review/racing"*)
-  if [[ -e "$TMP/shim21/seen" ]]; then
+  n=\$(cat "$TMP/shim21/count" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$TMP/shim21/count"
+  if (( n == 3 )); then
     # The move's own chatter must not reach stdout: the caller is capturing it
     # as the branch tip.
     if ! "$(command -v git)" -C "$SHARED" branch -f review/racing refs/remotes/origin/main >&2; then
       echo "shim21: fixture could not move review/racing" >&2
       exit 1
     fi
-  else
-    : > "$TMP/shim21/seen"
   fi ;;
 esac
 exec "$(command -v git)" "\$@"
@@ -311,6 +312,42 @@ SHIM
   OUT="$(env WORKTREE_ROOT="$ROOT" PATH="$TMP/shim21:$PATH" bash "$SCRIPT" "$SHARED" 2>"$TMP/err.$RUN_SEQ")"; RC=$?; ERRTEXT="$(cat "$TMP/err.$RUN_SEQ")"
   echo "21. a branch that moved after its ancestry check is kept, its removal still reported, exit 2"
   if (( RC == 2 )) && [[ "$(removed_paths)" == *"$ROOT/twentyone-racing"* ]] && [[ "$OUT" == *"moved after its ancestry check"* ]] && has_branch "$SHARED" review/racing; then pass; else fail "rc=$RC out=$OUT err=$ERRTEXT"; fi
+
+  # --- 21b. a branch that moves between its ancestry check and the REMOVAL keeps its worktree.
+  mk_repo twentyoneb
+  add_wt "$SHARED" review/racing2 "$ROOT/twentyoneb-racing"
+  # Advance origin/main so the shim has a second merged commit to move to.
+  commit_in "$SEED" second
+  git -C "$SEED" push -q origin main || die "push failed"
+  git -C "$SHARED" fetch -q origin || die "fetch failed"
+  mkdir -p "$TMP/shim21b" || die "mkdir shim failed"
+  cat > "$TMP/shim21b/git" <<SHIM || die "shim write failed"
+#!/usr/bin/env bash
+set -euo pipefail
+# Move the branch on the SECOND read of its tip — the pre-removal recheck,
+# so the move is allowed, and before the compare-and-delete reads it. The new
+# tip is merged too, so only the guard can keep the branch. A move that fails
+# breaks the fixture's premise: say so and stop rather than let the run pass.
+case "\$*" in *"refs/heads/review/racing2"*)
+  n=\$(cat "$TMP/shim21b/count" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$TMP/shim21b/count"
+  if (( n == 2 )); then
+    # The move's own chatter must not reach stdout: the caller is capturing it
+    # as the branch tip.
+    # A worker commits inside the checkout: that is the race the recheck exists
+    # for, and git refuses to move a checked-out branch any other way.
+    if ! "$(command -v git)" -C "$ROOT/twentyoneb-racing" -c user.name=t -c user.email=t@t commit -q --allow-empty -m raced >&2; then
+      echo "shim21b: fixture could not advance review/racing2" >&2
+      exit 1
+    fi
+  fi ;;
+esac
+exec "$(command -v git)" "\$@"
+SHIM
+  chmod +x "$TMP/shim21b/git" || die "chmod shim failed"
+  RUN_SEQ=$((RUN_SEQ+1))
+  OUT="$(env WORKTREE_ROOT="$ROOT" PATH="$TMP/shim21b:$PATH" bash "$SCRIPT" "$SHARED" 2>"$TMP/err.$RUN_SEQ")"; RC=$?; ERRTEXT="$(cat "$TMP/err.$RUN_SEQ")"
+  echo "21b. a branch that moved before its removal keeps its worktree, reason moved, exit 0"
+  if (( RC == 0 )) && [[ "$(kept_reason "$ROOT/twentyoneb-racing")" == moved ]] && [[ -d "$ROOT/twentyoneb-racing" ]] && has_branch "$SHARED" review/racing2; then pass; else fail "rc=$RC out=$OUT err=$ERRTEXT"; fi
 
   # --- 22. a worktree removal whose branch deletion fails still reports the removal.
   mk_repo twentytwo
