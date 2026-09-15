@@ -346,15 +346,15 @@ def task_record(store, task):
 
 
 def checkpoint(store, assignments, data, at, judge_agent):
-    """Pause implementation at an exhausted allowance and hand it to the operator.
+    """Record the checkpoint an exhausted allowance opens with.
 
-    The allowance boundary is a budget event, not a dispute: only the operator
-    can grant more attempts, so the checkpoint used to buy an expensive ruling
-    ahead of a decision the judge cannot make. One task spent 16 judge rulings
-    across 19 fix rounds that way, on the same window its developer and every
-    reviewer drew from. A ruling is still recordable here -- `judge_report` is
-    optional, and a supplied one is held to the same completed-ruling contract
-    as before.
+    The allowance boundary is not a dispute and never waits on an operator
+    budget: the lead records this checkpoint, consults the investigator, and
+    takes its assessed report to the judge's diagnosis, whose remedy carries
+    the next bound (rules/agent-team-operation.md Fix Loops). A ruling is
+    still recordable here -- `judge_report` is optional, an operator may
+    request one adjudication per task, and a supplied one is held to the same
+    completed-ruling contract as before.
     """
     required = {"id", "task", "defect", "previous_attempts", "progress", "change_in_approach"}
     if not isinstance(data, dict) or not required <= set(data) or set(data) - required - {"judge_report", "requested_by"}:
@@ -368,7 +368,7 @@ def checkpoint(store, assignments, data, at, judge_agent):
     if count < DEFAULT_FIX_LIMIT:
         raise UsageError("The normal correction budget is not exhausted; continue within it.", {})
     if any(row["task"] == data["task"] and row["status"] in PENDING_STATUSES for row in store["dispatches"]):
-        raise UsageError("A dispatch outcome is still unknown; reconcile it before proposing another correction budget.", {})
+        raise UsageError("A dispatch outcome is still unknown; reconcile it before recording the checkpoint.", {})
     ruling = {}
     if "judge_report" in data:
         # One ruling per task, never one per allowance boundary: a re-granted
@@ -381,7 +381,7 @@ def checkpoint(store, assignments, data, at, judge_agent):
         developer = latest_assignment(assignments, task=data["task"], role="developer", status="applied")
         judge = latest_assignment(assignments, task=data["task"], role="judge", agent=judge_agent, status="applied")
         if not judge_agent or developer is None or judge is None or not assignment_after(assignments, judge[0], developer[0]):
-            raise UsageError("A cited judge report needs the configured pinned judge's completed assignment after the latest developer attempt; omit judge_report to send the exhausted allowance straight to the operator.", {})
+            raise UsageError("A cited judge report needs the configured pinned judge's completed assignment after the latest developer attempt; omit judge_report, consult the investigator, and take its assessed report to the judge's diagnosis (`teamlead diagnose`).", {})
         # The ruling is the operator's to request, and "operator-requested" was
         # the ledger's word for a request nothing in it recorded (#400). The
         # receipt is the same source/quote shape every other operator decision
