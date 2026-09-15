@@ -88,10 +88,12 @@ an omitted field is not. Classification rules are in
 `skills/herdr-teamlead/teamlead/triggers.py`, in its module docstring and the
 `detect` and `cli_surface` docstrings.
 
-Run it before `plan`, with the roles and requirements that round intends:
+Run it before `plan`, with the roles and requirements that round intends,
+through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
+Step 5. The argument contract:
 
-```bash
-teamlead detect-triggers --repo <dir> --base <ref> [--head <ref>] \
+```text
+detect-triggers --repo <dir> --base <ref> [--head <ref>] \
   --roles <role[,role...]> [--requirements <file>] [--planned <file>] \
   [--decisions <file>]
 ```
