@@ -236,6 +236,21 @@ main() {
      && [[ "$(cat "$TMP/r4j.err")" == *"r4j-hidden"* ]] && [[ "$(cat "$TMP/r4j.err")" == *"dirty"* ]]; then
     pass; else fail "showUntrackedFiles=no must not make an untracked file invisible: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4j.err")"; fi
 
+  # 4a-iv-c. A tag named like the worker's branch must not shadow it: with
+  # short refs, `main..feat/x` resolved the TAG (on main, zero ahead) and
+  # listed an unmerged checkout for removal. Fully qualified refs judge the
+  # branch itself.
+  mk_origin o4k; clone_from "$BARE" "$TMP/r4k"
+  g -C "$TMP/r4k" worktree add -q "$TMP/r4k-wt" -b feat/shadowed || die "r4k worktree add failed"
+  printf 'ahead\n' > "$TMP/r4k-wt/k" || die "r4k write failed"
+  g -C "$TMP/r4k-wt" add k || die "r4k add failed"
+  g -C "$TMP/r4k-wt" -c user.name=t -c user.email=t@t commit -q -m ahead || die "r4k commit failed"
+  g -C "$TMP/r4k" tag feat/shadowed main || die "r4k tag failed"
+  OUT="$(cd "$TMP/r4k" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>"$TMP/r4k.err")"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "r4k-wt" \
+     && [[ "$(cat "$TMP/r4k.err")" == *"r4k-wt"* ]] && [[ "$(cat "$TMP/r4k.err")" == *"unmerged"* ]]; then
+    pass; else fail "a tag named like the branch must not make an unmerged worktree removable: RC=$RC OUT=$OUT ERR=$(cat "$TMP/r4k.err")"; fi
+
   # 4a-v. A worktree the check cannot read is never reported removable: the
   # guard fails closed rather than passing a tree it never inspected.
   mk_origin o4e; clone_from "$BARE" "$TMP/r4e"

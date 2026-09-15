@@ -182,9 +182,9 @@ main() {
       local named
       named="${p}$([[ -n "$b" ]] && printf ' (branch %s)' "$b" || printf ' (detached)')"
       if (( spent )) && [[ -n "$b" ]]; then
-        orphaned+=("${p} (branch ${b}, nothing ${base} lacks)")
+        orphaned+=("${p} (branch ${b}, nothing ${base#refs/remotes/} lacks)")
       elif (( spent )); then
-        spent_detached+=("${p} (detached, nothing ${base} lacks)")
+        spent_detached+=("${p} (detached, nothing ${base#refs/remotes/} lacks)")
       elif [[ -z "$base" ]]; then
         # No default branch to judge containment against. What IS observable
         # still reaches the operator: a detached tree is detached whatever the
@@ -275,9 +275,11 @@ collect_worktrees() {
   return 0
 }
 
-# Echo the default branch's ref (`origin/main`), or return 1 when none can be
-# confirmed. Named explicitly rather than read off the current checkout: this
-# hook can run from a linked worktree, whose HEAD is not the default branch.
+# Echo the default branch's FULLY QUALIFIED ref (`refs/remotes/origin/main`),
+# or return 1 when none can be confirmed. Named explicitly rather than read off
+# the current checkout: this hook can run from a linked worktree, whose HEAD is
+# not the default branch. Fully qualified so a local branch or tag named
+# `origin/main` cannot shadow it.
 default_branch_ref() {
   local out rc=0 cand
   # `--quiet` makes exit 1 the expected "no such symbolic ref"; any other exit
@@ -285,7 +287,7 @@ default_branch_ref() {
   # the main/master fallback (rules/error-handling.md).
   out="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)" || rc=$?
   if (( rc == 0 )) && [[ "$out" == refs/remotes/origin/* ]]; then
-    printf 'origin/%s' "${out#refs/remotes/origin/}"
+    printf '%s' "$out"
     return 0
   fi
   if (( rc != 0 && rc != 1 )); then
@@ -295,7 +297,7 @@ default_branch_ref() {
     rc=0
     git show-ref --verify --quiet "refs/remotes/origin/${cand}" || rc=$?
     case "$rc" in
-      0) printf 'origin/%s' "$cand"; return 0 ;;
+      0) printf 'refs/remotes/origin/%s' "$cand"; return 0 ;;
       1) ;;  # the expected "no such ref"; try the next candidate
       *) warn "\`git show-ref --verify refs/remotes/origin/${cand}\` failed (exit ${rc}) — cannot confirm the default branch; no worktree is reported removable this run"
          return 1 ;;
@@ -330,9 +332,13 @@ worktree_is_spent() { # <path> <branch|""> <default-ref>
   if [[ -n "$status" ]]; then SPENT_REASON="dirty"; return 1; fi
   if [[ -n "$branch" ]]; then
     rc=0
-    ahead="$(git -C "$path" rev-list --count "${base}..${branch}" 2>/dev/null)" || rc=$?
+    # `refs/heads/` in full: a tag named like the branch would otherwise win
+    # the short-name resolution and judge the wrong commit (a tag on the
+    # default branch reads as zero commits ahead and lists an unmerged
+    # checkout for removal).
+    ahead="$(git -C "$path" rev-list --count "${base}..refs/heads/${branch}" 2>/dev/null)" || rc=$?
     if (( rc != 0 )) || [[ ! "$ahead" =~ ^[0-9]+$ ]]; then
-      warn "\`git rev-list --count ${base}..${branch}\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect its history by hand"
+      warn "\`git rev-list --count ${base}..refs/heads/${branch}\` failed in ${path} (exit ${rc}) — not reporting it as removable; inspect its history by hand"
       return 1
     fi
     if [[ "$ahead" != "0" ]]; then SPENT_REASON="unmerged"; return 1; fi
