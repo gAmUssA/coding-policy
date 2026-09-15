@@ -286,6 +286,7 @@ SHIM
   git -C "$SEED" push -q origin main || die "push failed"
   git -C "$SHARED" fetch -q origin || die "fetch failed"
   mkdir -p "$TMP/shim21" || die "mkdir shim failed"
+  echo 0 > "$TMP/shim21/count" || die "counter seed failed"
   cat > "$TMP/shim21/git" <<SHIM || die "shim write failed"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -295,7 +296,13 @@ set -euo pipefail
 # tip is merged too, so only the guard can keep the branch. A move that fails
 # breaks the fixture's premise: say so and stop rather than let the run pass.
 case "\$*" in *"refs/heads/review/racing"*)
-  n=\$(cat "$TMP/shim21/count" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$TMP/shim21/count"
+  # The counter is seeded by the fixture; a read failure is a broken fixture,
+  # never a zero, so the simulated race cannot silently move.
+  if ! n=\$(cat "$TMP/shim21/count"); then
+    echo "shim21: cannot read its tip-read counter" >&2
+    exit 1
+  fi
+  n=\$((n+1)); echo "\$n" > "$TMP/shim21/count"
   if (( n == 3 )); then
     # The move's own chatter must not reach stdout: the caller is capturing it
     # as the branch tip.
@@ -321,6 +328,7 @@ SHIM
   git -C "$SEED" push -q origin main || die "push failed"
   git -C "$SHARED" fetch -q origin || die "fetch failed"
   mkdir -p "$TMP/shim21b" || die "mkdir shim failed"
+  echo 0 > "$TMP/shim21b/count" || die "counter seed failed"
   cat > "$TMP/shim21b/git" <<SHIM || die "shim write failed"
 #!/usr/bin/env bash
 set -euo pipefail
@@ -329,7 +337,13 @@ set -euo pipefail
 # tip is merged too, so only the guard can keep the branch. A move that fails
 # breaks the fixture's premise: say so and stop rather than let the run pass.
 case "\$*" in *"refs/heads/review/racing2"*)
-  n=\$(cat "$TMP/shim21b/count" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "$TMP/shim21b/count"
+  # The counter is seeded by the fixture; a read failure is a broken fixture,
+  # never a zero, so the simulated race cannot silently move.
+  if ! n=\$(cat "$TMP/shim21b/count"); then
+    echo "shim21b: cannot read its tip-read counter" >&2
+    exit 1
+  fi
+  n=\$((n+1)); echo "\$n" > "$TMP/shim21b/count"
   if (( n == 2 )); then
     # The move's own chatter must not reach stdout: the caller is capturing it
     # as the branch tip.

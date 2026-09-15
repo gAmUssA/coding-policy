@@ -791,6 +791,14 @@ ${base}"
     pass; else fail "older unpushed history: expected no_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
   git -C "$stall_wt" reset -q --hard HEAD~1 || die "reset failed"
 
+  # Dirty-state evidence survives an unreadable base: partial work is decided
+  # from the tree's status alone, before any history read.
+  printf 'scratch\n' > "$stall_wt/scratch.txt" || die "write failed"
+  stall_run "$stall_wt" --base "0000000000000000000000000000000000000000"
+  if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "partial_work" and .stall.evidence.untracked == 1 and .stall.evidence.dispatch_commits == null' >/dev/null; then
+    pass; else fail "dirty tree with unreadable base: expected partial_work, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  rm -f "$stall_wt/scratch.txt" || die "cleanup failed"
+
   # An unreadable worktree loses the classification, never the stall.
   stall_run "$TMP/not-a-worktree" --base "$stall_base"
   if [[ $RC -eq 1 ]] && printf '%s' "$OUT" | jq -e '.stall.class == "unknown"' >/dev/null; then

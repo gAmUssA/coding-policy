@@ -544,6 +544,19 @@ classify_worktree() { # <worktree-path> [base-revision]
       *) staged=$(( staged + 1 )) ;;
     esac
   done <<<"$status"
+  # Partial work is decided from the tree's status alone, before any history
+  # is read: an unreadable base or remote must never discard dirty-state
+  # evidence already observed (Stalled Workers).
+  if [[ "$mid" == true ]] || (( staged > 0 || modified > 0 || untracked > 0 )); then
+    jq -n --arg t "$tree" --arg b "$base" --argjson m "$mid" \
+          --argjson s "$staged" --argjson d "$modified" --argjson u "$untracked" \
+      '{class: "partial_work", evidence: ({worktree: $t, readable: true, mid_operation: $m,
+                                          staged: $s, modified: $d, untracked: $u,
+                                          unpushed_commits: null}
+                 + (if $b == "" then {base: null, dispatch_commits: null, dispatch_unpushed_commits: null}
+                    else {base: $b, dispatch_commits: null, dispatch_unpushed_commits: null} end))}'
+    return 0
+  fi
   # Commits the worker made that no remote-tracking ref holds. A repository
   # with no remote reports none, which is the honest answer for one.
   rc=0
@@ -589,13 +602,10 @@ classify_worktree() { # <worktree-path> [base-revision]
       return 0
     fi
   fi
-  # Order follows the recovery each class needs: partial work is preserved as
-  # evidence before anything else is read off the tree. With a base, the
-  # dispatch's own range decides: no commits beyond it is no_work whatever
-  # older unpushed history the base carries (Stalled Workers).
-  if [[ "$mid" == true ]] || (( staged > 0 || modified > 0 || untracked > 0 )); then
-    class="partial_work"
-  elif (( own == 0 )); then
+  # A clean tree: with a base, the dispatch's own range decides. No commits
+  # beyond it is no_work whatever older unpushed history the base carries
+  # (Stalled Workers).
+  if (( own == 0 )); then
     class="no_work"
   elif (( own > 0 && own_unpushed > 0 )); then
     class="unpushed_commits"
