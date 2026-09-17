@@ -30,13 +30,16 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 - Push the branch: `git push -u origin <branch>`
 - Create the PR with `gh pr create`:
   - **Title**: `<type>(<scope>): <imperative summary>`
-  - **Body**:
+  - **Body** (the repo's own `.github/pull_request_template.md` wins when one exists):
     ```
-    ## Summary
-    <what changed and why — 1-3 bullet points>
+    ## Change
+    <the concrete trigger, the behavior before, the behavior after — 1-3 bullet points>
 
-    ## Test plan
-    - [ ] <verification steps, with the command that shows each one passing>
+    ## Verification
+    <each exact command and its observed result; every check NOT run, named as not run>
+
+    ## Policy and risks
+    <rule names that governed the change, compatibility impact, remaining limits or follow-ups>
     ```
 - No AI attribution trailers in the commit or PR body (`rules/commit-conventions.md`)
 

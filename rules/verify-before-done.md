@@ -18,6 +18,9 @@ description: Done means a shown passing run — execute the thing, show the outp
 - A skipped step is named as skipped, never folded into "done"
 - No "verified" without the command and its result in the same report
 - A partial result is reported as partial: what passed, what failed, what was not attempted
+- Never invent a PR URL, a CI result, a run id, or a registry state — report only what a command returned
+- A local draft is a draft, never "the PR"; a prepared fixture or sample output is labelled prepared
+- An approval, auth, or network failure is reported as that failure, never as a policy rejection
 
 ## Scope of Proof
 

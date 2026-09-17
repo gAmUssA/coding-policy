@@ -4,6 +4,17 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.3.1 — 2026-09-17
+
+### Added
+
+- **`rules/cross-boundary-changes.md`.** A change that touches a shared contract is mapped before it is edited: the producer, each consumer, the contract, and the verification command per boundary, stated in a few lines before the first edit. Compatibility is resolved explicitly, with a staged migration preferred when consumers deploy separately; conflicting instruction files are cited on both sides rather than silently resolved; one coherent change at a time, narrow tests first, every unverified boundary reported with its consequence. Ported from the `multi-module-changes` skill in [cyberdyne-systemz/coding-policy](https://github.com/cyberdyne-systemz/coding-policy), Viktor's own smaller Codex-plugin policy, which had the one idea this plugin lacked.
+- **PR body: Change / Verification / Policy and risks.** The release skill's Step 2 template replaces Summary plus a Test-plan checklist with the three sections the cyberdyne `pr-template.md` carries: the concrete trigger and before/after behavior; each exact command with its observed result and every check not run named as such; the rule names, compatibility impact, and remaining limits. A repo's own `.github/pull_request_template.md` still wins.
+- **Provenance honesty in `rules/verify-before-done.md`.** Never invent a PR URL, CI result, run id, or registry state; a local draft is never "the PR" and a prepared fixture is labelled prepared; an approval, auth, or network failure is reported as that failure, never as a policy rejection. From the cyberdyne `prepare-pr` skill and workflow policy.
+- **Stage only the intended files.** `rules/commit-conventions.md` One Change Per Commit now says it at the staging step: inspect `git status` first, and unrelated uncommitted work stays out of the commit.
+
+Not ported from the same repo: the read-only MCP policy server and the Codex manifest (Tessl already installs the rules into every agent's context, Codex included), the prepare-only draft mode (it contradicts `rules/ship-on-green.md`), and the hooks-guide-while-branch-protection-enforces disclaimer (the release contract already treats CI and the reviewer verdict as the gate).
+
 ## 0.3.0 — 2026-09-15
 
 ### Added
