@@ -4,7 +4,7 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
-## 0.3.1 — 2026-09-17
+## 0.4.0 — 2026-09-17
 
 ### Added
 

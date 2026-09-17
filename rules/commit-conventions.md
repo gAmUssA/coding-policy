@@ -16,7 +16,8 @@ alwaysApply: true
 - Each commit represents one logical change
 - Don't mix refactors with features, formatting with bug fixes, or dependency updates with code changes
 - If you need to refactor before implementing, that's a separate commit
-- Stage only the files the change intends — inspect `git status` first; unrelated uncommitted work stays out of the commit
+- Inspect `git status` before staging
+- Stage only the files the change intends; unrelated uncommitted work stays out of the commit
 
 ## No AI Attribution
 
