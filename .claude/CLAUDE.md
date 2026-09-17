@@ -24,6 +24,7 @@ This repo IS `gamussa/coding-policy`. The rule files below are the source-of-tru
 @../rules/verify-before-done.md
 @../rules/environment-changes.md
 @../rules/demo-readiness.md
+@../rules/cross-boundary-changes.md
 @../rules/script-delegation.md
 @../rules/skill-authoring.md
 @../rules/context-artifacts.md

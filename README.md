@@ -42,6 +42,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 | Scope | [external-repo-contributions](rules/external-repo-contributions.md) | Default deny on issues, PRs, comments, and reactions in repos the operator does not own |
 | Automation | [hook-action-reporting](rules/hook-action-reporting.md) | Relay `Session-start status —` hook payloads once, then act on what they name |
 | Demos | [demo-readiness](rules/demo-readiness.md) | Talk and workshop repos run from a fresh clone with one command and a documented reset |
+| Scope | [cross-boundary-changes](rules/cross-boundary-changes.md) | Map producer, consumers, contract, and verification per boundary before editing; staged migrations; one coherent change at a time |
 | Authoring | [script-delegation](rules/script-delegation.md) | Deterministic work goes in scripts, reasoning stays in the LLM; skills cite a script's contract |
 | Authoring | [skill-authoring](rules/skill-authoring.md) | `SKILL.md` structure, flat step numbering, typed `Skill()` calls, manifest reference |
 | Authoring | [context-artifacts](rules/context-artifacts.md) | Plugin structure, rule format and frontmatter, writing style, surface sync, manual versioning |
