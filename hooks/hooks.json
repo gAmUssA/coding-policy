@@ -1,0 +1,59 @@
+{
+  "description": "Gamussa coding-policy: original SessionStart and Stop hooks with native Codex context loading.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\"",
+            "timeout": 5,
+            "additionalContextLimit": 2500,
+            "statusMessage": "Loading Gamussa coding policy"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" check-policy-freshness.sh",
+            "timeout": 50,
+            "statusMessage": "check-policy-freshness"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" check-git-sync.sh",
+            "timeout": 50,
+            "statusMessage": "check-git-sync"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" check-tessl-latest.sh",
+            "timeout": 50,
+            "statusMessage": "check-tessl-latest"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" herdr-team-status.sh",
+            "timeout": 50,
+            "statusMessage": "herdr-team-status"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/stop-handoff-hygiene.sh\"",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/herdr-supervision-stop.sh\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

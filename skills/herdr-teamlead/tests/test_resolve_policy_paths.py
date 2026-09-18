@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +22,10 @@ class ResolvePolicyPaths(unittest.TestCase):
         self.project.mkdir()
         self.local = self.project / ".tessl"
         self.global_root = self.root / "global with spaces"
+        self.package = self.root / "codex package"
+        self.script = self.package / "skills/herdr-teamlead/resolve-policy-paths.sh"
+        self.script.parent.mkdir(parents=True)
+        shutil.copy2(SCRIPT, self.script)
 
     def artifact(self, root, relative, content="policy fixture\n"):
         path = root / relative
@@ -30,7 +35,7 @@ class ResolvePolicyPaths(unittest.TestCase):
 
     def invoke(self, *args, env=None):
         return subprocess.run(
-            ["/bin/bash", str(SCRIPT), *(args or (str(self.project), str(self.global_root)))],
+            ["/bin/bash", str(self.script), *(args or (str(self.project), str(self.global_root)))],
             text=True, capture_output=True, check=False, env=env,
         )
 
@@ -56,6 +61,34 @@ class ResolvePolicyPaths(unittest.TestCase):
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), expected)
+
+    def codex_artifacts(self):
+        self.artifact(self.package, Path(".codex-plugin/plugin.json"), '{"name":"gamussa-coding-policy"}\n')
+        return {
+            "POLICY_INDEX": self.artifact(self.package, Path(".codex-plugin/RULES.md")),
+            "RELEASE_SKILL": self.artifact(self.package, Path("skills/release/SKILL.md")),
+        }
+
+    def test_codex_only_install(self):
+        expected = self.codex_artifacts()
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_tessl_artifacts_precede_codex_fallback(self):
+        self.codex_artifacts()
+        expected = {"POLICY_INDEX": self.artifact(self.local, Path("RULES.md")),
+                    "RELEASE_SKILL": self.artifact(self.global_root, RELEASE)}
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), expected)
+
+    def test_codex_fallback_requires_its_manifest(self):
+        self.codex_artifacts()
+        (self.package / ".codex-plugin/plugin.json").unlink()
+        result = self.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
 
     def test_missing_release_emits_no_partial_result(self):
         self.artifact(self.local, Path("RULES.md"))

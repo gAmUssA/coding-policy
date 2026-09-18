@@ -8,11 +8,19 @@ A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-po
 
 ## Installation
 
+### Tessl
+
 ```
 tessl install gamussa/coding-policy
 ```
 
 To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, Copilot lane, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
+
+### Codex personal marketplace
+
+Use the `plugin-creator` skill to register this repository as `gamussa-coding-policy` in your personal marketplace and install it. Preserve existing marketplace entries and source files. The Codex manifest is [`.codex-plugin/plugin.json`](.codex-plugin/plugin.json).
+
+Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose Tessl or the Codex plugin for a given Codex environment; enabling both runs both sets of hooks. See [docs/codex-setup.md](docs/codex-setup.md) for installation, path handling, updates, and verification.
 
 ## What's Included
 
@@ -67,6 +75,7 @@ To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, 
 | [herdr-team-status](hooks/herdr-team-status.sh) | SessionStart | Names the live Herdr team: each named worker, its kind, and its lifecycle state. Silent outside Herdr. Informative only. |
 | [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, spent worktrees (clean and holding nothing the default branch lacks, pushed or not), or shellcheck/pyright findings in the changed set (venv-aware). Dirty, unmerged, locked, and detached worktrees and a dirty tree are reported, not blocked. |
 | [herdr-supervision-stop](hooks/herdr-supervision-stop.sh) | Stop (Claude Code + Codex) | Gates the exact bound Herdr lead while assignments or unhandled events remain; a saved pause or handoff covering every active assignment releases it. Reads local state only. |
+| [codex-session-start](hooks/codex-session-start.py) | SessionStart (Codex plugin) | Identifies rule paths and scopes, maps co-shipped script paths, and translates the four Tessl SessionStart hooks into native Codex context. Registered in [hooks/hooks.json](hooks/hooks.json). |
 
 ## Philosophy
 

@@ -7,13 +7,13 @@
 # stderr: actionable diagnostic on failure; stdout stays empty.
 # exit: 0 both artifacts resolved, 1 usage/precondition, 2 lookup/tool failure.
 # Each artifact independently prefers <shared-checkout>/.tessl, then the
-# global root. Only readable non-empty regular files qualify. No writes or network calls.
+# global root, then this package's native Codex artifacts when its Codex manifest
+# exists. Only readable non-empty regular files qualify. No writes or network calls.
 set -euo pipefail
 
-resolve_artifact() { # <relative-artifact> <local-root> <global-root>
-  local root candidate directory
-  for root in "$2" "$3"; do
-    candidate="$root/$1"
+resolve_artifact() { # <relative-artifact> <local-root> <global-root> <codex-fallback>
+  local candidate directory
+  for candidate in "$2/$1" "$3/$1" "$4"; do
     if [[ -f "$candidate" && -r "$candidate" && -s "$candidate" ]]; then
       if ! directory="$(cd "${candidate%/*}" && pwd -P)"; then
         printf 'resolve-policy-paths: cannot resolve %s — restore directory access and retry\n' "$candidate" >&2
@@ -23,7 +23,7 @@ resolve_artifact() { # <relative-artifact> <local-root> <global-root>
       return 0
     fi
   done
-  printf 'resolve-policy-paths: no readable %s under %s or %s — install or repair the policy plugin before composing briefs\n' "$1" "$2" "$3" >&2
+  printf 'resolve-policy-paths: no readable %s under %s or %s or the bundled Codex fallback — install or repair the policy plugin before composing briefs\n' "$1" "$2" "$3" >&2
   return 2
 }
 
@@ -41,8 +41,17 @@ main() {
     echo 'resolve-policy-paths: install jq before resolving brief inputs' >&2
     return 1
   fi
-  policy="$(resolve_artifact RULES.md "$shared/.tessl" "$global_root")" || return 2
-  release="$(resolve_artifact plugins/gamussa/coding-policy/skills/release/SKILL.md "$shared/.tessl" "$global_root")" || return 2
+  local plugin_root codex_policy="" codex_release=""
+  if ! plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"; then
+    echo 'resolve-policy-paths: cannot locate the installed plugin — restore directory access and retry' >&2
+    return 2
+  fi
+  if [[ -f "$plugin_root/.codex-plugin/plugin.json" ]]; then
+    codex_policy="$plugin_root/.codex-plugin/RULES.md"
+    codex_release="$plugin_root/skills/release/SKILL.md"
+  fi
+  policy="$(resolve_artifact RULES.md "$shared/.tessl" "$global_root" "$codex_policy")" || return 2
+  release="$(resolve_artifact plugins/gamussa/coding-policy/skills/release/SKILL.md "$shared/.tessl" "$global_root" "$codex_release")" || return 2
   if ! output="$(jq -n --arg policy "$policy" --arg release "$release" '{POLICY_INDEX:$policy, RELEASE_SKILL:$release}')"; then
     echo 'resolve-policy-paths: cannot emit paths — check jq and retry before dispatch' >&2
     return 2
