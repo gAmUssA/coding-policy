@@ -5,7 +5,9 @@ import importlib.util
 import io
 import json
 import os
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -160,14 +162,69 @@ class CodexSessionStart(unittest.TestCase):
             patch.object(sys, "argv", ["hook", "check.sh"]),
             patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
             patch.object(
-                adapter.subprocess,
-                "run",
+                adapter,
+                "run_hook",
                 side_effect=subprocess.TimeoutExpired("fixture", 45),
             ),
             redirect_stderr(errors),
         ):
             self.assertEqual(adapter.main(), 1)
         self.assertIn("timed out", errors.getvalue())
+
+    def test_timeout_closes_a_real_descendants_output_pipe(self):
+        # Trigger the timeout only after the grandchild reports readiness. Its
+        # pipe reaches EOF only when both Bash and the descendant have exited.
+        (self.root / "hooks/check.sh").write_text(
+            "set -euo pipefail\n"
+            "python3 -c 'import os, signal; print(os.getpid(), flush=True); signal.pause()' &\n"
+            "wait\n"
+        )
+        spec = importlib.util.spec_from_file_location("codex_session_start", ADAPTER)
+        assert spec is not None and spec.loader is not None
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        communicate = subprocess.Popen.communicate
+        descendants = []
+
+        def timeout_when_ready(process, input=None, timeout=None):
+            if timeout is not None:
+                self.assertIsNotNone(process.stdout)
+                self.assertTrue(
+                    select.select([process.stdout], [], [], 5)[0],
+                    "child did not report readiness",
+                )
+                pid = int(process.stdout.readline().strip())
+                descendants.append((pid, os.dup(process.stdout.fileno())))
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            # Bound cleanup in the test, so a regression fails instead of hanging.
+            return communicate(process, input=input, timeout=5)
+
+        errors = io.StringIO()
+        try:
+            with (
+                patch.object(adapter, "ROOT", self.root),
+                patch.object(sys, "argv", ["hook", "check.sh"]),
+                patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
+                patch.object(subprocess.Popen, "communicate", timeout_when_ready),
+                redirect_stderr(errors),
+            ):
+                self.assertEqual(adapter.main(), 1)
+            self.assertIn("timed out", errors.getvalue())
+            self.assertEqual(len(descendants), 1)
+            _, pipe = descendants[0]
+            self.assertTrue(
+                select.select([pipe], [], [], 0)[0],
+                "descendant survived timeout and still owns stdout",
+            )
+            self.assertEqual(os.read(pipe, 1), b"")
+        finally:
+            for pid, pipe in descendants:
+                os.close(pipe)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    # Expected after successful process-group cleanup.
+                    continue
 
 
 class CodexPackage(unittest.TestCase):

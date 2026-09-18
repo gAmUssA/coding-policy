@@ -13,6 +13,7 @@ heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
 ### Fixed
 
+- **Codex hook timeouts terminate the process group.** Killing only the immediate Bash wrapper left foreground `tessl` or `git` descendants running after a reported timeout. The adapter now starts each translated hook in a separate POSIX session and kills the group before draining output. A real-descendant pipe test checks that timeout cleanup releases inherited output streams.
 - **The test runner's empty-tree error on macOS Bash 3.2.** Nested command-substitution quoting expanded the `{sh,py}` suffix into two arguments and emitted two JSON objects. Building the error message before escaping keeps the promised single JSON result; the existing empty-tree test covers it.
 
 ## 0.4.0 — 2026-09-17

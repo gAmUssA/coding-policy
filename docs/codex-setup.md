@@ -10,7 +10,7 @@ The native Codex plugin is `gamussa-coding-policy`. The Tessl registry name rema
 4. Open `/hooks` in Codex and review the seven plugin hook handlers. Trust the definitions you intend to run.
 5. Start a new thread. Confirm the four skills appear and the policy-loading hook identifies this plugin's installed version and rule paths.
 
-Requirements: Python 3.11 or newer and Bash. The existing hook scripts retain their documented tool requirements and diagnostics. The onboarding skill still installs Tessl in consumer repositories. Choose one installation path for a Codex environment to avoid duplicate hook execution.
+Requirements: macOS, Linux, or WSL with Python 3.11 or newer and Bash. The existing hook scripts retain their documented tool requirements and diagnostics. The onboarding skill still installs Tessl in consumer repositories. Choose one installation path for a Codex environment to avoid duplicate hook execution.
 
 ## Runtime contract
 

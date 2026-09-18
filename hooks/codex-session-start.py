@@ -5,11 +5,13 @@ stdin: native SessionStart JSON. Optional argv: a manifest-declared hook filenam
 stdout: native hookSpecificOutput with policy paths or translated hook context.
 exit: 0 on success/no-op, the child status on failure, 1 on invalid input or timeout.
 The no-argument mode only reads packaged files. Child hooks retain their documented
-side effects. HOOK_TIMEOUT_SECONDS bounds each child; errors go to stderr.
+side effects. On POSIX hosts, HOOK_TIMEOUT_SECONDS bounds the hook process group;
+timeout cleanup kills the group and drains its output. Errors go to stderr.
 """
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +68,33 @@ def policy_context(manifest: dict) -> str:
     return "\n".join(lines)
 
 
+def run_hook(command: list[str], event_text: str) -> subprocess.CompletedProcess:
+    if os.name != "posix":
+        raise ValueError("hook process groups require macOS, Linux, or WSL")
+    with subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env={**os.environ, "TESSL_PLUGIN_DIR": str(ROOT)},
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(
+                input=event_text, timeout=HOOK_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # The whole group exited between the timeout and the signal.
+                process.wait()
+            process.communicate()
+            raise
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def main() -> int:
     try:
         event_text = sys.stdin.read()
@@ -87,13 +116,9 @@ def main() -> int:
             raise ValueError(
                 "expected one manifest-declared SessionStart hook filename"
             )
-        result = subprocess.run(
+        result = run_hook(
             ["bash", str(bundled_path("hooks/" + sys.argv[1]))],
-            input=event_text,
-            text=True,
-            capture_output=True,
-            timeout=HOOK_TIMEOUT_SECONDS,
-            env={**os.environ, "TESSL_PLUGIN_DIR": str(ROOT)},
+            event_text,
         )
         if result.stderr:
             sys.stderr.write(result.stderr)
