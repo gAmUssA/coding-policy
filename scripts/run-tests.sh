@@ -155,8 +155,11 @@ main() {
 
   if [[ ${#suites[@]} -eq 0 ]]; then
     echo "run-tests: no test suites found under ${base}/**/tests/test_*.{sh,py}" >&2
+    # Bash 3.2 expands braces inside nested command-substitution quotes. Build
+    # the message first so json_str receives one argument on stock macOS too.
+    local no_suites_error="no test suites found under ${base}/**/tests/test_*.{sh,py}"
     printf '{"suites":0,"passed":0,"failed":0,"failures":[],"error":%s}\n' \
-      "$(json_str "no test suites found under ${base}/**/tests/test_*.{sh,py}")"
+      "$(json_str "$no_suites_error")"
     return 2
   fi
 

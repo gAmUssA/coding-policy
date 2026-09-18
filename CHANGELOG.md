@@ -4,6 +4,18 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.5.0 — 2026-09-17
+
+### Added
+
+- **Native Codex plugin packaging.** `.codex-plugin/plugin.json` exposes the existing four skills as `gamussa-coding-policy`, distinct from the Cyberdyne demo plugin named `coding-policy`. `hooks/hooks.json` registers the original SessionStart and Stop hooks. The SessionStart adapter reads the Tessl manifest's rule list, identifies always-on and conditional rules for the agent to read, maps co-shipped Tessl script references to the installed Codex root, and translates portable hook output to Codex's native context envelope. The rule bodies, skill files, and existing hook scripts stay shared across both installation paths.
+- **Codex installation and verification instructions.** Personal marketplace entries are appended without replacing existing entries; hooks require the host's trust review and a new thread. Herdr's policy resolver falls back to the native Codex index and release skill when Tessl artifacts are absent, preserving local-then-global Tessl precedence. The boundary tests cover installed paths with spaces, rule scopes, invalid input, missing files, path containment, context translation, child failures and timeouts, and agreement between the two manifests and hook registrations. Codex and Tessl versions advance together.
+
+### Fixed
+
+- **Codex hook timeouts terminate the process group.** Killing only the immediate Bash wrapper left foreground `tessl` or `git` descendants running after a reported timeout. The adapter now starts each translated hook in a separate POSIX session and kills the group before draining output. A real-descendant pipe test checks that timeout cleanup releases inherited output streams.
+- **The test runner's empty-tree error on macOS Bash 3.2.** Nested command-substitution quoting expanded the `{sh,py}` suffix into two arguments and emitted two JSON objects. Building the error message before escaping keeps the promised single JSON result; the existing empty-tree test covers it.
+
 ## 0.4.0 — 2026-09-17
 
 ### Added
