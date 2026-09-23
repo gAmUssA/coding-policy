@@ -4,6 +4,20 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.0 — 2026-09-23
+
+### Added
+
+- **`rules/work-tracking.md` and the `beans-prime` hook.** Viktor tracks work with [beans](https://github.com/hmans/beans), an agentic-first issue tracker that stores issues as Markdown under `.beans/`, in five repos so far, wired three different ways: a native Claude Code SessionStart hook running `beans prime`, a CLAUDE.md line telling the agent to run it first, or nothing. The plugin now does it once for every agent Tessl configures: `hooks/beans-prime.sh` finds `.beans.yml` upward from the session directory, runs `beans prime`, and injects the CLI's own usage guide as context (no `Session-start status` marker: the payload is instructions, not a status to relay), warning with the install step when the CLI is absent and staying silent outside a beans repo. The rule carries the discipline the guide implies: a bean per task, found or created before the work and kept current during it; beans replace every in-session todo list; completion needs an empty checklist and a `## Summary of Changes`; scrapping needs `## Reasons for Scrapping`; the bean file ships in the same commit as the code and the PR body names it; `beans archive` only on request; etags for concurrent updates. Boy-scout follow-ups become beans in a beans repo; the Herdr task ledger stays the lead's separate round evidence. The hook is registered in both the Tessl manifest and the Codex-native `hooks/hooks.json` through the #8 adapter. The `beans prime` output captured on 2026-09-23 from beans 0.4.2 is the reference this rule was written against.
+
+## 0.6.0 — 2026-09-23
+
+### Added
+
+- **`rules/architecture-decisions.md`.** A change that alters the architecture — a dependency adopted or dropped, a contract or schema shape, a storage or messaging choice, a module boundary, a deployment topology, a security model — ships an Architecture Decision Record in `docs/adr/NNNN-<title>.md` in the same PR, with Title, Status, Date, Context, Decision, Consequences. Records are immutable: a reversed decision is a new ADR that supersedes the old one. Viktor's substitute for the "update docs when code changes" guardrail in the Vibe Engineering with OpenAI Codex tutorial (Jason Liu's nine-line AGENTS.md list): what he wants captured is the decision, not a prose mirror of the code.
+- **Decompose Before Building in `rules/cross-boundary-changes.md`.** A multi-component task is built one component at a time in dependency order, each shown working before the next starts, with the whole map in context. The tutorial's central point, that "vibe engineering" means methodically building subcomponents rather than one-shotting the whole and that a one-shot success is luck, which engineering does not rely on.
+- **Mocking limits in `rules/testing-standards.md`.** Mock at the process boundary only; a test whose mocks outnumber its assertions tests the mocks; replacing an in-process collaborator with a mock needs the user's stated permission. From the same nine-line list ("avoid heavily mocking tests without user permission"). The rest of that list was already covered: file-scoped staging (0.4.0), lint before commit, type-check before merge, affected tests per change. The ported Herdr suites predate the rule and patch internal collaborators in 22 files; bringing them under it is tracked in https://github.com/gAmUssA/coding-policy/issues/11.
+
 ## 0.5.0 — 2026-09-17
 
 ### Added
@@ -15,14 +29,6 @@ heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
 - **Codex hook timeouts terminate the process group.** Killing only the immediate Bash wrapper left foreground `tessl` or `git` descendants running after a reported timeout. The adapter now starts each translated hook in a separate POSIX session and kills the group before draining output. A real-descendant pipe test checks that timeout cleanup releases inherited output streams.
 - **The test runner's empty-tree error on macOS Bash 3.2.** Nested command-substitution quoting expanded the `{sh,py}` suffix into two arguments and emitted two JSON objects. Building the error message before escaping keeps the promised single JSON result; the existing empty-tree test covers it.
-
-## 0.6.0 — 2026-09-23
-
-### Added
-
-- **`rules/architecture-decisions.md`.** A change that alters the architecture — a dependency adopted or dropped, a contract or schema shape, a storage or messaging choice, a module boundary, a deployment topology, a security model — ships an Architecture Decision Record in `docs/adr/NNNN-<title>.md` in the same PR, with Title, Status, Date, Context, Decision, Consequences. Records are immutable: a reversed decision is a new ADR that supersedes the old one. Viktor's substitute for the "update docs when code changes" guardrail in the Vibe Engineering with OpenAI Codex tutorial (Jason Liu's nine-line AGENTS.md list): what he wants captured is the decision, not a prose mirror of the code.
-- **Decompose Before Building in `rules/cross-boundary-changes.md`.** A multi-component task is built one component at a time in dependency order, each shown working before the next starts, with the whole map in context. The tutorial's central point, that "vibe engineering" means methodically building subcomponents rather than one-shotting the whole and that a one-shot success is luck, which engineering does not rely on.
-- **Mocking limits in `rules/testing-standards.md`.** Mock at the process boundary only; a test whose mocks outnumber its assertions tests the mocks; replacing an in-process collaborator with a mock needs the user's stated permission. From the same nine-line list ("avoid heavily mocking tests without user permission"). The rest of that list was already covered: file-scoped staging (0.4.0), lint before commit, type-check before merge, affected tests per change. The ported Herdr suites predate the rule and patch internal collaborators in 22 files; bringing them under it is tracked in https://github.com/gAmUssA/coding-policy/issues/11.
 
 ## 0.4.0 — 2026-09-17
 

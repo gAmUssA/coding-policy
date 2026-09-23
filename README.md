@@ -50,6 +50,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | Scope | [external-repo-contributions](rules/external-repo-contributions.md) | Default deny on issues, PRs, comments, and reactions in repos the operator does not own |
 | Automation | [hook-action-reporting](rules/hook-action-reporting.md) | Relay `Session-start status —` hook payloads once, then act on what they name |
 | Demos | [demo-readiness](rules/demo-readiness.md) | Talk and workshop repos run from a fresh clone with one command and a documented reset |
+| Tracking | [work-tracking](rules/work-tracking.md) | In a repo with `.beans.yml`, every task is a bean: found or created before the work, checked off during it, completed with a summary, committed with the code |
 | Scope | [cross-boundary-changes](rules/cross-boundary-changes.md) | Map producer, consumers, contract, and verification per boundary before editing; decompose a multi-component task and build one component at a time; staged migrations |
 | Docs | [architecture-decisions](rules/architecture-decisions.md) | An architecture-altering change ships an ADR in `docs/adr/` in the same PR; records are immutable and superseded, never rewritten |
 | Authoring | [script-delegation](rules/script-delegation.md) | Deterministic work goes in scripts, reasoning stays in the LLM; skills cite a script's contract |
@@ -73,10 +74,11 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | [check-policy-freshness](hooks/check-policy-freshness.sh) | SessionStart | Warns (throttled once a day) when installed Tessl plugins are behind the registry. Informative only. |
 | [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo) and warns when the local default branch is behind or diverged. Informative only. |
 | [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Warns when `tessl.json` pins a `gamussa/*` dependency instead of `latest`. Informative only. |
+| [beans-prime](hooks/beans-prime.sh) | SessionStart | In a repo with `.beans.yml`, loads the `beans prime` usage guide as context; warns when the CLI is missing. Silent elsewhere. Informative only. |
 | [herdr-team-status](hooks/herdr-team-status.sh) | SessionStart | Names the live Herdr team: each named worker, its kind, and its lifecycle state. Silent outside Herdr. Informative only. |
 | [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, spent worktrees (clean and holding nothing the default branch lacks, pushed or not), or shellcheck/pyright findings in the changed set (venv-aware). Dirty, unmerged, locked, and detached worktrees and a dirty tree are reported, not blocked. |
 | [herdr-supervision-stop](hooks/herdr-supervision-stop.sh) | Stop (Claude Code + Codex) | Gates the exact bound Herdr lead while assignments or unhandled events remain; a saved pause or handoff covering every active assignment releases it. Reads local state only. |
-| [codex-session-start](hooks/codex-session-start.py) | SessionStart (Codex plugin) | Identifies rule paths and scopes, maps co-shipped script paths, and translates the four Tessl SessionStart hooks into native Codex context. Registered in [hooks/hooks.json](hooks/hooks.json). |
+| [codex-session-start](hooks/codex-session-start.py) | SessionStart (Codex plugin) | Identifies rule paths and scopes, maps co-shipped script paths, and translates every Tessl-declared SessionStart hook into native Codex context. Registered in [hooks/hooks.json](hooks/hooks.json). |
 
 ## Philosophy
 
