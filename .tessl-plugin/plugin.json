@@ -1,6 +1,6 @@
 {
   "name": "gamussa/coding-policy",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
   "private": false,
   "repository": "https://github.com/gAmUssA/coding-policy",

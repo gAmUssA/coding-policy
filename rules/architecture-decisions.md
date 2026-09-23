@@ -19,7 +19,12 @@ description: A change that alters the architecture records the decision as an AD
 - Status is one of `proposed`, `accepted`, `deprecated`, `superseded by NNNN`
 - Context states the forces and the options considered; Decision states what was chosen; Consequences state what becomes easier, what becomes harder, and what later work must honor
 - A record is short — a screen, not a design document; a longer analysis is linked, never inlined
-- A repo with an existing ADR convention (a different directory, a template, `adr-tools`) keeps its own
+- Narrow exception for a repo with an existing ADR convention.
+- Preconditions (all required):
+  1. The repo already holds ADRs under its own directory, template, or tool (`adr-tools`, MADR)
+  2. The new record follows that convention in full
+  3. The convention still carries Context, Decision, and Consequences
+- Every other repo uses `docs/adr/` and the fields above
 
 ## Records Are Immutable
 

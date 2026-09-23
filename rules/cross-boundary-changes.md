@@ -23,7 +23,7 @@ description: A change that crosses a module, service, or contract boundary is ma
 
 - A task with more than one component — a UI and an API, a producer and a consumer, a schema and its readers — is built one component at a time, never one-shot as a whole
 - Order the components by dependency: the contract and the side that produces it first, then each consumer
-- Each component is built, tested, and shown working before the next starts, with the whole task's map in context so the design stays coherent
+- Each component is built, tested, and shown working before the next starts, with the whole task's map in context
 - A defect found while integrating is a defect in one component; isolate it there before touching another
 - A single-component task needs no decomposition step
 

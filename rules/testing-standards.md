@@ -49,7 +49,12 @@ alwaysApply: true
 - Test what the code does, not how it does it
 - If an internal refactor breaks your tests, the tests were testing the wrong thing
 - Mock at the process boundary — the network, the clock, the filesystem, a paid external service — never the code under test's own collaborators
-- A test whose mocks outnumber its assertions tests the mocks; replacing a real in-process collaborator with a mock needs the user's stated permission
+- A test whose mocks outnumber its assertions tests the mocks
+- Narrow exception for mocking an in-process collaborator.
+- Preconditions (all required):
+  1. The user stated permission for that collaborator in the current task
+  2. The test names the collaborator it mocks and the outcome the mock stands in for
+- Every other in-process collaborator is exercised for real
 
 ## Determinism
 
