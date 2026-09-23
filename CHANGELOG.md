@@ -16,6 +16,14 @@ heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 - **Codex hook timeouts terminate the process group.** Killing only the immediate Bash wrapper left foreground `tessl` or `git` descendants running after a reported timeout. The adapter now starts each translated hook in a separate POSIX session and kills the group before draining output. A real-descendant pipe test checks that timeout cleanup releases inherited output streams.
 - **The test runner's empty-tree error on macOS Bash 3.2.** Nested command-substitution quoting expanded the `{sh,py}` suffix into two arguments and emitted two JSON objects. Building the error message before escaping keeps the promised single JSON result; the existing empty-tree test covers it.
 
+## 0.5.0 — 2026-09-23
+
+### Added
+
+- **`rules/architecture-decisions.md`.** A change that alters the architecture — a dependency adopted or dropped, a contract or schema shape, a storage or messaging choice, a module boundary, a deployment topology, a security model — ships an Architecture Decision Record in `docs/adr/NNNN-<title>.md` in the same PR, with Title, Status, Date, Context, Decision, Consequences. Records are immutable: a reversed decision is a new ADR that supersedes the old one. Viktor's substitute for the "update docs when code changes" guardrail in the Vibe Engineering with OpenAI Codex tutorial (Jason Liu's nine-line AGENTS.md list): what he wants captured is the decision, not a prose mirror of the code.
+- **Decompose Before Building in `rules/cross-boundary-changes.md`.** A multi-component task is built one component at a time in dependency order, each shown working before the next starts, with the whole map in context. The tutorial's central point, that "vibe engineering" means methodically building subcomponents rather than one-shotting the whole and that a one-shot success is luck, which engineering does not rely on.
+- **Mocking limits in `rules/testing-standards.md`.** Mock at the process boundary only; a test whose mocks outnumber its assertions tests the mocks; replacing an in-process collaborator with a mock needs the user's stated permission. From the same nine-line list ("avoid heavily mocking tests without user permission"). The rest of that list was already covered: file-scoped staging (0.4.0), lint before commit, type-check before merge, affected tests per change.
+
 ## 0.4.0 — 2026-09-17
 
 ### Added

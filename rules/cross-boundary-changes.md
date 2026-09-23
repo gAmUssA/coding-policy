@@ -19,6 +19,14 @@ description: A change that crosses a module, service, or contract boundary is ma
 - Prefer a staged migration — new shape accepted, consumers moved, old shape dropped — over a single cut when consumers deploy separately
 - Instruction files that conflict across modules are cited, both sides, in the report; never pick one silently (`rules/ship-on-green.md` Murky)
 
+## Decompose Before Building
+
+- A task with more than one component — a UI and an API, a producer and a consumer, a schema and its readers — is built one component at a time, never one-shot as a whole
+- Order the components by dependency: the contract and the side that produces it first, then each consumer
+- Each component is built, tested, and shown working before the next starts, with the whole task's map in context so the design stays coherent
+- A defect found while integrating is a defect in one component; isolate it there before touching another
+- A single-component task needs no decomposition step
+
 ## One Coherent Change
 
 - Implement one coherent change at a time; unrelated cleanup stays out (`rules/boy-scout.md` governs what to file instead)
