@@ -403,8 +403,9 @@ build_branch_findings() {
 }
 
 # Diagnostics on the CHANGED set only: uncommitted .sh/.py files. Skips silently
-# when nothing lintable changed. shellcheck the .sh, pyright the .py; findings
-# block. A required engine being absent is also blocking (rules/language-
+# when nothing lintable changed. shellcheck the .sh at warning severity and
+# above (info/style notes are report-only), pyright the .py; findings block. A
+# required engine being absent is also blocking (rules/language-
 # diagnostics.md Install, Don't Skip — the gate cannot clear findings without it).
 run_changed_diagnostics() {
   local repo_root
