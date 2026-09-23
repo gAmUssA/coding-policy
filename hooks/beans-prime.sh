@@ -52,11 +52,15 @@ main() {
     return 0
   }
 
+  # The CLI's stderr goes to a private mktemp file: a predictable path could be
+  # a stale file or a planted symlink, and concurrent sessions must not share it.
+  local errfile
+  errfile="$(mktemp "${TMPDIR:-/tmp}/beans-prime.XXXXXX")" || { warn "mktemp failed — cannot capture the CLI's diagnostics; the guide was not loaded"; return 0; }
   # Run from the beans root so the CLI's upward config search matches ours.
-  out="$(cd "$root" && beans prime 2>"${TMPDIR:-/tmp}/beans-prime.$$")" || rc=$?
+  out="$(cd "$root" && beans prime 2>"$errfile")" || rc=$?
   local err=""
-  [[ -r "${TMPDIR:-/tmp}/beans-prime.$$" ]] && err="$(tr '\n' ' ' < "${TMPDIR:-/tmp}/beans-prime.$$")"
-  rm -f "${TMPDIR:-/tmp}/beans-prime.$$" || warn "could not remove temp file ${TMPDIR:-/tmp}/beans-prime.$$"
+  err="$(tr '\n' ' ' < "$errfile")" || warn "could not read ${errfile}"
+  rm -f "$errfile" || warn "could not remove temp file ${errfile}"
   if (( rc != 0 )); then
     warn "beans prime failed (exit ${rc}) in ${root}: ${err:-no diagnostic} — run \`beans check\` there; the guide was not loaded"
     return 0

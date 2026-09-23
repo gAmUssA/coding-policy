@@ -70,18 +70,18 @@ main() {
   local bin
 
   # 1. Not a beans repo: silent.
-  mk_case plain; bin="$(mk_fake "$CASE" ok)"
+  mk_case plain; bin="$(mk_fake "$CASE" ok)" || die "mk_fake ok failed"
   run_hook "$CASE/plain" "$bin:$TOOLS:/usr/bin:/bin"
   if [[ $RC -eq 0 && -z "$OUT" && -z "$ERR" ]]; then pass; else fail "plain dir: expected silence, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 2. Beans repo with a working CLI: the guide is the payload, verbatim.
-  mk_case guide; bin="$(mk_fake "$CASE" ok)"
+  mk_case guide; bin="$(mk_fake "$CASE" ok)" || die "mk_fake ok failed"
   run_hook "$REPO" "$bin:$TOOLS:/usr/bin:/bin"
   if [[ $RC -eq 0 && -z "$ERR" ]] && [[ "$(printf '%s' "$OUT" | jq -r .additionalContext)" == $'# Beans Usage Guide\n\nUse beans create "Title" -t task.' ]]; then
     pass; else fail "beans repo: expected the guide as additionalContext, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 3. Nested directory: the ancestor's .beans.yml is found and the CLI runs from that root.
-  mk_case nested; bin="$(mk_fake "$CASE" ok)"
+  mk_case nested; bin="$(mk_fake "$CASE" ok)" || die "mk_fake ok failed"
   run_hook "$REPO/src/deep" "$bin:$TOOLS:/usr/bin:/bin"
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | contains("Beans Usage Guide")' >/dev/null \
      && [[ "$(cd "$REPO" && pwd -P)" == "$(cat "$CASE/fake-cwd")" ]]; then
@@ -94,13 +94,13 @@ main() {
     pass; else fail "missing CLI: expected install guidance, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 5. CLI fails: the failure and its diagnostic are named, no payload.
-  mk_case failing; bin="$(mk_fake "$CASE" fail)"
+  mk_case failing; bin="$(mk_fake "$CASE" fail)" || die "mk_fake fail failed"
   run_hook "$REPO" "$bin:$TOOLS:/usr/bin:/bin"
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"beans prime failed (exit 1)"* ]] && [[ "$ERR" == *"no config found"* ]]; then
     pass; else fail "failing CLI: expected a named failure, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 6. CLI prints nothing: warned, no payload.
-  mk_case empty; bin="$(mk_fake "$CASE" empty)"
+  mk_case empty; bin="$(mk_fake "$CASE" empty)" || die "mk_fake empty failed"
   run_hook "$REPO" "$bin:$TOOLS:/usr/bin:/bin"
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"printed nothing"* ]]; then
     pass; else fail "empty CLI: expected a warning, got RC=$RC OUT=$OUT ERR=$ERR"; fi
