@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.1 — 2026-09-23
+
+### Fixed
+
+- **`stop-handoff-hygiene` blocks on shellcheck warnings and errors only.** The Stop gate ran shellcheck at its default severity, which includes `info` and `style` notes, so a lone SC2012 ("use find instead of ls") in an edited dotfiles script blocked a handoff that had nothing wrong with it. The hook now blocks on `--severity=warning` and above; a run that is clean there but not at default severity is surfaced on stderr as a report, the same tier as the dirty-tree notice, so the notes are visible without holding the handoff hostage. The repo's own CI diagnostics gate (`scripts/run-diagnostics.sh`) is unchanged and still gates first-party scripts at zero.
+
 ## 0.7.0 — 2026-09-23
 
 ### Added

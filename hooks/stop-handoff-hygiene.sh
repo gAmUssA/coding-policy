@@ -32,7 +32,8 @@
 #     and never push -- was invisible to it (#433). Detached worktrees are read
 #     the same way, against their HEAD.
 #   - Diagnostics findings in the CHANGED set only (uncommitted .sh/.py):
-#     lint the .sh with shellcheck, the .py with pyright. Skipped when nothing
+#     lint the .sh with shellcheck at warning severity and above (info/style
+#     notes are report-only), the .py with pyright. Skipped when nothing
 #     lintable changed, so a clean handoff costs nothing. An absent engine is
 #     blocking (the gate can't clear findings without it) — install and re-check.
 #     Inlined here rather than delegated to scripts/run-diagnostics.sh, which the
@@ -428,8 +429,14 @@ run_changed_diagnostics() {
 
   if (( ${#sh_files[@]} > 0 )); then
     if command -v shellcheck >/dev/null 2>&1; then
-      if ! out="$(shellcheck "${sh_files[@]}" 2>&1)"; then
-        blocking+=("shellcheck findings in changed shell files — fix before handoff:"$'\n'"${out}")
+      # Block on warning and error only. shellcheck's default run also reports
+      # `info` and `style` notes (SC2012 "use find instead of ls"); a handoff
+      # blocked on one of those in a dotfiles script is the gate crying wolf.
+      # Those notes are still surfaced, report-only, so nothing is hidden.
+      if ! out="$(shellcheck --severity=warning "${sh_files[@]}" 2>&1)"; then
+        blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${out}")
+      elif ! out="$(shellcheck "${sh_files[@]}" 2>&1)"; then
+        reports+=("shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${out}")
       fi
     else
       blocking+=("shellcheck is not installed but changed .sh files need checking — install shellcheck to clear the pre-handoff diagnostics gate (rules/language-diagnostics.md).")

@@ -20,6 +20,8 @@
 #                         and does NOT also list it as a leftover branch.
 #   5. Dirty tree only -> allow (report-only, not a block).
 #   6. Diag finding    -> block; changed uncommitted .sh with a failing engine.
+#   6b. Info-only      -> allow; shellcheck clean at --severity=warning but not at
+#                         default severity is reported on stderr, never blocked.
 #   7. Diag clean      -> changed uncommitted .sh, engines clean -> no diag block.
 #   8. No jq           -> fail-open allow, exit 0.
 #   9. Not a repo      -> allow, exit 0.
@@ -324,6 +326,24 @@ main() {
   if [[ $RC -eq 0 ]] && reason_has "shellcheck findings" \
      && [[ "$(printf '%s' "$OUT" | jq -r '.decision')" == "block" ]]; then
     pass; else fail "diag finding: expected block, got RC=$RC OUT=$OUT"; fi
+
+  # 6b. info/style-only finding -> allow, reported. The stub passes when asked
+  #     for --severity=warning and fails the default (info-inclusive) run, the
+  #     shape of a lone SC2012 in a changed script.
+  mk_origin o6b; clone_from "$BARE" "$TMP/r6b"
+  printf '#!/usr/bin/env bash\necho hi\n' > "$TMP/r6b/new.sh" || die "r6b new.sh failed"
+  mk_stub_bin "$TMP/r6b-bin" 0 0
+  cat > "$TMP/r6b-bin/shellcheck" <<'STUB' || die "r6b severity stub failed"
+#!/usr/bin/env bash
+for a in "$@"; do [[ "$a" == --severity=warning ]] && exit 0; done
+echo "SC2012 (info): Use find instead of ls"
+exit 1
+STUB
+  ERR="$(cd "$TMP/r6b" && printf '%s' '{"stop_hook_active":false}' \
+    | PATH="$TMP/r6b-bin:$PATH" bash "$HOOK" 2>&1 >/dev/null)"
+  run_hook "$TMP/r6b" '{"stop_hook_active":false}' "$TMP/r6b-bin:$PATH"
+  if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
+    pass; else fail "info-only finding: expected allow with a stderr report, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 7. changed-set diagnostics clean -> no diagnostics block (dirty tree is only
   #    report-only, so allow). Proves the changed set was linted and passed.
