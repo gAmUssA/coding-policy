@@ -56,7 +56,8 @@
 #   stdout: on a block, one JSON object {"decision":"block","reason":"<text>"};
 #           otherwise nothing.
 #   exit  : always 0 (block is expressed in stdout JSON, never via exit code).
-#           Best-effort failures warn to stderr and allow the stop.
+#           Best-effort failures warn to stderr and allow the stop; report-only
+#           findings (dirty tree, shellcheck info/style notes) go to stderr too.
 #   state : none — every check reads live git state.
 set -euo pipefail
 
