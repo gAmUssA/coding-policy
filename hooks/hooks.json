@@ -35,6 +35,12 @@
             "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" herdr-team-status.sh",
             "timeout": 50,
             "statusMessage": "herdr-team-status"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/hooks/codex-session-start.py\" beans-prime.sh",
+            "timeout": 50,
+            "statusMessage": "beans-prime"
           }
         ]
       }

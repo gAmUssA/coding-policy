@@ -1,6 +1,6 @@
 {
   "name": "gamussa/coding-policy",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
   "private": false,
   "repository": "https://github.com/gAmUssA/coding-policy",
@@ -39,6 +39,7 @@
     "rules/demo-readiness.md",
     "rules/cross-boundary-changes.md",
     "rules/architecture-decisions.md",
+    "rules/work-tracking.md",
     "rules/script-delegation.md",
     "rules/skill-authoring.md",
     "rules/context-artifacts.md",
@@ -75,6 +76,13 @@
             "command": "bash",
             "args": [
               "${TESSL_PLUGIN_DIR}/hooks/herdr-team-status.sh"
+            ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${TESSL_PLUGIN_DIR}/hooks/beans-prime.sh"
             ]
           }
         ]

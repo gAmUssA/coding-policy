@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.0 — 2026-09-23
+
+### Added
+
+- **`rules/work-tracking.md` and the `beans-prime` hook.** Viktor tracks work with [beans](https://github.com/hmans/beans), an agentic-first issue tracker that stores issues as Markdown under `.beans/`, in five repos so far, wired three different ways: a native Claude Code SessionStart hook running `beans prime`, a CLAUDE.md line telling the agent to run it first, or nothing. The plugin now does it once for every agent Tessl configures: `hooks/beans-prime.sh` finds `.beans.yml` upward from the session directory, runs `beans prime`, and injects the CLI's own usage guide as context (no `Session-start status` marker: the payload is instructions, not a status to relay), warning with the install step when the CLI is absent and staying silent outside a beans repo. The rule carries the discipline the guide implies: a bean per task, found or created before the work and kept current during it; beans replace every in-session todo list; completion needs an empty checklist and a `## Summary of Changes`; scrapping needs `## Reasons for Scrapping`; the bean file ships in the same commit as the code and the PR body names it; `beans archive` only on request; etags for concurrent updates. Boy-scout follow-ups become beans in a beans repo; the Herdr task ledger stays the lead's separate round evidence. The hook is registered in both the Tessl manifest and the Codex-native `hooks/hooks.json` through the #8 adapter. The `beans prime` output captured on 2026-09-23 from beans 0.4.2 is the reference this rule was written against.
+
 ## 0.5.0 — 2026-09-17
 
 ### Added
