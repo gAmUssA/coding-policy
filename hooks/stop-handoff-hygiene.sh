@@ -441,13 +441,27 @@ run_changed_diagnostics() {
       if (( sc_rc > 1 )); then
         blocking+=("shellcheck failed (exit ${sc_rc}) on the changed shell files — resolve the tool failure before handoff:"$'\n'"${out}")
       elif (( sc_rc == 1 )); then
-        sc_block="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (error|warning): ' || true)"
-        sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: note: ' || true)"
-        if [[ -n "$sc_block" ]]; then
-          blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${sc_block}")
-        fi
-        if [[ -n "$sc_note" ]]; then
-          reports+=("shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${sc_note}")
+        # grep exits 1 for the expected "no line at this level"; anything else
+        # is the filter failing, and the raw output then blocks unfiltered so
+        # no finding is discarded (rules/error-handling.md).
+        local grc=0
+        sc_block="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (error|warning): ')" || grc=$?
+        if (( grc > 1 )); then
+          warn "could not filter shellcheck output by level (grep exit ${grc}) — blocking on the unfiltered findings"
+          blocking+=("shellcheck findings in changed shell files (unfiltered; level split failed) — fix before handoff:"$'\n'"${out}")
+        else
+          if [[ -n "$sc_block" ]]; then
+            blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${sc_block}")
+          fi
+          grc=0
+          sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: note: ')" || grc=$?
+          if (( grc > 1 )); then
+            warn "could not filter shellcheck notes (grep exit ${grc}) — raw shellcheck output follows:"$'\n'"${out}"
+          elif [[ -n "$sc_note" ]]; then
+            # Straight to stderr, whatever else blocks: the notes are the
+            # author's to clear before the CI gate, never part of the block.
+            warn "shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${sc_note}"
+          fi
         fi
       fi
     else
