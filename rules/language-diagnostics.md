@@ -33,6 +33,9 @@ alwaysApply: true
 - In this repo the gate is `scripts/run-diagnostics.sh`; `hooks/stop-handoff-hygiene.sh` runs the same engines over the changed set before handoff
 - "Don't ignore the warnings" enforced by memory is not a gate — a deterministic check nobody runs does not exist (see `rules/script-delegation.md`)
 - Before handoff, the agent runs the same gate command CI runs and clears every finding, scoped to the changed set only where the gate supports it
+- The Stop hook blocks the handoff on the engine's error and warning tiers only
+- Info and style tiers (shellcheck `info`/`style`) are reported on stderr by the Stop hook, never blocked
+- The author fixes or inline-suppresses reported notes before the CI gate, which stays at zero
 - CI runs the same gate as the backstop, never the first place a finding surfaces
 
 ## Resolve Modules First
