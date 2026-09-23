@@ -20,8 +20,9 @@
 #                         and does NOT also list it as a leftover branch.
 #   5. Dirty tree only -> allow (report-only, not a block).
 #   6. Diag finding    -> block; changed uncommitted .sh with a failing engine.
-#   6b. Info-only      -> allow; shellcheck clean at --severity=warning but not at
-#                         default severity is reported on stderr, never blocked.
+#   6b. Info-only      -> allow; a shellcheck run with only info/style notes is
+#                         reported on stderr, never blocked.
+#   6c. Mixed           -> block on the warning; the note is still reported.
 #   7. Diag clean      -> changed uncommitted .sh, engines clean -> no diag block.
 #   8. No jq           -> fail-open allow, exit 0.
 #   9. Not a repo      -> allow, exit 0.
@@ -62,7 +63,9 @@ make_gone_branch() {
 
 mk_stub_bin() { # <dir> <sc_rc> <py_rc>
   mkdir -p "$1" || die "mk_stub_bin: mkdir $1 failed"
-  printf '#!/usr/bin/env bash\nexit %s\n' "$2" > "$1/shellcheck" || die "stub shellcheck failed"
+  # The shellcheck stub speaks gcc format: a warning line when it is told to
+  # fail, since the hook splits findings by level and a bare exit 1 reports nothing.
+  printf '#!/usr/bin/env bash\n[[ %s -eq 0 ]] || echo "stub.sh:1:1: warning: stub finding [SC0000]"\nexit %s\n' "$2" "$2" > "$1/shellcheck" || die "stub shellcheck failed"
   printf '#!/usr/bin/env bash\nexit %s\n' "$3" > "$1/pyright"    || die "stub pyright failed"
   chmod +x "$1/shellcheck" "$1/pyright" || die "chmod stubs failed"
 }
@@ -296,9 +299,9 @@ main() {
 
   # 4b-ii. A worker's OWN changed files still gate: only branch/worktree
   # cleanup is suppressed, never the diagnostics its handoff depends on.
-  # shellcheck disable=SC2016  # The literal `$x` IS the fixture: the hook's
-  # own shellcheck run has to find something to report.
-  printf 'if [ $x = 1 ]; then :; fi\n' > "$TMP/r4-wt/bad.sh" || die "r4-wt bad.sh failed"
+  # An unused variable is a warning-tier finding (SC2034), so the real engine
+  # blocks on it; an unquoted `$x` would be info-tier only.
+  printf '#!/usr/bin/env bash\nfoo=1\n' > "$TMP/r4-wt/bad.sh" || die "r4-wt bad.sh failed"
   OUT="$(cd "$TMP/r4-wt" && printf '%s' '{"stop_hook_active":false}' \
     | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?
   if [[ $RC -eq 0 ]] && reason_has "shellcheck findings" && ! reason_has "Orphaned worktrees"; then
@@ -327,16 +330,14 @@ main() {
      && [[ "$(printf '%s' "$OUT" | jq -r '.decision')" == "block" ]]; then
     pass; else fail "diag finding: expected block, got RC=$RC OUT=$OUT"; fi
 
-  # 6b. info/style-only finding -> allow, reported. The stub passes when asked
-  #     for --severity=warning and fails the default (info-inclusive) run, the
-  #     shape of a lone SC2012 in a changed script.
+  # 6b. info/style-only finding -> allow, reported. The stub emits one gcc-format
+  #     `note` line and exits 1, the shape of a lone SC2012 in a changed script.
   mk_origin o6b; clone_from "$BARE" "$TMP/r6b"
   printf '#!/usr/bin/env bash\necho hi\n' > "$TMP/r6b/new.sh" || die "r6b new.sh failed"
   mk_stub_bin "$TMP/r6b-bin" 0 0
   cat > "$TMP/r6b-bin/shellcheck" <<'STUB' || die "r6b severity stub failed"
 #!/usr/bin/env bash
-for a in "$@"; do [[ "$a" == --severity=warning ]] && exit 0; done
-echo "SC2012 (info): Use find instead of ls"
+echo "new.sh:2:1: note: Use find instead of ls to better handle non-alphanumeric filenames. [SC2012]"
 exit 1
 STUB
   ERR="$(cd "$TMP/r6b" && printf '%s' '{"stop_hook_active":false}' \
@@ -344,6 +345,22 @@ STUB
   run_hook "$TMP/r6b" '{"stop_hook_active":false}' "$TMP/r6b-bin:$PATH"
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
     pass; else fail "info-only finding: expected allow with a stderr report, got RC=$RC OUT=$OUT ERR=$ERR"; fi
+
+  # 6c. mixed severities -> block on the warning AND carry the note in the same
+  #     reason (a block folds the report-only sections into its text).
+  mk_origin o6c; clone_from "$BARE" "$TMP/r6c"
+  printf '#!/usr/bin/env bash\necho hi\n' > "$TMP/r6c/new.sh" || die "r6c new.sh failed"
+  mk_stub_bin "$TMP/r6c-bin" 0 0
+  cat > "$TMP/r6c-bin/shellcheck" <<'STUB' || die "r6c mixed stub failed"
+#!/usr/bin/env bash
+echo "new.sh:2:1: note: Use find instead of ls to better handle non-alphanumeric filenames. [SC2012]"
+echo "new.sh:3:1: warning: foo appears unused. Verify use (or export if used externally). [SC2034]"
+exit 1
+STUB
+  run_hook "$TMP/r6c" '{"stop_hook_active":false}' "$TMP/r6c-bin:$PATH"
+  if [[ $RC -eq 0 ]] && reason_has "warning or error" && reason_has "SC2034" \
+     && reason_has "info/style notes" && reason_has "SC2012"; then
+    pass; else fail "mixed severities: expected a warning block that also carries the note, got RC=$RC OUT=$OUT"; fi
 
   # 7. changed-set diagnostics clean -> no diagnostics block (dirty tree is only
   #    report-only, so allow). Proves the changed set was linted and passed.

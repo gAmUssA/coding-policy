@@ -431,14 +431,24 @@ run_changed_diagnostics() {
 
   if (( ${#sh_files[@]} > 0 )); then
     if command -v shellcheck >/dev/null 2>&1; then
-      # Block on warning and error only. shellcheck's default run also reports
-      # `info` and `style` notes (SC2012 "use find instead of ls"); a handoff
-      # blocked on one of those in a dotfiles script is the gate crying wolf.
-      # Those notes are still surfaced, report-only, so nothing is hidden.
-      if ! out="$(shellcheck --severity=warning "${sh_files[@]}" 2>&1)"; then
-        blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${out}")
-      elif ! out="$(shellcheck "${sh_files[@]}" 2>&1)"; then
-        reports+=("shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${out}")
+      # gcc format is one finding per line, `path:line:col: level: text`, with
+      # info and style both rendered as `note`. One run, split by level, so a
+      # warning in the set never hides the notes beside it. Blocking on notes
+      # alone (SC2012 "use find instead of ls" in a dotfiles script) was the
+      # gate crying wolf; they are surfaced report-only instead.
+      local sc_rc=0 sc_block sc_note
+      out="$(shellcheck -f gcc "${sh_files[@]}" 2>&1)" || sc_rc=$?
+      if (( sc_rc > 1 )); then
+        blocking+=("shellcheck failed (exit ${sc_rc}) on the changed shell files — resolve the tool failure before handoff:"$'\n'"${out}")
+      elif (( sc_rc == 1 )); then
+        sc_block="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (error|warning): ' || true)"
+        sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: note: ' || true)"
+        if [[ -n "$sc_block" ]]; then
+          blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${sc_block}")
+        fi
+        if [[ -n "$sc_note" ]]; then
+          reports+=("shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${sc_note}")
+        fi
       fi
     else
       blocking+=("shellcheck is not installed but changed .sh files need checking — install shellcheck to clear the pre-handoff diagnostics gate (rules/language-diagnostics.md).")
