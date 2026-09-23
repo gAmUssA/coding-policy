@@ -432,7 +432,9 @@ run_changed_diagnostics() {
   if (( ${#sh_files[@]} > 0 )); then
     if command -v shellcheck >/dev/null 2>&1; then
       # gcc format is one finding per line, `path:line:col: level: text`, with
-      # info and style both rendered as `note`. One run, split by level, so a
+      # info and style both rendered as `note` (shellcheck 0.11 verified; the
+      # filter also accepts a literal `info`/`style` token in case a release
+      # ever prints them). One run, split by level, so a
       # warning in the set never hides the notes beside it. Blocking on notes
       # alone (SC2012 "use find instead of ls" in a dotfiles script) was the
       # gate crying wolf; they are surfaced report-only instead.
@@ -454,7 +456,7 @@ run_changed_diagnostics() {
             blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${sc_block}")
           fi
           grc=0
-          sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: note: ')" || grc=$?
+          sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (note|info|style): ')" || grc=$?
           if (( grc > 1 )); then
             warn "could not filter shellcheck notes (grep exit ${grc}) — raw shellcheck output follows:"$'\n'"${out}"
           elif [[ -n "$sc_note" ]]; then

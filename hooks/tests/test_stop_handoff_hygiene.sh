@@ -23,6 +23,7 @@
 #   6b. Info-only      -> allow; a shellcheck run with only info/style notes is
 #                         reported on stderr, never blocked.
 #   6c. Mixed           -> block on the warning; the note is still reported.
+#   6d. Real SC2012     -> the real engine's info finding is allowed and reported.
 #   7. Diag clean      -> changed uncommitted .sh, engines clean -> no diag block.
 #   8. No jq           -> fail-open allow, exit 0.
 #   9. Not a repo      -> allow, exit 0.
@@ -363,6 +364,16 @@ STUB
   if [[ $RC -eq 0 ]] && reason_has "warning or error" && reason_has "SC2034" && ! reason_has "SC2012" \
      && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
     pass; else fail "mixed severities: expected a warning block plus a stderr note, got RC=$RC OUT=$OUT ERR=$ERR"; fi
+
+  # 6d. The REAL engine on a real SC2012 (`ls | tr`): shellcheck 0.11 prints
+  #     info-tier findings as `note` in gcc format, so this must be allowed and
+  #     reported. Proves the level split against the engine, not a stub.
+  mk_origin o6d; clone_from "$BARE" "$TMP/r6d"
+  printf '#!/usr/bin/env bash\nls | tr a b\n' > "$TMP/r6d/new.sh" || die "r6d new.sh failed"
+  ERR="$(cd "$TMP/r6d" && printf '%s' '{"stop_hook_active":false}' | bash "$HOOK" 2>&1 >/dev/null)"
+  run_hook "$TMP/r6d" '{"stop_hook_active":false}'
+  if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
+    pass; else fail "real SC2012: expected allow with a stderr note, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 7. changed-set diagnostics clean -> no diagnostics block (dirty tree is only
   #    report-only, so allow). Proves the changed set was linted and passed.
