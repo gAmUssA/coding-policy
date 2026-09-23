@@ -1,0 +1,43 @@
+---
+alwaysApply: true
+description: A change that alters the architecture records the decision as an ADR in the same PR — context, decision, consequences — and supersedes rather than edits an earlier one
+---
+
+# Architecture Decisions
+
+## What Gets a Record
+
+- A change that alters the architecture writes an Architecture Decision Record (ADR) in the same PR
+- Architecture means a choice later work must honor: a dependency or framework adopted or dropped, a contract or schema shape, a storage or messaging choice, a boundary drawn between modules or services, a build or deployment topology, a security model
+- A bug fix, a refactor that preserves every contract, and a feature inside an existing design get no ADR
+- Unsure whether a change qualifies: it does if reverting it a year from now would need an explanation
+
+## Where and How
+
+- ADRs live in `docs/adr/`, one file per decision, named `NNNN-<kebab-title>.md` with a zero-padded sequence
+- Each record carries, in order: Title, Status, Date, Context, Decision, Consequences
+- Status is one of `proposed`, `accepted`, `deprecated`, `superseded by NNNN`
+- Context states the forces and the options considered
+- Decision states what was chosen
+- Consequences state what becomes easier, what becomes harder, and what later work must honor
+- A record is short — a screen, not a design document; a longer analysis is linked, never inlined
+- Narrow exception for a repo with an existing ADR convention.
+- Preconditions (all required):
+  1. The repo already holds ADRs under its own directory, template, or tool (`adr-tools`, MADR)
+  2. The new record follows that convention in full
+  3. The convention still carries Context, Decision, and Consequences
+- Every other repo uses `docs/adr/` and the fields above
+
+## Records Are Immutable
+
+- An accepted ADR is never edited into a different decision
+- A reversed or changed decision gets a new ADR that names the one it supersedes
+- The superseded ADR's Status becomes `superseded by NNNN`
+- Fixing a typo or a broken link in an ADR is editing, changing its Decision is not
+
+## Relationship to Other Rules
+
+- The CHANGELOG entry (`rules/context-artifacts.md` Versioning and CHANGELOG) names the ADR
+- The ADR carries the reasoning
+- A `cross-boundary-changes` map whose compatibility choice constrains future consumers is an ADR trigger
+- `rules/boy-scout.md` applies to ADRs the way it applies to docs: a decision you observe undocumented gets filed, not ignored

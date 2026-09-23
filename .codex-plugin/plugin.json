@@ -1,6 +1,6 @@
 {
   "name": "gamussa-coding-policy",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Coding policy for Viktor Gamov's AI agents: language-agnostic quality rules, autonomous shipping discipline, and stack defaults for JVM, Swift, TypeScript, and Python",
   "author": {
     "name": "Viktor Gamov",
@@ -11,8 +11,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Gamussa Coding Policy",
-    "shortDescription": "Viktor Gamov’s coding rules, release workflow, and Herdr skills.",
-    "longDescription": "Viktor Gamov’s coding policy: shared rules, release and onboarding workflows, Herdr skills, and lifecycle hooks for Codex and Tessl.",
+    "shortDescription": "Viktor Gamov\u2019s coding rules, release workflow, and Herdr skills.",
+    "longDescription": "Viktor Gamov\u2019s coding policy: shared rules, release and onboarding workflows, Herdr skills, and lifecycle hooks for Codex and Tessl.",
     "developerName": "Viktor Gamov",
     "category": "Productivity",
     "capabilities": [
