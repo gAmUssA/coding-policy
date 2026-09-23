@@ -346,8 +346,8 @@ STUB
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
     pass; else fail "info-only finding: expected allow with a stderr report, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
-  # 6c. mixed severities -> block on the warning AND carry the note in the same
-  #     reason (a block folds the report-only sections into its text).
+  # 6c. mixed severities -> block on the warning; the note still reaches stderr
+  #     and stays out of the block reason.
   mk_origin o6c; clone_from "$BARE" "$TMP/r6c"
   printf '#!/usr/bin/env bash\necho hi\n' > "$TMP/r6c/new.sh" || die "r6c new.sh failed"
   mk_stub_bin "$TMP/r6c-bin" 0 0
@@ -357,10 +357,12 @@ echo "new.sh:2:1: note: Use find instead of ls to better handle non-alphanumeric
 echo "new.sh:3:1: warning: foo appears unused. Verify use (or export if used externally). [SC2034]"
 exit 1
 STUB
+  ERR="$(cd "$TMP/r6c" && printf '%s' '{"stop_hook_active":false}' \
+    | PATH="$TMP/r6c-bin:$PATH" bash "$HOOK" 2>&1 >/dev/null)"
   run_hook "$TMP/r6c" '{"stop_hook_active":false}' "$TMP/r6c-bin:$PATH"
-  if [[ $RC -eq 0 ]] && reason_has "warning or error" && reason_has "SC2034" \
-     && reason_has "info/style notes" && reason_has "SC2012"; then
-    pass; else fail "mixed severities: expected a warning block that also carries the note, got RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 0 ]] && reason_has "warning or error" && reason_has "SC2034" && ! reason_has "SC2012" \
+     && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
+    pass; else fail "mixed severities: expected a warning block plus a stderr note, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 7. changed-set diagnostics clean -> no diagnostics block (dirty tree is only
   #    report-only, so allow). Proves the changed set was linted and passed.
