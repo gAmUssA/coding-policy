@@ -32,7 +32,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | Git | [sync-before-work](rules/sync-before-work.md) | Fetch and sync the local checkout to the remote default before reading, planning, or editing |
 | Testing | [testing-standards](rules/testing-standards.md) | Outcome-based, deterministic, no binary fixtures; per-stack test conventions |
 | Errors | [error-handling](rules/error-handling.md) | Specific exceptions, shell `set -euo pipefail`, actionable messages, structured logging |
-| Deps | [dependency-management](rules/dependency-management.md) | Stdlib first, pinned versions with a renewal mechanism, lock files, no vendoring |
+| Deps | [dependency-management](rules/dependency-management.md) | Stdlib first, uv for Python execution, documented bootstrap/hook exceptions, pinned versions, lock files, no vendoring |
 | Files | [file-hygiene](rules/file-hygiene.md) | Proper `.gitignore`, no generated files, entry-point guards, idempotent scripts |
 | CI | [ci-safety](rules/ci-safety.md) | Never skip tests, never smuggle CI edits, always watch CI to a terminal state |
 | Secrets | [no-secrets](rules/no-secrets.md) | No credentials in code; env vars or a secrets manager; `.env.example` |
@@ -91,10 +91,16 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 
 ## Development
 
+Python tooling requires Python 3.11+ and `uv`. The Python suites use the standard library; no dependency lock file is needed for these commands.
+
 ```
 bash scripts/run-diagnostics.sh   # shellcheck + pyright at zero findings
-bash scripts/run-tests.sh         # every **/tests/test_*.sh and test_*.py suite
+uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 tessl plugin lint                 # manifest and structure
 ```
+
+The direct-Python exception covers `hooks/hooks.json` invoking `hooks/codex-session-start.py` and `hooks/herdr-supervision-stop.sh` invoking `teamlead.supervision_hook`. These standard-library-only runtime hooks run in consumer sessions before developer tooling is available. They use an existing Python 3.11+ interpreter; hook execution must not install tools or download Python.
+
+Remaining entry-point migration: `.github/workflows/tests.yml`, `.github/workflows/publish.yml`, `skills/herdr-teamlead/teamlead.sh`, and `skills/herdr-teamlead/prune-worktrees.sh`. Migrate each when its execution path is next changed, under `rules/dependency-management.md` Python Execution.
 
 Every PR that changes shipped content bumps `version` in `.tessl-plugin/plugin.json` and adds a `## <version> — <date>` heading to `CHANGELOG.md`; `scripts/check-version-bump.sh` enforces it in CI. Merging to `main` publishes that version.

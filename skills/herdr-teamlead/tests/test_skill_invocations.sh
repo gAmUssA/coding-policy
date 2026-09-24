@@ -2,7 +2,8 @@
 # Guard the SKILL.md conventions a consumer agent depends on.
 #
 # Invocation conventions, checked against EVERY skill in SKILLS below:
-# 1. Every script invocation carries an explicit `bash` or `python3` interpreter. tessl packaging
+# 1. Every script invocation carries `bash` or an explicit Python interpreter
+#    selected by `uv run`. tessl packaging
 #    normalizes plugin files to 0644, so a bare path is a permission-denied on
 #    every consumer, and `chmod +x` in this repo does not survive publish.
 #    Deterministic because the failure is invisible here: the scripts run fine
@@ -101,15 +102,24 @@ check_invocations() { # <skill-name> <skill-file>
   # every shell block, including its interpreter and continuation shape.
   # shellcheck disable=SC2016 # Match the documented shell source literally.
   local bootstrap='CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"'
-  unresolved="$(awk -v bootstrap="$bootstrap" '
+  local uv_python='uv run --no-project --no-python-downloads --python ">=3.11" python'
+  unresolved="$(awk -v bootstrap="$bootstrap" -v uv_python="$uv_python" '
     /^```bash/ { inblock = 1; row = 0; next }
     /^```/ { if (inblock && row < 2) print FNR ": incomplete bootstrap block"; inblock = 0; next }
     !inblock || /^[[:space:]]*$/ { next }
     {
       row++
       if (row == 1 && $0 != bootstrap) print FNR ": unsupported bootstrap: " $0
-      if (row == 2 && $0 !~ /^(bash|python3) "\$CP\/skills\/[^[:space:]]+\.(sh|py)"([[:space:]]|$)/)
-        print FNR ": expected quoted co-shipped script invocation: " $0
+      if (row == 2) {
+        invocation = $0
+        if (index(invocation, uv_python " ") == 1) {
+          script = substr(invocation, length(uv_python) + 2)
+          if (script !~ /^"\$CP\/skills\/[^[:space:]]+\.py"([[:space:]]|$)/)
+            print FNR ": expected quoted co-shipped Python script: " $0
+        } else if (invocation !~ /^bash "\$CP\/skills\/[^[:space:]]+\.sh"([[:space:]]|$)/) {
+          print FNR ": expected bash or uv-managed Python invocation: " $0
+        }
+      }
       if (row > 2 && $0 !~ /^[[:space:]]+(-|<|\[|"\$CP\/)/)
         print FNR ": expected script arguments only: " $0
       if (row > 1 && (index($0, "$(") || index($0, "`") || index($0, ";") || index($0, "&&") || index($0, "||")))
@@ -211,9 +221,12 @@ check_install_shapes() { # <skill-file>
     $'CP=.tessl/plugins/gamussa/coding-policy\nbash "$CP/skills/herdr-teamlead/roster.sh"' \
     $'bash .tessl/plugins/gamussa/coding-policy/skills/herdr-teamlead/roster.sh' \
     $'"$HOME/.tessl/plugins/gamussa/coding-policy/skills/herdr-teamlead/roster.sh"' \
+    "$original_resolver"$'\npython3 "$CP/skills/herdr-standup/standup-render.py"' \
+    "$original_resolver"$'\nuv run --no-project --python ">=3.11" python "$CP/skills/herdr-standup/standup-render.py"' \
+    "$original_resolver"$'\nuv run --no-project --no-python-downloads --python ">=3.11" python $CP/skills/herdr-standup/standup-render.py' \
     "$original_resolver"$'\n'"$invocation"$'\n  eval unsafe'; do
     # shellcheck disable=SC2016 # Backticks delimit Markdown, not shell commands.
-    printf '```bash\n%s\n```\n' "$bad_block" > "$fixture/invalid.md" || die "cannot write invalid bootstrap fixture"
+    printf '```bash\n%s\n%s\n```\n```bash\n%s\n```\n' "$original_resolver" "$invocation" "$bad_block" > "$fixture/invalid.md" || die "cannot write invalid bootstrap fixture"
     if bash -c 'source "$1"; check_invocations invalid "$2"; (( FAIL > 0 ))' \
       bash "${BASH_SOURCE[0]}" "$fixture/invalid.md" > "$fixture/guard.log" 2>&1; then
       pass
