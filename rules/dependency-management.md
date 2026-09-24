@@ -12,12 +12,37 @@ alwaysApply: true
 
 ## Declaration and Pinning
 
-- All dependencies declared in the project's manifest file (`build.gradle.kts`, `pom.xml`, `Package.swift`, `package.json`, `pyproject.toml`)
-- No undeclared dependencies — if your code imports it, the manifest lists it
+- All dependencies declared in the project's manifest file (`build.gradle.kts`, `pom.xml`, `Package.swift`, `package.json`, `pyproject.toml`) or a standalone Python script's PEP 723 metadata
+- No undeclared dependencies — if your code imports it, the manifest or script metadata lists it
 - Pin versions or use a lock file to ensure reproducible builds
 - Lock files are committed to the repo
 - Separate test/dev dependencies from production dependencies using the project's convention (`testImplementation`, `devDependencies`, `[dependency-groups]`)
 - Every dependency must be installable in CI — if something exists as a package, install it properly
+
+## Python Execution
+
+- Agents invoke repository Python scripts and tests through `uv run`
+- Use the project's environment for commands that depend on that project
+- Use `--no-project` for standalone scripts without inline metadata that must not inherit the caller's project
+- Declare the supported Python version in `pyproject.toml`, inline script metadata, or the owning README for standard-library-only tooling
+- Commit `uv.lock` for projects with dependencies, or the adjacent script lock file for standalone scripts with dependencies
+- Use `uv run --locked` for automated runs that consume a committed lock file
+- Route new or modified developer and CI Python entry points through the same documented `uv` command
+- Migrate existing entry points when touching their execution path
+- Record remaining entry-point migration work in the repository
+- Child processes may reuse the interpreter selected by `uv`; they need not launch another `uv` process
+- A missing `uv` is a setup error, never a silent fallback to ambient Python
+- Installing `uv` or downloading Python follows `rules/environment-changes.md`
+- Use `--no-python-downloads` when a machine-level download is not authorized
+
+### Direct Python Carve-Out
+
+- Narrow exception for bootstrap scripts and runtime hooks that cannot assume `uv` is installed.
+- Preconditions (all required):
+  1. The script uses only the standard library and first-party code with no third-party dependencies
+  2. The owning README names the exempt entry point and why it must run before or without `uv`
+  3. The documented command uses an existing interpreter that meets its stated Python requirement
+- Every other agent-invoked Python script or test uses `uv run`
 
 ## Freshness
 

@@ -128,7 +128,7 @@ If every worker answered, skip the file. Proceed immediately to Step 5.
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-python3 "$CP/skills/herdr-standup/standup-render.py" \
+uv run --no-project --no-python-downloads --python '>=3.11' "$CP/skills/herdr-standup/standup-render.py" \
   --reports <round-reports-dir> \
   --now <ISO-8601> \
   --team "<label>" \

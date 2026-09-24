@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.2 — 2026-09-23
+
+### Changed
+
+- **Python execution through `uv`.** `rules/dependency-management.md` now requires agents to use `uv run` for repository scripts and tests, with declared Python requirements and locked third-party dependencies. Project commands keep their project environment; standalone scripts avoid inheriting unrelated projects. Missing `uv` is a visible setup error, and the existing installation-consent rule also covers implicit Python downloads. Standard-library-only bootstrap scripts and runtime hooks may use an existing interpreter only when their owning README documents the entry point and reason. The policy applies immediately to agent invocations; existing developer and CI entry points migrate when their execution path changes. The development test command and standup renderer invocation use uv. The README documents the two hook exceptions and records the remaining entry-point migration, keeping installed runtime behavior and CI workflow changes in their own follow-up. Command semantics were checked against [uv's script guide](https://docs.astral.sh/uv/guides/scripts/) and [project command guide](https://docs.astral.sh/uv/concepts/projects/run/).
+
 ## 0.7.0 — 2026-09-23
 
 ### Added
