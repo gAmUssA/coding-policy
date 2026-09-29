@@ -92,8 +92,7 @@ first continuation that applies:
   Other exits take their documented branches. A second exit 4 is
   terminal: move the worker to Step 4's list with what you know.
 - The state is `idle` or `done` — move the worker to Step 4's list with what
-  you know. `standup-ask.sh` refuses a report path too long for one pane row,
-  so this outcome means the path bypassed it.
+  you know.
 
 Proceed immediately to Step 4.
 

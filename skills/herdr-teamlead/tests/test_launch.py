@@ -193,6 +193,46 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(proof["pid"], 200)
         self.assertEqual(client.calls, [("ps", 200)])
 
+    def test_invalid_pids_refuse_verification_before_process_argument_lookup(self):
+        invalid = ({}, {"pid": None}, {"pid": True}, {"pid": False}, {"pid": 0},
+                   {"pid": -1}, {"pid": "200"}, {"pid": 200.0})
+        valid_argv = ["claude", "--dangerously-skip-permissions", "--model", "opus-5", "--effort", "high"]
+        for fields in invalid:
+            for argv in (valid_argv, None):
+                with self.subTest(fields=fields, argv=argv):
+                    client = Client()
+                    client.process = {"name": "claude", "argv": argv, **fields}
+                    with self.assertRaisesRegex(HerdrError, "positive integer PID") as raised:
+                        verify_running(client, worker(), "w1:p2", TIER)
+                    self.assertEqual(raised.exception.to_dict()["error"], "herdr_error")
+                    self.assertEqual(raised.exception.details, {"pane_id": "w1:p2", "kind": "claude"})
+                    self.assertEqual(client.calls, [])
+
+    def test_invalid_pids_never_reach_process_termination_or_worker_start(self):
+        invalid = ({}, {"pid": None}, {"pid": True}, {"pid": False}, {"pid": 0},
+                   {"pid": -1}, {"pid": "200"}, {"pid": 200.0})
+        for fields in invalid:
+            for argv in (["claude"], None):
+                with self.subTest(fields=fields, argv=argv):
+                    client = Client()
+                    client.process = {"name": "claude", "argv": argv, **fields}
+                    with self.assertRaisesRegex(HerdrError, "positive integer PID"):
+                        restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+                    self.assertFalse(client.terminated)
+                    self.assertFalse(any(call[0] in {"ps", "terminate", "start"} for call in client.calls))
+
+    def test_executable_path_matches_require_a_valid_pid(self):
+        client = Client()
+        client.process = {"name": "launcher", "pid": None,
+                          "argv": ["/usr/local/bin/claude", "--dangerously-skip-permissions",
+                                   "--model", "opus-5", "--effort", "high"]}
+        with self.assertRaisesRegex(HerdrError, "positive integer PID"):
+            verify_running(client, worker(), "w1:p2", TIER)
+        client.process["pid"] = 200
+        proof = verify_running(client, worker(), "w1:p2", TIER)
+        self.assertEqual(proof["pid"], 200)
+        self.assertEqual(client.calls, [])
+
     def test_permission_alias_normalizes_to_one_yolo_flag(self):
         client = Client()
         agent = worker()
