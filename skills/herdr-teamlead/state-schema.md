@@ -423,7 +423,9 @@ refused row itself is never rewritten or removed; every count reader filters it
 out by the `assignment_index` its dispatch records. A `refusal` says no report
 arrived and a review `report` reviews one that did, so recording either against
 a dispatch already carrying the other is refused. A ledger an earlier release
-wrote with both still reads, and its review keeps that number spent. `applied`
+wrote with both still reads: its review keeps that number spent, still owes its
+blocking verdict before the next attempt, and holds its slot against a move.
+`applied`
 results must match their referenced assignment. Extra fixes require a matching
 plan and work bounds, including when a reader validates historical state.
 A completed legacy manual correction instead requires its linked historical

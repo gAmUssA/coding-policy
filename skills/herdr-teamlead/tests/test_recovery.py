@@ -950,6 +950,17 @@ class RecoveryTests(unittest.TestCase):
         del invalid["dispatches"][-1]["refusal_move"]
         with self.assertRaisesRegex(UsageError, "consumed twice"):
             validate_store(invalid, self.history)
+        # A slot is shared only when the row it moved from bore no work. A
+        # legacy row carrying a delivered review keeps its number, so the move
+        # beside it is the duplicate the ledger has always refused.
+        worked = copy.deepcopy(self.store)
+        record_report(worked, {"dispatch": "fix-6-moved", "head_revision": HEAD, "verdict": "blocking",
+            "review_mode": "full", "reviewer": "independent-reviewer", "report": str(self.review),
+            "changed_paths": ["src/parser.py"]}, AT)
+        _dispatch(worked, first["id"])["report"] = {**_dispatch(worked, "fix-6-moved").pop("report"),
+                                                    "dispatch": first["id"]}
+        with self.assertRaisesRegex(UsageError, "consumed twice"):
+            validate_store(worked, self.history)
 
     def test_a_reviewed_attempt_and_a_refusal_never_share_one_dispatch(self):
         # A refused dispatch frees its correction number (#5). A recorded
@@ -984,6 +995,19 @@ class RecoveryTests(unittest.TestCase):
         restored, usable = load_state_checked(path)
         self.assertTrue(usable)
         self.assertEqual(confirmed_fix(restored["assignments"], TASK, restored["recovery"]), 7)
+        # Replaying the refusal already recorded on that row still replays;
+        # only a new refusal against a reviewed dispatch is refused.
+        self.assertEqual(record_refusal(legacy, {"dispatch": "fix-7", "receipt": self.refusal_receipt(
+            "worker", "refusal-7.json")}, AT, "codex", self.REPORT), _dispatch(legacy, "fix-7")["refusal"])
+        # A row counted as spent still owes its blocking review: the
+        # compatibility reading must not skip the gate it satisfies.
+        gated = copy.deepcopy(self.store)
+        _dispatch(gated, "fix-6")["refusal"] = copy.deepcopy(_dispatch(gated, "fix-7")["refusal"])
+        _dispatch(gated, "fix-6")["report"]["verdict"] = "approved"
+        validate_store(gated, self.history)
+        self.assertEqual(confirmed_fix(self.history, TASK, gated), 6)
+        with self.assertRaisesRegex(UsageError, "actual blocking review"):
+            validate_work(gated, self.history, TASK, 7, "plan-1", WORK)
 
     REPORT = "/reports/tester.md"
     BRIEF = "brief-identity-tester"

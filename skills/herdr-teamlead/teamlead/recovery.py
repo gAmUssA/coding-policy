@@ -314,6 +314,18 @@ def _item(items, identifier, label):
     return value
 
 
+def bore_work(row):
+    """True when a dispatch's attempt produced work.
+
+    A recorded `refusal` binds wait-report's `found: false` receipt, so the
+    attempt delivered nothing; a recorded review `report` reviews a report
+    that did arrive. Writes have barred that pair since 0.7.6, and a ledger an
+    earlier release wrote with both reads as work-bearing -- the only
+    direction that cannot free a correction number the work already spent.
+    """
+    return row.get("refusal") is None or row.get("report") is not None
+
+
 def developer_attempts(assignments, task, store):
     """The task's work-bearing developer assignments, newest last.
 
@@ -326,15 +338,11 @@ def developer_attempts(assignments, task, store):
     (#5). `store` is required, and `None` states that no recovery ledger is
     available: without it a refused attempt reads as a spent one.
 
-    A row carrying a review `report` delivered one, so it stays counted beside
-    a refusal: writes have barred that pair since 0.7.6, and a ledger an
-    earlier release wrote with both keeps its number spent rather than reading
-    as free.
+    A row that bore work stays counted whatever else it carries; see bore_work.
     """
     refused = {row["assignment_index"] for row in (store or {}).get("dispatches", [])
                if row.get("task") == task and row.get("role") == "developer"
-               and row.get("status") == "applied" and row.get("refusal") is not None
-               and row.get("report") is None}
+               and row.get("status") == "applied" and not bore_work(row)}
     return [row for index, row in enumerate(assignments)
             if index not in refused and row.get("task") == task
             and row.get("role") == "developer" and row.get("status") == "applied"]
@@ -842,7 +850,7 @@ def validate_work(store, assignments, task, fix_round, plan_id=None, work=None, 
     # Count identities are unique; receipt append time cannot select an attempt.
     previous = next((row for row in store["dispatches"] if row["task"] == task
                      and row["role"] == "developer" and row["status"] == "applied"
-                     and row.get("refusal") is None and (row.get("fix_round") or 0) == count), None)
+                     and bore_work(row) and (row.get("fix_round") or 0) == count), None)
     historical = next((row for row in store["historical_attempts"] if row["task"] == task
                        and row["fix_round"] == count), None)
     if implementation and historical and historical["fix_round"] >= plan["first_fix"]:
@@ -1060,7 +1068,10 @@ def record_refusal(store, data, at, provider, report, aliases=()):
     (its enrolled pane id), accepted in the receipt's `agent` field.
     The receipt's JSON must be the complete exit-5 object for this agent and
     report. Recording the same receipt twice replays; a different receipt for
-    an already-refused dispatch is refused.
+    an already-refused dispatch is refused. A dispatch whose review is already
+    recorded delivered its report, so a NEW refusal against it is refused --
+    after the replay, so an already-recorded pair an earlier release wrote
+    stays retryable (#5).
     """
     required = {"dispatch", "receipt"}
     if not isinstance(data, dict) or set(data) != required:
@@ -1068,8 +1079,6 @@ def record_refusal(store, data, at, provider, report, aliases=()):
     record = _item(store["dispatches"], data["dispatch"], "dispatch")
     if record["status"] != "applied":
         raise UsageError("Record a provider refusal only against its confirmed applied dispatch; reconcile an uncertain send first.", {})
-    if record.get("report") is not None:
-        raise UsageError("Dispatch {} already carries a recorded review of a delivered report, so it produced work; a refusal cannot free its correction number. Reconcile the contradicting evidence before recording either.".format(record["id"]), {})
     provider = record.get("provider") or provider
     text(provider, "provider")
     if not isinstance(report, str) or not Path(report).is_absolute():
@@ -1098,6 +1107,8 @@ def record_refusal(store, data, at, provider, report, aliases=()):
         if prior["evidence"] != evidence:
             raise UsageError("Dispatch already records a different refusal receipt; preserve it and inspect both before recording again.", {})
         return prior
+    if record.get("report") is not None:
+        raise UsageError("Dispatch {} already carries a recorded review of a delivered report, so it produced work; a refusal cannot free its correction number. Reconcile the contradicting evidence before recording either.".format(record["id"]), {})
     record["refusal"] = result
     _event(store, at, "provider_refusal_recorded", record["task"], {"dispatch": record["id"], "provider": provider, "evidence": evidence})
     return result
@@ -1545,7 +1556,7 @@ def validate_store(store, assignments):
                 if row["role"] == "developer":
                     slot = (row["task"], fix)
                     previous = applied_slots.get(slot)
-                    if previous is not None and (previous.get("refusal") is None
+                    if previous is not None and (bore_work(previous)
                             or (row.get("refusal_move") or {}).get("from") != previous["id"]):
                         raise UsageError("A correction number was consumed twice; preserve the ledger and reconcile the duplicate.", {})
                     applied_slots[slot] = row
