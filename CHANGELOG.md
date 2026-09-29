@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.4 — 2026-09-29
+
+### Fixed
+
+- **`stop-handoff-hygiene` blocks on ShellCheck warnings and errors only.** An info-level SC2012 in an edited script previously blocked handoff. The hook now separates one GCC-format diagnostic run by severity: warnings and errors block, while info/style notes reach stderr even when a warning also blocks. Engine failures still block. Real-engine SC2012 coverage checks ShellCheck's `note` token. The diagnostics rule and README describe the split; authors still fix or inline-suppress notes before the unchanged zero-findings CI gate.
+
 ## 0.7.3 — 2026-09-28
 
 ### Fixed

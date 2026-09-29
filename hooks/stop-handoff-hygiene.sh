@@ -32,7 +32,8 @@
 #     and never push -- was invisible to it (#433). Detached worktrees are read
 #     the same way, against their HEAD.
 #   - Diagnostics findings in the CHANGED set only (uncommitted .sh/.py):
-#     lint the .sh with shellcheck, the .py with pyright. Skipped when nothing
+#     lint the .sh with shellcheck at warning severity and above (info/style
+#     notes are report-only), the .py with pyright. Skipped when nothing
 #     lintable changed, so a clean handoff costs nothing. An absent engine is
 #     blocking (the gate can't clear findings without it) — install and re-check.
 #     Inlined here rather than delegated to scripts/run-diagnostics.sh, which the
@@ -55,7 +56,8 @@
 #   stdout: on a block, one JSON object {"decision":"block","reason":"<text>"};
 #           otherwise nothing.
 #   exit  : always 0 (block is expressed in stdout JSON, never via exit code).
-#           Best-effort failures warn to stderr and allow the stop.
+#           Best-effort failures warn to stderr and allow the stop; report-only
+#           findings (dirty tree, shellcheck info/style notes) go to stderr too.
 #   state : none — every check reads live git state.
 set -euo pipefail
 
@@ -401,8 +403,9 @@ build_branch_findings() {
 }
 
 # Diagnostics on the CHANGED set only: uncommitted .sh/.py files. Skips silently
-# when nothing lintable changed. shellcheck the .sh, pyright the .py; findings
-# block. A required engine being absent is also blocking (rules/language-
+# when nothing lintable changed. shellcheck the .sh at warning severity and
+# above (info/style notes are report-only), pyright the .py; findings block. A
+# required engine being absent is also blocking (rules/language-
 # diagnostics.md Install, Don't Skip — the gate cannot clear findings without it).
 run_changed_diagnostics() {
   local repo_root
@@ -428,8 +431,40 @@ run_changed_diagnostics() {
 
   if (( ${#sh_files[@]} > 0 )); then
     if command -v shellcheck >/dev/null 2>&1; then
-      if ! out="$(shellcheck "${sh_files[@]}" 2>&1)"; then
-        blocking+=("shellcheck findings in changed shell files — fix before handoff:"$'\n'"${out}")
+      # gcc format is one finding per line, `path:line:col: level: text`, with
+      # info and style both rendered as `note` (shellcheck 0.11 verified; the
+      # filter also accepts a literal `info`/`style` token in case a release
+      # ever prints them). One run, split by level, so a
+      # warning in the set never hides the notes beside it. Blocking on notes
+      # alone (SC2012 "use find instead of ls" in a dotfiles script) was the
+      # gate crying wolf; they are surfaced report-only instead.
+      local sc_rc=0 sc_block sc_note
+      out="$(shellcheck -f gcc "${sh_files[@]}" 2>&1)" || sc_rc=$?
+      if (( sc_rc > 1 )); then
+        blocking+=("shellcheck failed (exit ${sc_rc}) on the changed shell files — resolve the tool failure before handoff:"$'\n'"${out}")
+      elif (( sc_rc == 1 )); then
+        # grep exits 1 for the expected "no line at this level"; anything else
+        # is the filter failing, and the raw output then blocks unfiltered so
+        # no finding is discarded (rules/error-handling.md).
+        local grc=0
+        sc_block="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (error|warning): ')" || grc=$?
+        if (( grc > 1 )); then
+          warn "could not filter shellcheck output by level (grep exit ${grc}) — blocking on the unfiltered findings"
+          blocking+=("shellcheck findings in changed shell files (unfiltered; level split failed) — fix before handoff:"$'\n'"${out}")
+        else
+          if [[ -n "$sc_block" ]]; then
+            blocking+=("shellcheck findings (warning or error) in changed shell files — fix before handoff:"$'\n'"${sc_block}")
+          fi
+          grc=0
+          sc_note="$(printf '%s\n' "$out" | grep -E '^.*:[0-9]+:[0-9]+: (note|info|style): ')" || grc=$?
+          if (( grc > 1 )); then
+            warn "could not filter shellcheck notes (grep exit ${grc}) — raw shellcheck output follows:"$'\n'"${out}"
+          elif [[ -n "$sc_note" ]]; then
+            # Straight to stderr, whatever else blocks: the notes are the
+            # author's to clear before the CI gate, never part of the block.
+            warn "shellcheck info/style notes in changed shell files (not blocking):"$'\n'"${sc_note}"
+          fi
+        fi
       fi
     else
       blocking+=("shellcheck is not installed but changed .sh files need checking — install shellcheck to clear the pre-handoff diagnostics gate (rules/language-diagnostics.md).")
