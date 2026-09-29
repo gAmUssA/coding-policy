@@ -1155,6 +1155,20 @@ class ApplyCommandTest(CliCase):
                 self.assertEqual(self.runner.calls, [])
 
     def test_retained_dry_run_has_no_clear_and_no_state_write(self):
+        # coding-policy#5: a dry run rehearses a send and meets the same fix
+        # accounting gate. Without the task's preceding developer assignment
+        # the rehearsal is refused exactly as the send is; with it the run
+        # clears nothing and writes nothing.
+        code, out, err = self.run_cli(
+            self._fix_args(1, "--retain-context", "--dry-run"), client=self._client({})
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("preceding confirmed", err)
+        self.assertFalse(self.state.exists())
+        self._seed_context()
+        before = self.state.read_bytes()
+        self.out, self.err = io.StringIO(), io.StringIO()
         code, out, err = self.run_cli(
             self._fix_args(1, "--retain-context", "--dry-run"), client=self._client({})
         )
@@ -1164,7 +1178,7 @@ class ApplyCommandTest(CliCase):
         commands = [command["argv"] for command in payload["steps"][0]["commands"]]
         self.assertFalse(any("/new" in command for command in commands))
         self.assertEqual(self.runner.calls, [])
-        self.assertFalse(self.state.exists())
+        self.assertEqual(self.state.read_bytes(), before)
 
     def test_context_flags_are_mutually_exclusive(self):
         self._rejects(self._fix_args(1, "--retain-context", "--no-clear"))

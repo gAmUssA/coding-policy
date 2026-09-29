@@ -137,7 +137,7 @@ def import_attempt(store, assignments, data, at):
            and completed_evidence(row["receipts"]) == completed_evidence(receipts) for row in store["historical_attempts"]):
         raise UsageError("That completed report and transport evidence already consumed an attempt; do not relabel it with another fix number.", {})
     previous = prior_developer(assignments, data["task"])
-    if previous is None or data["fix_round"] != ledger.confirmed_fix(assignments, data["task"]) + 1:
+    if previous is None or data["fix_round"] != ledger.confirmed_fix(assignments, data["task"], store) + 1:
         raise UsageError("Import only the actual next missing completed correction after its canonical developer history; do not skip or reuse a count.", {})
     if timestamp(data["occurred_at"], "occurred_at") <= timestamp(assignments[previous]["at"], "preceding developer time"):
         raise UsageError("The imported correction does not provably follow its preceding developer attempt; resolve the chronology.", {})
@@ -268,7 +268,7 @@ def validate_history(store, assignments):
                 or assignment.get("cleared") is not None or assignment.get("clear_reason") != "unknown"
                 or row["native_session_proof"] is not None or row["grants_future_attempts"] is not False
                 or row["previous_developer"] != prior_developer(assignments, row["task"], index)
-                or row["fix_round"] != ledger.confirmed_fix(assignments[:index], row["task"]) + 1):
+                or row["fix_round"] != ledger.confirmed_fix(assignments[:index], row["task"], store) + 1):
             raise UsageError("Historical correction disagrees with its preserved count, identity or unknown native proof.", {})
         slot = (row["task"], row["fix_round"])
         if slot in slots:

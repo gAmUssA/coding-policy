@@ -688,7 +688,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     recovery.validate_work(state["recovery"], state["assignments"], args.task, args.fix_round,
                            args.correction_plan, work, implementation="developer" in roles)
     if args.task:
-        validate_fix_history({role: None for role in roles}, state["assignments"], args.task, args.fix_round)
+        validate_fix_history({role: None for role in roles}, state["assignments"], args.task, args.fix_round, recovery=state["recovery"])
     if args.snapshot:
         snapshot_path = Path(args.snapshot)
         try:
@@ -817,6 +817,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
         raise UsageError("Bound team rounds require --task and one --report ROLE=ABS_PATH for every assigned role before any worker input.", {})
     replayed = []
     dispatches = {}
+    moves = {}
     # Check retry identities before next-attempt validation: a completed retry
     # returns its original outcome and never consumes a second attempt.
     if args.task and not args.dry_run:
@@ -840,7 +841,6 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             prior = recovery.prior_dispatch(store, identifier, fingerprint)
             resolved.append((role, name, identifier, fingerprint, prior))
         fresh = [role for role, _name, _identifier, _fingerprint, prior in resolved if not (prior and prior["status"] == "applied")]
-        moves = {}
         if fresh:
             # The batch holds a new send. An unanswered decision or blocker on
             # the task, a same-provider resend of a refused brief, a reworded
@@ -879,7 +879,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     elif args.task:
         # A dry run rehearses a send and meets the same gates (#399).
         attention.require_dispatch_clear(state_path, args.task, at)
-        _refusal_moves(store, agents_by_name, assignments, list(assignments), args, paths, reports)
+        moves = _refusal_moves(store, agents_by_name, assignments, list(assignments), args, paths, reports)
     # A fresh judge seat at an exhausted allowance waits for the assessment it
     # rules on, dry runs included. A completed replay has left `assignments`
     # already, so it is not re-gated (#408).
@@ -934,7 +934,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
                 settle_timeout_ms=args.settle_timeout,
                 tiers=tiers,
                 recovery=store, history=state["assignments"], plan_id=args.correction_plan, work=work,
-                retain_specialist=args.retain_specialist, requirements=requirements,
+                retain_specialist=args.retain_specialist, requirements=requirements, refusal_moves=moves,
             ),
             None,
         )
@@ -1005,7 +1005,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             recovery=store, plan_id=args.correction_plan, work=work,
             warn=warn,
             task=args.task,
-            retain_specialist=args.retain_specialist, requirements=requirements,
+            retain_specialist=args.retain_specialist, requirements=requirements, refusal_moves=moves,
             settle_sec=args.composer_settle,
             start_timeout_ms=args.start_timeout,
             allow_recovery=args.allow_recovery,

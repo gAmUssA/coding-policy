@@ -314,9 +314,29 @@ def _item(items, identifier, label):
     return value
 
 
-def confirmed_fix(assignments, task):
-    return max((row.get("fix_round") or 0 for row in assignments
-                if row.get("task") == task and row.get("role") == "developer" and row.get("status") == "applied"), default=0)
+def developer_attempts(assignments, task, store):
+    """The task's work-bearing developer assignments, newest last.
+
+    A dispatch a provider refused delivered no report (`record_refusal` binds
+    wait-report's `found: false` receipt), so its assignment row bears no work
+    and does not consume its correction number: the unchanged brief moves to
+    one other provider at that same number. The refused row itself is never
+    rewritten or removed -- it stays in the audit history and is filtered out
+    here, at read time, by the `assignment_index` its refused dispatch names
+    (#5). `store` is required, and `None` states that no recovery ledger is
+    available: without it a refused attempt reads as a spent one.
+    """
+    refused = {row["assignment_index"] for row in (store or {}).get("dispatches", [])
+               if row.get("task") == task and row.get("role") == "developer"
+               and row.get("status") == "applied" and row.get("refusal") is not None}
+    return [row for index, row in enumerate(assignments)
+            if index not in refused and row.get("task") == task
+            and row.get("role") == "developer" and row.get("status") == "applied"]
+
+
+def confirmed_fix(assignments, task, store):
+    """The task's highest consumed correction number; see developer_attempts."""
+    return max((row.get("fix_round") or 0 for row in developer_attempts(assignments, task, store)), default=0)
 
 
 def register_task(store, data, at):
@@ -364,7 +384,7 @@ def checkpoint(store, assignments, data, at, judge_agent):
     if "requested_by" in data and "judge_report" not in data:
         raise UsageError("requested_by records the operator request a cited ruling answers; record the checkpoint without it when no ruling is cited.", {})
     task = task_record(store, data["task"])
-    count = confirmed_fix(assignments, data["task"])
+    count = confirmed_fix(assignments, data["task"], store)
     if count < DEFAULT_FIX_LIMIT:
         raise UsageError("The normal correction budget is not exhausted; continue within it.", {})
     if any(row["task"] == data["task"] and row["status"] in PENDING_STATUSES for row in store["dispatches"]):
@@ -482,7 +502,7 @@ def require_investigation_before_judge(store, assignments, task, investigations,
             raise UsageError("Task {} is diagnosed `stop` with no plan authorized over it: implementation has ended and the ladder is spent, so a diagnosis round records nothing. Ship what is clean and track the remainder, or record the operator's plan over this remedy first.".format(task), {})
     if mode == "adjudication":
         return None
-    count = confirmed_fix(assignments, task)
+    count = confirmed_fix(assignments, task, store)
     if count < DEFAULT_FIX_LIMIT:
         return None
     if any(row["task"] == task and row["last_fix"] > count for row in active_plans(store)):
@@ -601,7 +621,7 @@ def diagnose(store, assignments, data, at, judge_agent, enrolled_report, supervi
     source = _item(store["checkpoints"], data["checkpoint"], "checkpoint")
     if source["task"] != data["task"]:
         raise UsageError("The cited checkpoint belongs to another task; record this task's own exhausted-allowance checkpoint first.", {})
-    count = confirmed_fix(assignments, data["task"])
+    count = confirmed_fix(assignments, data["task"], store)
     if source["fix_round"] != count:
         raise UsageError("Checkpoint {} records fix round {}, and this task stands at {}; record the exhaustion this diagnosis answers.".format(
             data["checkpoint"], source["fix_round"], count), {})
@@ -740,7 +760,7 @@ def authorize_plan(store, assignments, data, at):
             raise UsageError("This approval identity already has different bounds; request a new bounded plan instead of editing it.", {})
         return prior
     source = _item(store["checkpoints"], data["checkpoint"], "checkpoint")
-    count = confirmed_fix(assignments, data["task"])
+    count = confirmed_fix(assignments, data["task"], store)
     if source["task"] != data["task"] or source["fix_round"] != count:
         raise UsageError("Approval must match this task's current exhausted checkpoint; record a fresh operator checkpoint and correction proposal.", {})
     # The operator overrides a remedy; they do not stand in for one. Without a
@@ -810,13 +830,13 @@ def validate_work(store, assignments, task, fix_round, plan_id=None, work=None, 
         raise UsageError("Name the concrete blocking findings this correction addresses.", {})
     if any(not any(fnmatchcase(path, allowed) for allowed in plan["allowed_paths"]) for path in work["paths"]):
         raise UsageError("Correction paths exceed the approved scope; pause implementation for the changed decision.", {})
-    count = confirmed_fix(assignments, task)
+    count = confirmed_fix(assignments, task, store)
     if implementation and fix_round != count + 1:
         raise UsageError("Use this task's actual next fix number; approval never resets, skips, or reuses a completed attempt.", {})
     # Count identities are unique; receipt append time cannot select an attempt.
     previous = next((row for row in store["dispatches"] if row["task"] == task
                      and row["role"] == "developer" and row["status"] == "applied"
-                     and (row.get("fix_round") or 0) == count), None)
+                     and row.get("refusal") is None and (row.get("fix_round") or 0) == count), None)
     historical = next((row for row in store["historical_attempts"] if row["task"] == task
                        and row["fix_round"] == count), None)
     if implementation and historical and historical["fix_round"] >= plan["first_fix"]:
@@ -967,6 +987,8 @@ def record_report(store, data, at):
     record = _item(store["dispatches"], data["dispatch"], "dispatch")
     if record["status"] != "applied" or record["role"] != "developer":
         raise UsageError("Record an implementation review only for its confirmed developer dispatch.", {})
+    if record.get("refusal") is not None:
+        raise UsageError("Dispatch {} is recorded as a terminal provider refusal, which delivered no report to review. Reconcile the contradicting evidence before recording either.".format(record["id"]), {})
     revision(data["head_revision"], "head_revision")
     text(data["reviewer"], "reviewer")
     if data["reviewer"] == record["agent"]:
@@ -1040,6 +1062,8 @@ def record_refusal(store, data, at, provider, report, aliases=()):
     record = _item(store["dispatches"], data["dispatch"], "dispatch")
     if record["status"] != "applied":
         raise UsageError("Record a provider refusal only against its confirmed applied dispatch; reconcile an uncertain send first.", {})
+    if record.get("report") is not None:
+        raise UsageError("Dispatch {} already carries a recorded review of a delivered report, so it produced work; a refusal cannot free its correction number. Reconcile the contradicting evidence before recording either.".format(record["id"]), {})
     provider = record.get("provider") or provider
     text(provider, "provider")
     if not isinstance(report, str) or not Path(report).is_absolute():
@@ -1207,6 +1231,8 @@ def _validate_refusals(store):
             validate_receipt(refusal["evidence"])
             if text(refusal["receipt"], "refusal receipt") != refusal["evidence"]["path"] or not Path(text(refusal["report_path"], "refusal report")).is_absolute():
                 raise UsageError("Refusal record's receipt path disagrees with its bound evidence; preserve it for owner recovery.", {})
+            if row.get("report") is not None:
+                raise UsageError("A refused dispatch carries a review of a report it never delivered, so its freed correction number is unsupported; preserve the ledger for owner recovery.", {})
         move = row.get("refusal_move")
         if move is not None:
             if (not isinstance(move, dict) or set(move) - {"authorization"} != {"schema_version", "from", "from_provider", "provider"}
@@ -1475,7 +1501,8 @@ def validate_store(store, assignments):
                 previous = _item(store["plans"][:store["plans"].index(row)], row["supersedes"], "superseded plan")
                 if previous["task"] != row["task"] or previous["base_revision"] != row["base_revision"]:
                     raise UsageError("A changed decision cannot supersede another task or original base.", {})
-        applied_slots = set()
+        _validate_refusals(store)
+        applied_slots = {}
         pending_workers = set()
         pending_tasks = set()
         for row in store["dispatches"]:
@@ -1513,9 +1540,11 @@ def validate_store(store, assignments):
                     raise UsageError("The saved dispatch result does not match its confirmed outcome; recover it before retrying.", {})
                 if row["role"] == "developer":
                     slot = (row["task"], fix)
-                    if slot in applied_slots:
+                    previous = applied_slots.get(slot)
+                    if previous is not None and (previous.get("refusal") is None
+                            or (row.get("refusal_move") or {}).get("from") != previous["id"]):
                         raise UsageError("A correction number was consumed twice; preserve the ledger and reconcile the duplicate.", {})
-                    applied_slots.add(slot)
+                    applied_slots[slot] = row
             report = row.get("report")
             if report is not None:
                 if not isinstance(report, dict) or type(report.get("schema_version")) is not int or report["schema_version"] != RECOVERY_SCHEMA_VERSION or report["dispatch"] != row["id"]:
@@ -1537,7 +1566,6 @@ def validate_store(store, assignments):
                 for dispatch in store["dispatches"]
             ) and not any(item["assignment_index"] == index for item in store["historical_attempts"]):
                 raise UsageError("An extra correction lacks its owner-managed authorization and dispatch record.", {})
-        _validate_refusals(store)
         for row in store["context_permissions"]:
             task_record(store, row["task"])
             authorization(row["authorization"])
@@ -1568,7 +1596,7 @@ def task_statuses(store, assignments):
     tasks = set(store["tasks"]) | {row["task"] for row in store["dispatches"]} | {
         row["task"] for row in assignments if row.get("task") is not None}
     for task in tasks:
-        count = confirmed_fix(assignments, task)
+        count = confirmed_fix(assignments, task, store)
         pending = next((row for row in reversed(store["dispatches"]) if row["task"] == task
                         and row["role"] in {"developer", "release"} and row["status"] in PENDING_STATUSES), None)
         checkpoint_row = next((row for row in reversed(store["checkpoints"]) if row["task"] == task), None)

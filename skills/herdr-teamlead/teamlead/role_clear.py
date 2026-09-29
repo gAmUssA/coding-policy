@@ -131,7 +131,7 @@ def record_role_clear(store, assignments, data, at, observed_session):
             raise UsageError("This role-clear recovery identity already names different input or evidence; preserve it and resolve the conflict.", {})
         return prior
     latest = latest_assignment(assignments, task=data["task"], role="developer", status="applied")
-    if latest is None or latest[0] != data["assignment_index"] or data["next_fix"] != ledger.confirmed_fix(assignments, data["task"]) + 1:
+    if latest is None or latest[0] != data["assignment_index"] or data["next_fix"] != ledger.confirmed_fix(assignments, data["task"], store) + 1:
         raise UsageError("This developer attempt is no longer the preceding correction; never reuse a consumed attempt or stale recovery.", {})
     if timestamp(at, "recovery time") < timestamp(clear["at"], "clearing time"):
         raise UsageError("Recovery cannot precede the clearing assignment; preserve the actual observation times.", {})
