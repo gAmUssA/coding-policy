@@ -4,11 +4,11 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
-## 0.7.1 — 2026-09-23
+## 0.7.4 — 2026-09-29
 
 ### Fixed
 
-- **`stop-handoff-hygiene` blocks on shellcheck warnings and errors only.** The Stop gate ran shellcheck at its default severity, which includes `info` and `style` notes, so a lone SC2012 ("use find instead of ls") in an edited dotfiles script blocked a handoff that had nothing wrong with it. The hook now blocks on `--severity=warning` and above; a run that is clean there but not at default severity is surfaced on stderr as a report, the same tier as the dirty-tree notice, so the notes are visible without holding the handoff hostage. `rules/language-diagnostics.md` Gate It Deterministically now states the split: the Stop hook blocks on error and warning tiers, the CI gate (`scripts/run-diagnostics.sh` here) stays at zero, and info/style notes are the author's to fix or inline-suppress between the two.
+- **`stop-handoff-hygiene` blocks on ShellCheck warnings and errors only.** An info-level SC2012 in an edited script previously blocked handoff. The hook now separates one GCC-format diagnostic run by severity: warnings and errors block, while info/style notes reach stderr even when a warning also blocks. Engine failures still block. Real-engine SC2012 coverage checks ShellCheck's `note` token. The diagnostics rule and README describe the split; authors still fix or inline-suppress notes before the unchanged zero-findings CI gate.
 
 ## 0.7.3 — 2026-09-28
 
