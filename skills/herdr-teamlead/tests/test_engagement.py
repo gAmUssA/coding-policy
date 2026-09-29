@@ -36,7 +36,9 @@ class EngagementTest(unittest.TestCase):
         self.report = self.root / "report.md"
         self.report.write_text("Inspected onboarding. Recommend grouping account fields; implementation remains open.\n")
         self.delivery = self.root / "delivery.json"
-        self.delivery.write_text(json.dumps({"found": True, "agent": "worker", "report_path": str(self.report)}))
+        self.proof = {"found": True, "agent": "worker", "report_path": str(self.report),
+                      "state": "done", "elapsed_seconds": 42}
+        self.delivery.write_text(json.dumps(self.proof))
         self.state = empty_state()
         self.dispatch = {"id": "consult-1", "fingerprint": "a" * 64, "task": "task-1", "role": "advisor",
                          "agent": "worker", "fix_round": None, "plan": None, "work": None,
@@ -95,18 +97,78 @@ class EngagementTest(unittest.TestCase):
             self.assertEqual(self.state, before)
 
     def test_pending_wrong_worker_or_wrong_report_delivery_is_not_assessable(self):
-        for proof in ({"found": False, "agent": "worker", "report_path": str(self.report)},
-                      {"found": True, "agent": "other", "report_path": str(self.report)},
-                      {"found": True, "agent": "worker", "report_path": str(self.root / "other.md")},
-                      {"found": 1, "agent": "worker", "report_path": str(self.report)}, [], "done"):
+        before = copy.deepcopy(self.state)
+        for proof in ({**self.proof, "found": False}, {**self.proof, "agent": "other"},
+                      {**self.proof, "report_path": str(self.root / "other.md")},
+                      {**self.proof, "found": 1}, [], "done"):
             with self.subTest(proof=proof):
                 self.delivery.write_text(json.dumps(proof))
                 with self.assertRaises(UsageError):
                     self.assess()
-                self.assertEqual(self.state["specialist_assessments"], [])
+                self.assertEqual(self.state, before)
         self.delivery.write_text("not JSON")
         with self.assertRaises(UsageError):
             self.assess()
+        self.assertEqual(self.state, before)
+
+    def test_complete_wait_receipts_accept_every_success_state_and_extra_context(self):
+        for status in ("working", "idle", "done", "blocked"):
+            with self.subTest(state=status):
+                self.delivery.write_text(json.dumps({**self.proof, "state": status,
+                                                     "elapsed_seconds": 0, "note": "context"}))
+                result = self.assess({**self.data, "id": "assessment-" + status})
+                self.assertEqual(result["delivery_evidence"], recovery.receipt(str(self.delivery))[0])
+        self.assertEqual(len(self.state["specialist_assessments"]), 4)
+
+    def assert_rejected_proof(self, proof):
+        before = copy.deepcopy(self.state)
+        self.delivery.write_text(json.dumps(proof))
+        try:
+            with self.assertRaises(UsageError):
+                self.assess()
+            self.assertEqual(self.state, before)
+        finally:
+            # A vulnerable implementation may append; each next variant must
+            # still reach receipt validation rather than idempotent replay.
+            self.state.clear()
+            self.state.update(before)
+
+    def test_each_missing_wait_field_is_refused_without_state_change(self):
+        for field in self.proof:
+            with self.subTest(field=field):
+                self.assert_rejected_proof({key: value for key, value in self.proof.items() if key != field})
+
+    def test_each_invalid_wait_value_is_refused_without_state_change(self):
+        variants = {
+            "found": (False, 1, "true", None, [], {}),
+            "agent": ("other", None, 7, [], {}),
+            "report_path": (str(self.root / "other.md"), None, 7, [], {}),
+            "state": ("unknown", "delivered", 7, None, True, [], {}),
+            "elapsed_seconds": (-1, 1.0, "42", True, False, None, [], {}),
+        }
+        for field, values in variants.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.assert_rejected_proof({**self.proof, field: value})
+
+    def test_failure_field_presence_is_refused_even_when_null(self):
+        for field, values in (("reason", ("checkpoint_pending", "refused", None)),
+                              ("stall", ({"classification": "stalled"}, None))):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.assert_rejected_proof({**self.proof, field: value})
+
+    def test_historical_incomplete_receipt_remains_readable_and_replayable(self):
+        original = self.assess()
+        self.delivery.write_text(json.dumps({key: self.proof[key] for key in ("found", "agent", "report_path")}))
+        # Model an owner-written historical assessment with the old receipt.
+        original["delivery_evidence"] = recovery.receipt(str(self.delivery))[0]
+        save_state(self.path, self.state)
+        loaded, usable = load_state_checked(self.path)
+        self.assertTrue(usable)
+        self.assertEqual(loaded, self.state)
+        self.assertEqual(self.assess(), original)
+        self.assertEqual(self.state["specialist_assessments"], [original])
 
     def test_missing_or_unreadable_evidence_does_not_append_assessment(self):
         for source in (self.report, self.delivery):

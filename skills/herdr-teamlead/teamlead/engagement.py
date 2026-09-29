@@ -19,6 +19,25 @@ CONSULTATION_ROLES = frozenset({"advisor", "investigator", "architect"})
 ASSESSABLE_ROLES = CONSULTATION_ROLES | {"reviewer", "tester"}
 CONTRIBUTIONS = frozenset({"none", "design", "implementation"})
 INPUT_FIELDS = frozenset({"id", "dispatch", "report", "delivery", "outcome", "contribution", "summary"})
+WAIT_FIELDS = frozenset({"found", "agent", "report_path", "state", "elapsed_seconds"})
+WAIT_STATES = frozenset({"working", "idle", "done", "blocked"})
+
+
+def _wait_failure(proof, agent, report):
+    """Explain why new evidence is not a successful wait-report receipt."""
+    if not isinstance(proof, dict) or not WAIT_FIELDS.issubset(proof):
+        return "found, agent, report_path, state and elapsed_seconds are required"
+    if proof["found"] is not True:
+        return "found must be exactly true"
+    if proof["agent"] != agent or proof["report_path"] != report:
+        return "agent and report_path must name this worker's exact report"
+    if not isinstance(proof["state"], str) or proof["state"] not in WAIT_STATES:
+        return "state must be working, idle, done or blocked"
+    if type(proof["elapsed_seconds"]) is not int or proof["elapsed_seconds"] < 0:
+        return "elapsed_seconds must be a nonnegative integer excluding bool"
+    if "reason" in proof or "stall" in proof:
+        return "a successful wait cannot carry reason or stall fields"
+    return None
 
 
 def _input(data):
@@ -93,10 +112,10 @@ def record_assessment(state, state_path, data, at):
                       if row["dispatch"] == dispatch["id"] and row["input"]["report"] == data["report"]
                       and row.get("found") is True and row["receipts"]["report"] == report_evidence
                       and row == proof), None)
-    waited = (isinstance(proof, dict) and proof.get("found") is True
-              and proof.get("agent") == dispatch["agent"] and proof.get("report_path") == data["report"])
-    if not waited and recovered is None:
-        raise UsageError("Delivery receipt must prove this worker's exact report arrived; a lifecycle status or pending checkpoint is insufficient.", {})
+    if recovered is None:
+        failure = _wait_failure(proof, dispatch["agent"], data["report"])
+        if failure is not None:
+            raise UsageError("Delivery receipt must prove this worker's exact report arrived ({}); save the exit-0 JSON from wait-report.sh or record an owner-recovered delivery with recover-report.".format(failure), {})
     result = {"schema_version": ASSESSMENT_SCHEMA_VERSION, "at": at, **data,
               "assignment_index": index, "task": dispatch["task"], "role": dispatch["role"], "agent": dispatch["agent"],
               "report_evidence": report_evidence, "delivery_evidence": delivery_evidence}
