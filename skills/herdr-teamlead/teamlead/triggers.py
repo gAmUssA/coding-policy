@@ -33,7 +33,10 @@ Contract:
 
 import fnmatch
 import json
+import os
+import stat
 import subprocess
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -377,13 +380,38 @@ def read_lines(repo, path):
     added lines. A binary file legitimately yields none; an unreadable one is a
     failure, never an empty result.
     """
+    if (not isinstance(path, str) or path.startswith("/") or "\0" in path
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise UsageError("Cannot read untracked file {} in {}; use an unambiguous repository-relative path before detecting the triggers.".format(path, repo), {})
+    if (os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW")
+            or not hasattr(os, "O_NONBLOCK")):
+        raise UsageError("Cannot safely read untracked files on this platform; run detection on macOS or Linux with descriptor-relative no-follow opens.", {})
     try:
-        return Path(repo, path).read_text(encoding="utf-8").splitlines()
+        # The root argument is trusted. Every foreign component is opened from
+        # a held directory, so replacing its name cannot redirect later reads.
+        with ExitStack() as opened:
+            flags = os.O_RDONLY | os.O_NONBLOCK
+            directory = os.open(repo, flags)
+            opened.callback(os.close, directory)
+            if not stat.S_ISDIR(os.fstat(directory).st_mode):
+                raise OSError("repository root is not a directory")
+            parts = path.split("/")
+            for component in parts[:-1]:
+                directory = os.open(component, flags | os.O_NOFOLLOW, dir_fd=directory)
+                opened.callback(os.close, directory)
+                if not stat.S_ISDIR(os.fstat(directory).st_mode):
+                    raise OSError("ancestor is not a directory")
+            leaf = os.open(parts[-1], flags | os.O_NOFOLLOW, dir_fd=directory)
+            opened.callback(os.close, leaf)
+            if not stat.S_ISREG(os.fstat(leaf).st_mode):
+                raise OSError("untracked leaf is not a regular file")
+            with os.fdopen(leaf, encoding="utf-8", closefd=False) as source:
+                return source.read().splitlines()
     except UnicodeDecodeError:
         return []
     except OSError as exc:
         raise UsageError("Cannot read untracked file {} in {} ({}); remove it or commit it before detecting the triggers.".format(
-            path, repo, exc.strerror), {}) from None
+            path, repo, exc.strerror or str(exc)), {}) from None
 
 
 def collect_untracked(run, repo, changes, churn, added_lines):

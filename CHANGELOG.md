@@ -4,6 +4,13 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.3 — 2026-09-28
+
+### Fixed
+
+- **Contain untracked trigger evidence.** The detector opens each path component through a held directory descriptor and rejects symlinks, including internal links, and nonregular leaves before reading. Nonblocking opens prevent FIFO hangs. UTF-8 lines, binary-file handling and Git ignore scope remain intact. This closes leaf and ancestor replacement paths that could quote outside content in CLI evidence; hardlinks remain ordinary filesystem entries.
+- **Validate complete delivery receipts.** New specialist assessments require the successful wait receipt's five fields, exact worker and report, supported lifecycle state, nonnegative integer elapsed time excluding booleans, and absence of reason or stall fields even when null. Genuine working and blocked-flicker deliveries remain valid. Exact owner-recovered evidence, historical assessments and idempotent retries retain their prior behavior.
+
 ## 0.7.2 — 2026-09-23
 
 ### Changed

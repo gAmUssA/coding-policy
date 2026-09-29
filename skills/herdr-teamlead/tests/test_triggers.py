@@ -2,12 +2,14 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -710,6 +712,27 @@ class DetectTriggersCommandTest(TempCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["fired"], ["architect"])
 
+    def test_an_outside_untracked_symlink_never_enters_cli_evidence(self):
+        outside = self.temp_dir() / "canary.py"
+        outside.write_text('sub.add_parser("OUTSIDE_CANARY")\n')
+        spec = self.tmp / "src" / "cli"
+        spec.mkdir(parents=True)
+        (spec / "leak.py").symlink_to(outside)
+        code, out, err = self.run_cli()
+        self.assertNotIn("OUTSIDE_CANARY", out + err)
+        self.assertEqual(code, 1)
+        self.assertIn("Cannot read untracked file", json.loads(err)["message"])
+
+    def test_ignored_symlink_remains_outside_git_scope(self):
+        outside = self.temp_dir() / "canary.py"
+        outside.write_text('sub.add_parser("OUTSIDE_CANARY")\n')
+        (self.tmp / "ignored.py").symlink_to(outside)
+        (self.tmp / ".gitignore").write_text("ignored.py\n")
+        code, out, err = self.run_cli()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["fired"], [])
+        self.assertNotIn("OUTSIDE_CANARY", out + err)
+
     def test_a_pushed_head_ignores_the_working_tree(self):
         (self.tmp / "README.md").write_text("start\nmore\n")
         self.git("add", "-A")
@@ -765,6 +788,99 @@ class DetectTriggersCommandTest(TempCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["triggers"][1]["trigger"], "documentation")
         self.assertEqual(self.base, moved)
+
+
+class UntrackedReadTest(TempCase):
+    def setUp(self):
+        self.root = self.temp_dir()
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.outside = self.root / "repo-evil"
+        self.outside.mkdir()
+        (self.outside / "ship.py").write_text("OUTSIDE_CANARY\n")
+        self.nested = self.repo / "src" / "cli"
+        self.nested.mkdir(parents=True)
+        self.leaf = self.nested / "ship.py"
+        self.leaf.write_text("safe é\nsub.add_parser('ship')\n", encoding="utf-8")
+
+    def test_nested_utf8_and_binary_controls(self):
+        self.assertEqual(triggers.read_lines(self.repo, "src/cli/ship.py"),
+                         ["safe é", "sub.add_parser('ship')"])
+        self.leaf.write_bytes(b"\xff\xfe")
+        self.assertEqual(triggers.read_lines(self.repo, "src/cli/ship.py"), [])
+
+    def test_outside_leaf_ancestor_and_internal_symlinks_are_refused(self):
+        for target in (self.outside / "ship.py", self.leaf):
+            alias = self.nested / "alias.py"
+            alias.symlink_to(target)
+            with self.subTest(target=target), self.assertRaises(UsageError):
+                triggers.read_lines(self.repo, "src/cli/alias.py")
+            alias.unlink()
+        self.leaf.unlink()
+        self.nested.rmdir()
+        self.nested.symlink_to(self.outside, target_is_directory=True)
+        with self.assertRaises(UsageError):
+            triggers.read_lines(self.repo, "src/cli/ship.py")
+
+    def test_absolute_parent_and_ambiguous_paths_are_refused(self):
+        for path in (str(self.outside / "ship.py"), "../repo-evil/ship.py", "",
+                     "src/../src/cli/ship.py", "src//cli/ship.py", "./src/cli/ship.py", "src/cli/ship.py\0"):
+            with self.subTest(path=path), self.assertRaises(UsageError):
+                triggers.read_lines(self.repo, path)
+
+    def test_missing_directory_and_non_directory_components_are_refused(self):
+        for path in ("missing.py", "src/cli", "src/cli/ship.py/child.py"):
+            with self.subTest(path=path), self.assertRaises(UsageError):
+                triggers.read_lines(self.repo, path)
+
+    def test_leaf_and_ancestor_replacement_cannot_redirect_open(self):
+        # Swap at the filesystem boundary, keyed by the directory being opened,
+        # rather than timing or an internal helper. The original fd remains real.
+        for component in ("cli", "ship.py"):
+            with self.subTest(component=component):
+                real_open = os.open
+                swapped = []
+                saved = self.nested.with_name("held") if component == "cli" else self.leaf.with_name("held.py")
+
+                def replace_then_open(path, flags, mode=0o777, *, dir_fd=None):
+                    if path == component and dir_fd is not None and not swapped:
+                        if component == "cli":
+                            fd = real_open(path, flags, mode, dir_fd=dir_fd)
+                            self.nested.rename(saved)
+                            self.nested.symlink_to(self.outside, target_is_directory=True)
+                            swapped.append(True)
+                            return fd
+                        self.leaf.rename(saved)
+                        self.leaf.symlink_to(self.outside / "ship.py")
+                        swapped.append(True)
+                    return real_open(path, flags, mode, dir_fd=dir_fd)
+
+                with patch("os.open", replace_then_open), patch("os.supports_dir_fd", {replace_then_open}):
+                    try:
+                        lines = triggers.read_lines(self.repo, "src/cli/ship.py")
+                    except UsageError:
+                        lines = []
+                self.assertEqual(swapped, [True], "replacement seam must execute")
+                self.assertNotIn("OUTSIDE_CANARY", "\n".join(lines))
+                self.assertIn(lines, ([], ["safe é", "sub.add_parser('ship')"]))
+                replaced = self.nested if component == "cli" else self.leaf
+                replaced.unlink()
+                saved.rename(replaced)
+
+    def test_fifo_is_refused_without_blocking(self):
+        fifo = self.nested / "fifo.py"
+        os.mkfifo(fifo)
+        # A broken blocking reader fails this bounded subprocess oracle rather
+        # than hanging the suite. Time is a safety budget, not an asserted result.
+        script = "from teamlead.triggers import read_lines; from teamlead.errors import UsageError; import sys\ntry:\n read_lines(sys.argv[1], 'src/cli/fifo.py')\nexcept UsageError:\n sys.exit(0)\nsys.exit(1)"
+        result = subprocess.run([sys.executable, "-c", script, str(self.repo)],
+                                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+                                capture_output=True, text=True, timeout=5, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_platform_primitives_are_explicitly_refused(self):
+        with patch("os.supports_dir_fd", set()), self.assertRaises(UsageError):
+            triggers.read_lines(self.repo, "src/cli/ship.py")
 
 
 if __name__ == "__main__":

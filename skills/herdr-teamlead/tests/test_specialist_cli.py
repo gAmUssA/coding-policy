@@ -235,7 +235,8 @@ class SpecialistCliTest(fixture.CliCase):
         prior_report = self.tmp / "prior-report.md"
         prior_report.write_text("Proposed the interaction; implementation remains pending.")
         delivery = self.tmp / "prior-delivery.json"
-        delivery.write_text(json.dumps({"found": True, "agent": "claude", "report_path": str(prior_report)}))
+        delivery.write_text(json.dumps({"found": True, "agent": "claude", "report_path": str(prior_report),
+                                        "state": "done", "elapsed_seconds": 42}))
         supervision.enroll(self.state, {"id": record["id"], "agent": "claude", "task": "task-1", "report": str(prior_report),
                                        "pane_id": "w2:p1", "native_session": native}, AT)
         if assess:
