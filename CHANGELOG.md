@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.5 — 2026-09-29
+
+### Fixed
+
+- **Reject unusable foreground process IDs.** Matched Herdr worker processes now require a positive integer PID, excluding booleans, before argument lookup, launch verification or restart can continue. Missing and malformed IDs produce an actionable structured error instead of a `KeyError` or an invalid termination target. Regression cases cover missing, null, boolean, nonpositive and non-integer IDs with and without supplied arguments, plus executable-path matching. The standup skill also drops its deferred explanatory clause from issue #3.
+
 ## 0.7.4 — 2026-09-29
 
 ### Fixed

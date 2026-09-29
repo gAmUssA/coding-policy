@@ -50,8 +50,14 @@ def foreground_agent(client, pane, kind):
         argv = process.get("argv")
         name = process.get("name")
         if name == kind or (isinstance(argv, list) and argv and isinstance(argv[0], str) and PurePath(argv[0]).name == kind):
+            pid = process.get("pid")
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                raise HerdrError(
+                    "Matched {} foreground process in {} has no positive integer PID; inspect the pane before verifying or restarting it.".format(kind, pane),
+                    {"pane_id": pane, "kind": kind},
+                )
             if argv is None:
-                argv = client.process_args(process.get("pid"))
+                argv = client.process_args(pid)
             matches.append({**process, "argv": argv})
     if len(matches) != 1:
         raise HerdrError("Cannot identify one {} foreground process in {}; inspect the pane before relaunch.".format(kind, pane), {})
