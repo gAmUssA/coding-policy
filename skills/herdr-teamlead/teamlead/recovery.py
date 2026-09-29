@@ -325,10 +325,16 @@ def developer_attempts(assignments, task, store):
     here, at read time, by the `assignment_index` its refused dispatch names
     (#5). `store` is required, and `None` states that no recovery ledger is
     available: without it a refused attempt reads as a spent one.
+
+    A row carrying a review `report` delivered one, so it stays counted beside
+    a refusal: writes have barred that pair since 0.7.6, and a ledger an
+    earlier release wrote with both keeps its number spent rather than reading
+    as free.
     """
     refused = {row["assignment_index"] for row in (store or {}).get("dispatches", [])
                if row.get("task") == task and row.get("role") == "developer"
-               and row.get("status") == "applied" and row.get("refusal") is not None}
+               and row.get("status") == "applied" and row.get("refusal") is not None
+               and row.get("report") is None}
     return [row for index, row in enumerate(assignments)
             if index not in refused and row.get("task") == task
             and row.get("role") == "developer" and row.get("status") == "applied"]
@@ -1231,8 +1237,6 @@ def _validate_refusals(store):
             validate_receipt(refusal["evidence"])
             if text(refusal["receipt"], "refusal receipt") != refusal["evidence"]["path"] or not Path(text(refusal["report_path"], "refusal report")).is_absolute():
                 raise UsageError("Refusal record's receipt path disagrees with its bound evidence; preserve it for owner recovery.", {})
-            if row.get("report") is not None:
-                raise UsageError("A refused dispatch carries a review of a report it never delivered, so its freed correction number is unsupported; preserve the ledger for owner recovery.", {})
         move = row.get("refusal_move")
         if move is not None:
             if (not isinstance(move, dict) or set(move) - {"authorization"} != {"schema_version", "from", "from_provider", "provider"}

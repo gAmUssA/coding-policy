@@ -972,11 +972,18 @@ class RecoveryTests(unittest.TestCase):
             record_report(self.store, {**review, "dispatch": "fix-7"}, AT)
         self.assertIsNone(_dispatch(self.store, "fix-7").get("report"))
         validate_store(self.store, self.history)
-        # A stored row carrying both is corrupt, whoever wrote it.
-        invalid = copy.deepcopy(self.store)
-        _dispatch(invalid, "fix-7")["report"] = {**_dispatch(invalid, "fix-6")["report"], "dispatch": "fix-7"}
-        with self.assertRaisesRegex(UsageError, "never delivered"):
-            validate_store(invalid, self.history)
+        # A ledger an earlier release wrote with both fields stays readable --
+        # rejecting it would strand its owner with no usable prior state -- and
+        # its delivered review keeps the correction number spent.
+        legacy = copy.deepcopy(self.store)
+        _dispatch(legacy, "fix-7")["report"] = {**_dispatch(legacy, "fix-6")["report"], "dispatch": "fix-7"}
+        validate_store(legacy, self.history)
+        self.assertEqual(confirmed_fix(self.history, TASK, legacy), 7)
+        path = self.root / "legacy-state.json"
+        save_state(path, {**self.state, "recovery": legacy})
+        restored, usable = load_state_checked(path)
+        self.assertTrue(usable)
+        self.assertEqual(confirmed_fix(restored["assignments"], TASK, restored["recovery"]), 7)
 
     REPORT = "/reports/tester.md"
     BRIEF = "brief-identity-tester"
