@@ -58,7 +58,9 @@ def load_partition(path):
         document = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise UsageError("Cannot read the partition at {}: {}. Write a JSON object with schema_version and slices.".format(path, exc), {"path": str(path)}) from None
-    if not isinstance(document, dict) or document.get("schema_version") != PARTITION_SCHEMA_VERSION:
+    # `type(...) is int`: bool subclasses int, so `True == 1` would pass.
+    if (not isinstance(document, dict) or type(document.get("schema_version")) is not int
+            or document["schema_version"] != PARTITION_SCHEMA_VERSION):
         raise UsageError("The partition must be a JSON object at schema_version {}.".format(PARTITION_SCHEMA_VERSION), {"path": str(path)})
     partition_role(document)
     unknown = set(document) - {"schema_version", "role", "slices"}

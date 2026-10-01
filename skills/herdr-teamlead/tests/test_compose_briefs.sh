@@ -278,6 +278,43 @@ JSON
   if [[ $RC -eq 1 && -z "$OUT" ]] && printf '%s' "$ERRTEXT" | grep -q "brief-scribe.md"; then
     pass; else fail "missing template: expected exit 1 naming it, got RC=$RC ERR=$ERRTEXT"; fi
 
+  # 7b. A consultation role with no template of its own renders the shared
+  # specialist template; its own template, when present, wins.
+  local tpl7b="$TMP/templates-specialist" v7b="$TMP/v7b.json" o7b="$TMP/out7b" role
+  mk_templates "$tpl7b"
+  printf 'Specialist {{RESPONSIBILITY}} for {{ISSUE}}\nReport: {{REPORT}}\n' > "$tpl7b/brief-specialist.md" \
+    || die "could not write brief-specialist.md"
+  cat > "$v7b" <<'JSON' || die "could not write $v7b"
+{
+  "shared": {"SHARED_CHECKOUT": "/repo", "AUTHORITY_STATEMENT": "a", "ISSUE": "#7"},
+  "roles": {
+    "advisor": {"RESPONSIBILITY": "advisor", "REPORT": "/r/advisor.md"},
+    "investigator": {"RESPONSIBILITY": "investigator", "REPORT": "/r/investigator.md"},
+    "architect": {"RESPONSIBILITY": "architect", "REPORT": "/r/architect.md"}
+  }
+}
+JSON
+  run "$tpl7b" "$v7b" "$o7b"
+  for role in advisor investigator architect; do
+    if [[ $RC -eq 0 ]] && grep -q "Specialist ${role} for #7" "$o7b/brief-${role}.md" \
+       && grep -q "Report: /r/${role}.md" "$o7b/brief-${role}.md" \
+       && printf '%s' "$OUT" | jq -e --arg r "$role" --arg p "$o7b/brief-${role}.md" '.briefs[$r] == $p' >/dev/null 2>&1; then
+      pass; else fail "specialist fallback for ${role}: got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+  done
+  printf 'Architect alone as {{RESPONSIBILITY}} for {{ISSUE}}\nReport: {{REPORT}}\n' > "$tpl7b/brief-architect.md" \
+    || die "could not write brief-architect.md"
+  run "$tpl7b" "$v7b" "$TMP/out7c"
+  if [[ $RC -eq 0 ]] && grep -q "Architect alone as architect for #7" "$TMP/out7c/brief-architect.md" \
+     && grep -q "Specialist advisor for #7" "$TMP/out7c/brief-advisor.md"; then
+    pass; else fail "role template beats the specialist fallback: got RC=$RC ERR=$ERRTEXT"; fi
+  # The fallback is the three consultation roles' alone.
+  rm -f "$tpl7b/brief-developer.md" || die "could not remove brief-developer.md"
+  jq '.roles = {"developer": {"RESPONSIBILITY": "developer", "REPORT": "/r/dev.md"}}' "$v7b" > "$TMP/v7d.json" \
+    || die "could not build the non-consultation fixture"
+  run "$tpl7b" "$TMP/v7d.json" "$TMP/out7d"
+  if [[ $RC -eq 1 && -z "$OUT" ]] && printf '%s' "$ERRTEXT" | grep -q "brief-developer.md"; then
+    pass; else fail "no specialist fallback for developer: got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
   # 8. Malformed values.
   local v8="$TMP/v8.json"
   printf '{broken' > "$v8" || die "could not write $v8"

@@ -339,10 +339,11 @@ dispatch's send-time `provider`; version 8 adds the `diagnoses` collection;
 version 9 adds `legacy_ruling_recoveries`. The
 owner stamps an older store on load, adds the empty collections, and refuses one
 already carrying a field its version did not own. Generic records remain version 1; stale-Grok delivery and
-composition-bearing dispatch/result records use version 2. Checkpoints are at
-version 2: the owner upgrades a version-1 row on load, stamping it and
-preserving its identity, fix round, base and recorded ruling, and refuses one
-missing the ruling evidence its version required. The owner adds empty `role_clearances` and
+composition-bearing dispatch/result records use version 2. New checkpoints are
+written at version 3. The owner upgrades a version-1 row to version 2 on load,
+stamping it and preserving its identity, fix round, base and recorded ruling,
+and refuses one missing the ruling evidence its version required. The reader
+accepts versions 2 and 3. The owner adds empty `role_clearances` and
 `delivery_recoveries` arrays when migrating versions 1 or 2. Version 1 also
 gains empty `hand_clearances` and `historical_attempts` arrays. Existing
 record shapes, contents and evidence remain unchanged. Recovery 4 → 5 changes

@@ -187,8 +187,12 @@ def load_plan(path):
 CONSULTATION_ROLES = frozenset({"advisor", "investigator", "architect"})
 
 
-def load_requirements(path):
-    """Collect the specialties the consultation seats staff, for trigger cover."""
+def load_requirements(path, roles=None):
+    """Collect the specialties the consultation seats staff, for trigger cover.
+
+    With `roles`, only a consultation role this round plans counts: a
+    requirement for a seat nobody is dispatched to staffs nothing.
+    """
     if path is None:
         return set()
     try:
@@ -205,7 +209,7 @@ def load_requirements(path):
         raise UsageError("Requirements must be a schema_version {} object with an assignments map; use the documented requirements file.".format(REQUIREMENTS_SCHEMA_VERSION), {})
     found = set()
     for role, record in payload["assignments"].items():
-        if role not in CONSULTATION_ROLES:
+        if role not in CONSULTATION_ROLES or roles is not None and role not in roles:
             continue
         if isinstance(record, dict) and isinstance(record.get("specialty"), str):
             found.add(record["specialty"])
@@ -448,9 +452,10 @@ def run_command(args, runner=None):
     """Detect the triggers for one task's diff and gate on the unaddressed set."""
     declaration = load_declaration(args.repo)
     decisions = load_decisions(getattr(args, "decisions", None))
-    specialties = load_requirements(getattr(args, "requirements", None))
     plan = load_plan(getattr(args, "planned", None))
-    roles = [role for role in (getattr(args, "roles", None) or "").split(",") if role]
+    given = getattr(args, "roles", None)
+    roles = [role for role in (given or "").split(",") if role]
+    specialties = load_requirements(getattr(args, "requirements", None), None if given is None else set(roles))
     run = runner if runner is not None else git_runner(args.repo)
     head = getattr(args, "head", None)
     # `base...head` diffs from the merge base, so "absent from the base" is

@@ -289,6 +289,20 @@ class MigrationTest(unittest.TestCase):
         self.write({"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "assignments": ["nope"]})
         self.assertEqual(self.load(), empty_state())
 
+    def test_a_non_string_role_starts_empty(self):
+        # An unhashable role used to raise TypeError out of the specialist
+        # validator, or later out of role_counts, instead of reading as no
+        # usable prior state. With or without requirements.
+        for requirements in ({"specialty": "security"}, None):
+            for role in (["advisor"], {"name": "advisor"}, 7, None):
+                with self.subTest(role=role, requirements=requirements):
+                    self.warnings.clear()
+                    self.write({"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "specialist_assessments": [],
+                                "assignments": [{"schema_version": STATE_SCHEMA_VERSION, "role": role,
+                                                 "requirements": requirements, "reviewer_scope": None}]})
+                    self.assertEqual(self.load(), empty_state())
+                    self.assertIn("non-string role", self.warnings[0])
+
     def test_a_non_integer_version_starts_empty(self):
         self.write({"schema_version": "1", "snapshots": [], "assignments": []})
         self.assertEqual(self.load(), empty_state())

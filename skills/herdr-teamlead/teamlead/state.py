@@ -370,6 +370,11 @@ def _validate(payload, path):
         if not isinstance(record, dict):
             raise _NoUsableState("an assignment row is not a JSON object")
         record, row_migrated = _apply_migrations(record, RECORD_MIGRATIONS, "an assignment row")
+        # An unhashable role would raise TypeError out of the specialist
+        # validator's membership test and out of role_counts' dictionary key,
+        # instead of reading as no usable state.
+        if not isinstance(record.get("role"), str):
+            raise _NoUsableState("an assignment row has a non-string role")
         if "requirements" not in record:
             raise _NoUsableState("an assignment row is missing specialist requirements provenance")
         scope = record.get("reviewer_scope")

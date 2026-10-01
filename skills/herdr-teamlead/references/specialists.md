@@ -126,7 +126,7 @@ Exit 0 means every fired trigger is staffed or answered. Exit 1 with an
 `unaddressed_trigger` error names the triggers that are neither; re-run it
 after each change, since the failed invocation read none of them. A trigger is
 answered by planning its role or by a requirements assignment carrying its
-specialty; which role and which specialty answer each trigger are the
+specialty for a consultation role `--roles` plans; which role and which specialty answer each trigger are the
 `TRIGGER_ROLES` and `TRIGGER_SPECIALTIES` constants in
 `skills/herdr-teamlead/teamlead/triggers.py`, and the detection payload names
 the one it accepted.

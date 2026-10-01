@@ -34,6 +34,8 @@ class Client:
         #: `agent_name_taken` refusals to raise before a start succeeds.
         self.name_taken_starts = 0
         self.released_pane: str | None = None
+        #: Something else takes the pane while a late reservation is refused.
+        self.occupied_after_refusal = False
 
     def agent_get(self, name):
         self.calls.append(("get", name))
@@ -66,6 +68,8 @@ class Client:
             raise herdr_error("agent_name_taken", "name in use")
         if self.name_taken_starts > 0:
             self.name_taken_starts -= 1
+            if self.occupied_after_refusal:
+                self.shell_returns = False
             raise herdr_error("agent_name_taken", "name in use")
         return {"agent": self.info, "argv": self.reply_argv if self.reply_argv is not None else [kind] + flags}
 
@@ -123,6 +127,16 @@ class LaunchTest(unittest.TestCase):
         with self.assertRaises(HerdrError):
             restart_worker(exhausted, worker(), "w1:p2", TIER, sleep=lambda _: None)
         self.assertEqual(len([call for call in exhausted.calls if call[0] == "start"]), NAME_TAKEN_RETRIES + 1)
+
+    def test_a_retry_re_proves_the_pane_holds_only_its_shell(self):
+        # A late agent_name_taken refusal is retried; the pane the first proof
+        # covered may no longer be the archived shell by then.
+        client = Client()
+        client.name_taken_starts = 1
+        client.occupied_after_refusal = True
+        with self.assertRaisesRegex(HerdrError, "no longer holds only its shell"):
+            restart_worker(client, worker(), "w1:p2", TIER, sleep=lambda _: None)
+        self.assertEqual(len([call for call in client.calls if call[0] == "start"]), 1)
 
     def test_a_name_bound_to_another_pane_refuses_without_starting(self):
         client = Client()

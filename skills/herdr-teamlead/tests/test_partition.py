@@ -56,6 +56,8 @@ class LoadPartition(unittest.TestCase):
             ("not json", "{", "Cannot read the partition"),
             ("not an object", [1, 2], "schema_version"),
             ("wrong version", document(schema_version=99), "schema_version"),
+            ("boolean version", document(schema_version=True), "schema_version"),
+            ("float version", document(schema_version=1.0), "schema_version"),
             ("one slice", document(slices=[SLICES[0]]), "at least two slices"),
             ("unknown field", document(extra=1), "unknown field"),
             ("duplicate name", document(slices=[SLICES[0], SLICES[0]]), "appears twice"),

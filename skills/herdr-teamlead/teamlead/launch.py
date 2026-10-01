@@ -111,15 +111,33 @@ def await_name_release(client, name, pane, sleep=time.sleep):
     )
 
 
+def holds_only_shell(client, pane):
+    """Is the pane's sole foreground process its own shell?"""
+    current = client.pane_process_info(pane)
+    shell = current.get("shell_pid")
+    foreground = current.get("foreground_processes", [])
+    return (isinstance(shell, int) and not isinstance(shell, bool) and shell > 0
+            and isinstance(foreground, list) and len(foreground) == 1
+            and isinstance(foreground[0], dict) and foreground[0].get("pid") == shell)
+
+
 def start_after_release(client, agent, pane, tier, sleep=time.sleep, before_start=None):
     """Start the seat once the name reads released, retrying a reservation.
 
     A refusal that slips through the wait is the reservation lapsing late, and
-    it started no process. Every other failure ends the relaunch untried.
+    it started no process. Every other failure ends the relaunch untried. The
+    caller proves the pane holds only its shell before the first start; every
+    retry re-proves it with the name, so a pane something else occupied during
+    the second wait is refused.
     """
     retries = 0
     while True:
         await_name_release(client, agent.name, pane, sleep=sleep)
+        if retries and not holds_only_shell(client, pane):
+            raise HerdrError(
+                "Pane {} no longer holds only its shell after the name release; inspect it before retrying. No start or brief was sent.".format(pane),
+                {"agent": agent.name, "pane": pane, "retries": retries},
+            )
         try:
             return start_worker(client, agent, pane, tier, before_start=before_start, sleep=sleep)
         except HerdrError as exc:
@@ -151,12 +169,7 @@ def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transitio
         before_transition()
     client.terminate_process(process.get("pid"))
     for attempt in range(SHELL_POLL_ATTEMPTS):
-        current = client.pane_process_info(pane)
-        shell = current.get("shell_pid")
-        foreground = current.get("foreground_processes", [])
-        if (isinstance(shell, int) and not isinstance(shell, bool) and shell > 0
-                and isinstance(foreground, list) and len(foreground) == 1
-                and isinstance(foreground[0], dict) and foreground[0].get("pid") == shell):
+        if holds_only_shell(client, pane):
             return start_after_release(client, agent, pane, tier, sleep=sleep, before_start=before_start)
         if attempt + 1 < SHELL_POLL_ATTEMPTS:
             sleep(SHELL_POLL_INTERVAL)
