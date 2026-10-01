@@ -105,6 +105,18 @@ class EligibilityTest(unittest.TestCase):
         self.assertEqual(constraints["exclude"]["advisor"], ["ghost"])
         self.assertIn("absent from current config", " ".join(constraints["rationale"]))
 
+    def test_unconfigured_snapshot_worker_is_excluded_from_every_role(self):
+        # A stale snapshot naming an agent config.json no longer declares must
+        # not be ranked for a role without specialist requirements either.
+        roles = ["developer", "reviewer", "tester"]
+        constraints = selection_constraints(roles, [worker("configured")], {}, [], "onboarding",
+                                            candidate_names=["configured", "ghost"])
+        self.assertEqual(constraints["exclude"], {role: ["ghost"] for role in roles})
+        self.assertEqual(" ".join(constraints["rationale"]).count("absent from current config"), 3)
+        # No configured agents: nothing to be absent from.
+        bare = selection_constraints(roles, [], {}, [], "onboarding", candidate_names=["ghost"])
+        self.assertEqual(bare["exclude"], {role: [] for role in roles})
+
     def test_old_config_capabilities_do_not_come_from_model_name(self):
         constraints = selection_constraints(["advisor"], [worker("best-ux-model", ())],
                                             {"advisor": requirement()}, [], "onboarding")

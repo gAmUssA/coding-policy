@@ -379,6 +379,10 @@ def _validate(payload, path):
                 or not reviewer and scope is not None):
             raise _NoUsableState("an assignment row has invalid reviewer responsibility provenance")
         if record["requirements"] is not None:
+            # An unhashable role would raise TypeError out of the membership
+            # test inside normalize_requirement instead of reading as no state.
+            if not isinstance(record.get("role"), str):
+                raise _NoUsableState("an assignment row with specialist requirements has a non-string role")
             try:
                 if normalize_requirement(record["requirements"], record.get("role")) != record["requirements"]:
                     raise _NoUsableState("an assignment has non-canonical specialist requirements")

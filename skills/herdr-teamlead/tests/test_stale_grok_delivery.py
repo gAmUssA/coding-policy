@@ -252,6 +252,55 @@ class StaleGrokDeliveryTests(unittest.TestCase):
         self.assertEqual(record['basis'], 'archived_grok_clear_source')
         self.assertFalse(record['grants_review_approval'])
 
+    def test_a_marker_without_attachment_evidence_refuses(self):
+        # The marker is stripped only when the transcript proves an attachment:
+        # an image chunk or the attachment's own metadata row in that turn. A
+        # bare `[Image #1]` after the dispatched text is text somebody wrote.
+        marker = grok_row({'sessionUpdate': 'user_message_chunk',
+                           'content': {'type': 'text', 'text': '\n[Image #1]'}})
+        rows = self.rows[:3] + [marker] + self.rows[3:]
+        Path(self.data['source']).write_text(encode(rows))
+        before = copy.deepcopy(self.document)
+        with self.assertRaisesRegex(UsageError, 'grok_source_ambiguous'):
+            self.recover()
+        self.assertEqual(self.document, before)
+        read, attached = delivery.prompt_evidence(encode(rows), 'grok')
+        self.assertEqual((read, attached), (self.prompt + '\n[Image #1]', False))
+        self.assertFalse(delivery.prompt_matches(read, self.prompt, 'grok', attached))
+        for evidence in (grok_row({'sessionUpdate': 'image_compressed', 'bytes': 2048}),
+                         grok_row({'sessionUpdate': 'user_message_chunk',
+                                   'content': {'type': 'image', 'uri': 'data:image/png;base64,AAAA'}})):
+            with self.subTest(evidence=evidence):
+                proven = self.rows[:3] + [evidence, marker] + self.rows[3:]
+                read, attached = delivery.prompt_evidence(encode(proven), 'grok')
+                self.assertTrue(attached)
+                self.assertTrue(delivery.prompt_matches(read, self.prompt, 'grok', attached))
+        # Evidence from an earlier turn does not carry into this one.
+        earlier = [self.rows[0], grok_row({'sessionUpdate': 'image_compressed', 'bytes': 2048})] + self.rows[1:3] + [marker]
+        self.assertFalse(delivery.prompt_evidence(encode(earlier), 'grok')[1])
+
+    def test_a_malformed_attachment_row_is_not_skipped(self):
+        # The normal recovery path reads the prompt without the identity
+        # parser, so an attachment-metadata row is validated before it is
+        # ignored: skipped unchecked, a forged one joins the text either side.
+        halves = [grok_row({'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': text}})
+                  for text in (self.prompt[:10], self.prompt[10:])]
+        valid = grok_row({'sessionUpdate': 'image_compressed', 'bytes': 2048})
+        self.assertEqual(delivery.prompt_evidence(encode([halves[0], valid, halves[1]]), 'grok', SESSION),
+                         (self.prompt, True))
+        for label, change in (('method', lambda row: row.update(method='other/update')),
+                              ('no method', lambda row: row.pop('method')),
+                              ('foreign session', lambda row: row['params'].update(sessionId='other-native')),
+                              ('unhashable session', lambda row: row['params'].update(sessionId=[])),
+                              ('bad session text', lambda row: row['params'].update(sessionId='a b')),
+                              ('meta', lambda row: row['params'].update(_meta=[]))):
+            with self.subTest(case=label):
+                forged = copy.deepcopy(valid)
+                change(forged)
+                body = encode([halves[0], forged, halves[1]])
+                self.assertEqual(delivery.prompt_evidence(body, 'grok', SESSION), (None, False))
+                self.assertIsNone(delivery.source_prompt(body, 'grok', SESSION))
+
     def test_altered_assignment_text_still_refuses_with_an_attachment(self):
         # The attachment shape is not a licence to accept different
         # instructions: only the marker Grok appends AFTER the dispatched text

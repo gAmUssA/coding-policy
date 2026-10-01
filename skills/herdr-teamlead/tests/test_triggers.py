@@ -173,6 +173,13 @@ class RequirementsTest(TempCase):
             "advisor": {"specialty": "accessibility"}}}))
         self.assertEqual(triggers.load_requirements(path), {"accessibility"})
 
+    def test_an_unplanned_consultation_role_covers_no_trigger(self):
+        self.path.write_text(json.dumps({"schema_version": 1, "assignments": {
+            "advisor": {"specialty": "security"}, "architect": {"specialty": "design"}}}))
+        self.assertEqual(triggers.load_requirements(self.path, {"developer", "architect"}), {"design"})
+        self.assertEqual(triggers.load_requirements(self.path, set()), set())
+        self.assertEqual(triggers.load_requirements(self.path), {"security", "design"})
+
     def test_absent_path_staffs_nothing(self):
         self.assertEqual(triggers.load_requirements(None), set())
 
@@ -449,6 +456,20 @@ class PlannedSurfacesTest(TempCase):
             namespace(repo=self.tmp, planned=self.write(cli_surface=["src/cli/main.py"])),
             runner=self.runner({"ls-tree": "src/cli/main.py\n"}))
         self.assertEqual(payload["fired"], ["ux-product"])
+
+    def test_a_requirement_for_an_unplanned_role_leaves_the_trigger_unaddressed(self):
+        requirements = self.tmp / "requirements.json"
+        requirements.write_text(json.dumps({"schema_version": triggers.REQUIREMENTS_SCHEMA_VERSION,
+                                            "assignments": {"advisor": {"specialty": "ux-product"}}}))
+        for roles, addressed in (("developer", None), ("developer,advisor", "specialty:ux-product")):
+            with self.subTest(roles=roles):
+                payload, failure = triggers.run_command(
+                    namespace(repo=self.tmp, roles=roles, requirements=requirements,
+                              planned=self.write(cli_surface=["src/cli/main.py"])),
+                    runner=self.runner({"ls-tree": "src/cli/main.py\n"}))
+                row = next(item for item in payload["triggers"] if item["trigger"] == "ux-product")
+                self.assertEqual(row["addressed"], addressed)
+                self.assertEqual(failure is None, addressed is not None)
 
     def test_a_planned_new_package_fires_the_architect(self):
         payload, failure = triggers.run_command(

@@ -198,53 +198,93 @@ def strip_attachment_markers(text):
     return text
 
 
-def prompt_matches(read, expected, agent):
+def prompt_matches(read, expected, agent, attached=False):
     """Is `read` the dispatched text?
 
-    Exactly, or — for Grok alone — followed only by the attachment marker the
-    runtime appends when the turn carried one. Anything else is altered
-    assignment text (#392).
+    Exactly, or — for Grok alone, and only when the transcript proves the turn
+    carried an attachment — followed only by the marker the runtime appends for
+    it. Anything else is altered assignment text (#392); a marker with no
+    attachment behind it is text somebody wrote.
     """
     if read == expected:
         return True
-    return agent == "grok" and strip_attachment_markers(read) == expected
+    return agent == "grok" and attached is True and strip_attachment_markers(read) == expected
+
+
+GROK_UPDATE_METHODS = ("session/update", "_x.ai/session/update")
+
+
+def _grok_attachment_row(row, session):
+    """Does this attachment-metadata row carry the identity parser's shape?
+
+    Skipping a row is a decision about evidence, so the row is validated the
+    way `grok_clear_identity` validates every row before it is ignored: method,
+    session and envelope. A malformed one refuses the transcript.
+    """
+    params = row.get("params")
+    if row.get("method") not in GROK_UPDATE_METHODS or not isinstance(params, dict):
+        return False
+    owner = params.get("sessionId")
+    return (isinstance(owner, str) and SESSION_ID.fullmatch(owner) is not None
+            and (session is None or owner == session)
+            and isinstance(params.get("update"), dict) and isinstance(params.get("_meta", {}), dict))
 
 
 def source_prompt(body, kind, session=None):
     """Read the actual latest user message; quoted assistant instructions fail.
 
-    `session` binds the read to one session and only Claude needs it; Codex and
-    Grok prove their own identity inside the parser. A Claude read without it
-    matches no session and stays unconfirmed.
+    `session` binds the read to one session. Claude needs it; Codex and Grok
+    prove their own identity inside the parser, and Grok uses it only to bind
+    an attachment's metadata row. A Claude read without it matches no session
+    and stays unconfirmed.
+    """
+    return prompt_evidence(body, kind, session)[0]
+
+
+def prompt_evidence(body, kind, session=None):
+    """The latest user message and whether its turn carried an attachment.
+
+    The second value is Grok's alone: True only when the user group the prompt
+    was read from holds an image chunk or a validated attachment-metadata row.
     """
     rows = _rows(body)
     if rows is None:
-        return None
+        return None, False
     if kind == "claude":
-        return claude_native.prompt_text(rows, session)
-    prompt, in_chunks = None, False
+        return claude_native.prompt_text(rows, session), False
+    prompt, in_chunks, attached, pending = None, False, False, False
     for row in rows:
         if kind == "codex":
             payload = row.get("payload", {})
             if not isinstance(payload, dict):
-                return None
+                return None, False
             if row.get("type") == "response_item" and payload.get("role") == "user":
                 content = payload.get("content")
                 if not isinstance(content, list) or not all(isinstance(item, dict) and item.get("type") == "input_text"
                         and isinstance(item.get("text"), str) for item in content):
-                    return None
+                    return None, False
                 prompt = "".join(item["text"] for item in content)
         else:
             params = row.get("params", {})
             update = params.get("update", {}) if isinstance(params, dict) else {}
             if not isinstance(update, dict):
-                return None
+                return None, False
             if _is_one_of(update.get("sessionUpdate"), GROK_ATTACHMENT_UPDATES):
+                if not _grok_attachment_row(row, session):
+                    return None, False
+                # Inside a group it marks that group; ahead of one it marks the
+                # group the next chunk starts.
+                if in_chunks:
+                    attached = True
+                else:
+                    pending = True
                 continue
             if update.get("sessionUpdate") == "user_message_chunk":
                 content = update.get("content", {})
                 if not isinstance(content, dict):
-                    return None
+                    return None, False
+                if not in_chunks:
+                    attached, pending = pending, False
                 if _is_one_of(content.get("type"), GROK_ATTACHMENT_CONTENT):
                     # An attachment chunk carries no prompt text and does not
                     # end the group the dispatched text was written in (#392).
@@ -252,15 +292,16 @@ def source_prompt(body, kind, session=None):
                     # following text belongs to THIS turn, not the previous one.
                     if not in_chunks:
                         prompt = ""
-                    in_chunks = True
+                    in_chunks, attached = True, True
                     continue
                 if content.get("type") != "text" or not isinstance(content.get("text"), str):
-                    return None
+                    return None, False
                 prompt = (prompt or "") + content["text"] if in_chunks else content["text"]
                 in_chunks = True
             else:
-                in_chunks = False
-    return prompt
+                in_chunks, pending = False, False
+    return prompt, attached
+
 
 
 def native_identity(info):
@@ -418,7 +459,7 @@ def grok_clear_identity(body, prompt):
     identity, submitted, user_groups, previous, completions = None, None, 0, None, 0
     for index, row in enumerate(rows):
         params = row.get("params")
-        if not isinstance(params, dict) or row.get("method") not in ("session/update", "_x.ai/session/update"):
+        if not isinstance(params, dict) or row.get("method") not in GROK_UPDATE_METHODS:
             return None
         session, update, meta = params.get("sessionId"), params.get("update"), params.get("_meta", {})
         if (not isinstance(session, str) or not SESSION_ID.fullmatch(session)
@@ -467,7 +508,8 @@ def grok_clear_identity(body, prompt):
         previous = kind
     if completions != 1 or user_groups != 1:
         return None
-    if not prompt_matches(source_prompt(body, "grok"), prompt, "grok"):
+    read, attached = prompt_evidence(body, "grok")
+    if not prompt_matches(read, prompt, "grok", attached):
         return None
     return {"agent": "grok", "kind": "id", "value": identity}
 
@@ -562,10 +604,11 @@ def recover(store, assignments, data, at):
             raise UsageError("Archived pane JSON has no supported native session identity; restore the original pane get evidence.", {})
         raise UsageError("Stale-ID recovery requires an original Grok automatic clear; preserve the original evidence.", {})
     final_session = source_session["value"] if source_session else identity["value"] if identity else None
+    read, attached = prompt_evidence(bodies["source"], identity["agent"], final_session) if identity else (None, False)
     if (identity is None or original_identity is not None and identity != original_identity
             or not isinstance(pane, dict) or not pane_identity(pane, dispatch["result"].get("pane_id"), identity)
             or not decorated_row(bodies["visible"], identity["agent"], data["report"])
-            or not prompt_matches(source_prompt(bodies["source"], identity["agent"], final_session), prompt, identity["agent"])
+            or not prompt_matches(read, prompt, identity["agent"], attached)
             or not bare_final(source_final(bodies["source"], identity["agent"], final_session), data["report"])):
         raise UsageError("Archived pane and completed native source do not prove this report's bare final marker; preserve the negative receipt.", {})
     prior = next((row for row in store["delivery_recoveries"] if row["id"] == data["id"]), None)

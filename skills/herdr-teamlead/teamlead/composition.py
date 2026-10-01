@@ -121,7 +121,9 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
         independent = role in {"reviewer", "tester"} or requirement is not None and requirement["independent"]
         for name in names:
             agent = by_name.get(name)
-            unconfigured = requirement is not None and agent is None
+            # With no configured agents at all there is no config to be
+            # absent from; a caller passing none asks only about contribution.
+            unconfigured = agent is None and (requirement is not None or bool(by_name))
             missing = sorted(set(requirement["required_capabilities"]) - set(agent.capabilities if agent else ())) if requirement else []
             conflict = independent and name in contributors
             if missing or conflict or unconfigured:
