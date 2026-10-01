@@ -204,17 +204,18 @@ fetch_merge_state() {
 }
 
 # Logins with a review request still pending on the PR, lowercased and with the
-# `[bot]` suffix stripped so one spelling compares against another. GitHub
-# reports a bot reviewer under either spelling depending on the surface.
-# Logins with a review request still pending on the PR, lowercased and with the
 # `[bot]` suffix stripped so one spelling compares against another. GraphQL, not
 # the REST `requested_reviewers` endpoint: that endpoint omits bot reviewers
 # entirely (#276), so every bot lane would read "never requested" there.
-fetch_requested_logins() {
-  local owner="$1" repo="$2" pr="$3"
-  gh api graphql -f query="
-    query { repository(owner: \"${owner}\", name: \"${repo}\") {
-      pullRequest(number: ${pr}) {
+#
+# Owner, repo and PR number travel as GraphQL variables, never interpolated
+# into the query text. `-F` types the number as `Int!`; it would also read a
+# file for an `@`-prefixed value, so the number is validated first.
+# shellcheck disable=SC2016 # `$owner`, `$repo`, `$pr` are GraphQL variables, not shell expansions
+REQUESTED_LOGINS_QUERY='
+  query($owner: String!, $repo: String!, $pr: Int!) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
         reviewRequests(first: 50) { nodes { requestedReviewer {
           __typename
           ... on Bot { login }
@@ -222,8 +223,17 @@ fetch_requested_logins() {
           ... on Team { slug }
         } } }
       }
-    } }
-  " --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
+    }
+  }'
+
+fetch_requested_logins() {
+  local owner="$1" repo="$2" pr="$3"
+  if [[ ! "$pr" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: pr-number must be a positive integer; got '${pr}'" >&2
+    return 1
+  fi
+  gh api graphql -f query="$REQUESTED_LOGINS_QUERY" -f owner="$owner" -f repo="$repo" -F pr="$pr" \
+    --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
            | (.login // .slug) | select(. != null) | ascii_downcase | sub("\\[bot\\]$"; "")]' \
     | jq -c '.'
 }
@@ -244,6 +254,10 @@ main() {
     exit 2
   fi
   local owner="$1" repo="$2" pr_number="$3"
+  if [[ ! "$pr_number" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: pr-number must be a positive integer; got '${pr_number}' — pass the PR's number, e.g. '$0 ${owner} ${repo} 42'" >&2
+    exit 2
+  fi
 
   # gh pr checks exits 8 when no checks are configured — distinguish that from real errors.
   local checks_json checks_raw rc=0
@@ -300,7 +314,7 @@ main() {
 
   local requested_logins codex_requested copilot_requested
   requested_logins=$(fetch_requested_logins "$owner" "$repo" "$pr_number") \
-    || { echo "error: failed to fetch pending review requests for ${owner}/${repo}#${pr_number} — run 'gh auth status' to verify auth, then retry 'gh api repos/${owner}/${repo}/pulls/${pr_number}/requested_reviewers'" >&2; exit 1; }
+    || { echo "error: failed to fetch pending review requests for ${owner}/${repo}#${pr_number} — run 'gh auth status' to verify auth, then inspect the PR's reviewRequests with 'gh api graphql' (the REST requested_reviewers endpoint omits bot reviewers)" >&2; exit 1; }
   codex_requested=$(requested_among "$requested_logins" "${CODEX_REVIEW_LOGINS[@]}") \
     || { echo "error: could not match the policy reviewer against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
   copilot_requested=$(requested_among "$requested_logins" "$COPILOT_REVIEW_LOGIN") \

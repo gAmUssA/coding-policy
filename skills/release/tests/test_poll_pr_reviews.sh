@@ -98,9 +98,45 @@ gh() {
       # `gh api graphql -f query=... --jq ...` — the pending review requests.
       # GraphQL, not REST: the REST endpoint omits bot reviewers entirely
       # (#276), so every bot lane would read "never requested" there (#369).
+      #
+      # Contract-checked, then answered the way GitHub answers: the query must
+      # select the fields the filter reads and carry the PR as an `Int!`
+      # variable, and the production `--jq` filter runs over a raw GraphQL
+      # response. A wrong field selection therefore reads every lane
+      # unrequested here too, instead of passing against a pre-shaped array.
+      # MOCK_REQUESTED_BODY lists the pending logins; MOCK_REQUESTED_RAW
+      # replaces the whole raw response.
       if [[ "${2:-}" == "graphql" ]]; then
-        printf '%s' "${MOCK_REQUESTED_BODY:-[]}"
-        return 0
+        shift 2
+        local query="" filter="" pr_var="" owner_var="" repo_var=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            -f) case "${2:-}" in
+                  query=*) query="${2#query=}" ;;
+                  owner=*) owner_var="${2#owner=}" ;;
+                  repo=*)  repo_var="${2#repo=}" ;;
+                esac; shift 2 ;;
+            -F) case "${2:-}" in pr=*) pr_var="${2#pr=}" ;; esac; shift 2 ;;
+            --jq) filter="${2:-}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        local needle
+        # shellcheck disable=SC2016 # literal GraphQL variable names the query must carry
+        for needle in 'reviewRequests(first: 50)' 'requestedReviewer' '... on Bot { login }' \
+                      '... on User { login }' '... on Team { slug }' \
+                      '$owner: String!' '$repo: String!' '$pr: Int!' 'pullRequest(number: $pr)'; do
+          [[ "$query" == *"$needle"* ]] || { echo "mock gh api graphql: query lacks '${needle}'" >&2; return 99; }
+        done
+        [[ "$pr_var" =~ ^[1-9][0-9]*$ ]] || { echo "mock gh api graphql: -F pr must be a positive integer, got '${pr_var}'" >&2; return 99; }
+        [[ -n "$owner_var" && -n "$repo_var" ]] || { echo "mock gh api graphql: owner and repo must travel as -f variables" >&2; return 99; }
+        [[ -n "$filter" ]] || { echo "mock gh api graphql: missing --jq" >&2; return 99; }
+        local raw
+        raw="${MOCK_REQUESTED_RAW:-$(printf '%s' "${MOCK_REQUESTED_BODY:-[]}" | jq -c \
+          '{data: {repository: {pullRequest: {reviewRequests: {nodes:
+             [.[] | {requestedReviewer: {__typename: "Bot", login: .}}]}}}}}')}"
+        printf '%s' "$raw" | jq "$filter"
+        return $?
       fi
       # gh api --paginate repos/<o>/<r>/pulls/<N>/reviews?per_page=100
       # gh api --paginate repos/<o>/<r>/pulls/<N>/comments?per_page=100
@@ -146,6 +182,36 @@ t_requested_among_is_false_when_nobody_asked() {
   local out
   out=$(requested_among '[]' "copilot-pull-request-reviewer[bot]")
   assert_eq "requested" "false" "$out"
+}
+
+# The raw GraphQL response, through the production filter: bot suffix and case
+# normalized, a team read by slug, a reviewer GitHub could not resolve dropped.
+t_fetch_requested_logins_reads_the_raw_graphql_shape() {
+  local out
+  MOCK_REQUESTED_RAW='{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
+    {"requestedReviewer":{"__typename":"Bot","login":"Copilot-Pull-Request-Reviewer[bot]"}},
+    {"requestedReviewer":{"__typename":"User","login":"Some-Human"}},
+    {"requestedReviewer":{"__typename":"Team","slug":"Core-Team"}},
+    {"requestedReviewer":null}]}}}}}'
+  out=$(fetch_requested_logins owner repo 7)
+  unset MOCK_REQUESTED_RAW
+  assert_eq "logins" '["copilot-pull-request-reviewer","some-human","core-team"]' "$out"
+}
+
+# A PR number is validated before any call: `-F` would read a file for an
+# `@`-prefixed value, and anything else non-numeric is not a PR.
+t_non_integer_pr_number_is_refused_before_any_call() {
+  local candidate rc out
+  for candidate in "1) { id } } #" "@/etc/hosts" "0" "-1" "1.5" "" "abc"; do
+    rc=0
+    out=$(fetch_requested_logins owner repo "$candidate" 2>&1) || rc=$?
+    [[ "$rc" -eq 1 && "$out" == *"positive integer"* ]] \
+      || { echo "    FAIL: fetch_requested_logins accepted '${candidate}' (rc=${rc}): ${out}" >&2; return 1; }
+    rc=0
+    out=$( (MOCK_MERGE_STATE=boom main owner repo "$candidate") 2>&1 ) || rc=$?
+    [[ "$rc" -eq 2 && "$out" == *"positive integer"* ]] \
+      || { echo "    FAIL: main accepted '${candidate}' (rc=${rc}): ${out}" >&2; return 1; }
+  done
 }
 
 t_requested_among_ignores_another_reviewer() {
@@ -634,6 +700,8 @@ run "ci.status: a real fail next to a cancel still fails (#182)"      t_ci_statu
 run "requested_among: a pending bot request matches (#369)"           t_requested_among_matches_a_pending_bot
 run "requested_among: no pending request reads false (#369)"          t_requested_among_is_false_when_nobody_asked
 run "requested_among: another reviewer's request is not this one"     t_requested_among_ignores_another_reviewer
+run "fetch_requested_logins filters the raw GraphQL response"         t_fetch_requested_logins_reads_the_raw_graphql_shape
+run "a non-integer PR number is refused before any call"              t_non_integer_pr_number_is_refused_before_any_call
 run "main marks a lane nobody requested (#369)"                       t_main_marks_an_unrequested_lane
 run "main marks a requested-and-pending lane (#369)"                  t_main_marks_a_pending_lane_requested
 
