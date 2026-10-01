@@ -36,6 +36,10 @@ WORK = {"base_revision": BASE, "scope": "Correct parser findings", "paths": ["sr
 PROGRESS = "PROGRESS: two of the three findings closed under the prior remedy.\n"
 
 
+def _dispatch(store, identifier):
+    return next(row for row in store["dispatches"] if row["id"] == identifier)
+
+
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -546,7 +550,7 @@ class RecoveryTests(unittest.TestCase):
         validate_work(self.store, self.history, TASK, 7, "plan-1", WORK)
         self.finish(7)
         self.assertEqual([row["id"] for row in active_plans(self.store)], ["plan-1"])
-        self.assertEqual(confirmed_fix(self.history, TASK), 7)
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 7)
         with self.assertRaisesRegex(UsageError, "outside the approved task or budget"):
             validate_work(self.store, self.history, TASK, 8, "plan-1", WORK)
         path = self.root / "state.json"
@@ -795,7 +799,7 @@ class RecoveryTests(unittest.TestCase):
         assert replay is not None
         self.assertEqual(replay["status"], "applied")
         self.assertEqual(self.state, previous)
-        self.assertEqual(confirmed_fix(self.history, TASK), 6)
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 6)
         with self.assertRaisesRegex(UsageError, "different inputs"):
             prior_dispatch(self.store, "fix-6", "d" * 64)
 
@@ -815,7 +819,7 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageError, "unresolved dispatch"):
             reserve(self.store, {**record, "id": "another-id"}, AT)
         self.assertEqual(len(self.store["dispatches"]), 1)
-        self.assertEqual(confirmed_fix(self.history, TASK), 5)
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 5)
 
     def test_release_clear_and_explicit_null_recovery_preserve_original_rows(self):
         add_assignment(self.state, AT, "developer", "worker", task=TASK)
@@ -908,6 +912,102 @@ class RecoveryTests(unittest.TestCase):
         second = dispatch_identity(TASK, "developer", "worker", 1, paths_by_role, "try-1")
         self.assertEqual(first[0], second[0])
         self.assertNotEqual(first[1], second[1])
+
+    def test_refused_extra_correction_reuses_its_slot_without_rewriting_history(self):
+        self.approve()
+        first = {**self.reservation(6), "provider": "codex", "brief_identity": "same-brief"}
+        reserve(self.store, first, AT)
+        mark_sending(self.store, first["id"], AT, {"cleared": True})
+        add_assignment(self.state, AT, "developer", "worker", task=TASK, fix_round=6)
+        finish_dispatch(self.store, first["id"], {"status": "applied", **{
+            key: first[key] for key in ("task", "role", "agent", "fix_round")}}, len(self.history) - 1, AT)
+        original = copy.deepcopy(self.history)
+        record_refusal(self.store, {"dispatch": first["id"], "receipt": self.refusal_receipt("worker")},
+                       AT, "codex", self.REPORT)
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 5)
+        self.assertEqual(task_statuses(self.store, self.history)[TASK]["remaining_fixes"], 2)
+        validate_work(self.store, self.history, TASK, 6, "plan-1", WORK)
+        with self.assertRaisesRegex(UsageError, "actual next fix number"):
+            validate_work(self.store, self.history, TASK, 7, "plan-1", WORK)
+        moved = {**first, "id": "fix-6-moved", "agent": "replacement", "provider": "claude",
+                 "refusal_move": refusal_move(self.store, TASK, "developer", 6, "claude", "same-brief", "/reports/replacement.md")}
+        reserve(self.store, moved, AT)
+        mark_sending(self.store, moved["id"], AT, {"cleared": True})
+        add_assignment(self.state, "2026-02-03T10:01:00+00:00", "developer", "replacement", task=TASK, fix_round=6)
+        finish_dispatch(self.store, moved["id"], {"status": "applied", **{
+            key: moved[key] for key in ("task", "role", "agent", "fix_round")}}, len(self.history) - 1, AT)
+        path = self.root / "moved-state.json"
+        save_state(path, self.state)
+        restored, usable = load_state_checked(path)
+        self.assertTrue(usable)
+        self.assertEqual(restored["assignments"][:-1], original)
+        self.assertEqual(confirmed_fix(restored["assignments"], TASK, restored["recovery"]), 6)
+        # A real implementation still needs its blocking review before round 7.
+        with self.assertRaisesRegex(UsageError, "preceding correction.*blocking review"):
+            validate_work(self.store, self.history, TASK, 7, "plan-1", WORK)
+        # A duplicate slot without its verified move remains corrupt state.
+        invalid = copy.deepcopy(self.store)
+        del invalid["dispatches"][-1]["refusal_move"]
+        with self.assertRaisesRegex(UsageError, "consumed twice"):
+            validate_store(invalid, self.history)
+        # A slot is shared only when the row it moved from bore no work. A
+        # legacy row carrying a delivered review keeps its number, so the move
+        # beside it is the duplicate the ledger has always refused.
+        worked = copy.deepcopy(self.store)
+        record_report(worked, {"dispatch": "fix-6-moved", "head_revision": HEAD, "verdict": "blocking",
+            "review_mode": "full", "reviewer": "independent-reviewer", "report": str(self.review),
+            "changed_paths": ["src/parser.py"]}, AT)
+        _dispatch(worked, first["id"])["report"] = {**_dispatch(worked, "fix-6-moved").pop("report"),
+                                                    "dispatch": first["id"]}
+        with self.assertRaisesRegex(UsageError, "consumed twice"):
+            validate_store(worked, self.history)
+
+    def test_a_reviewed_attempt_and_a_refusal_never_share_one_dispatch(self):
+        # A refused dispatch frees its correction number (#5). A recorded
+        # review proves the attempt delivered its report, so each bars the
+        # other and neither order can free a number the work consumed.
+        self.approve()
+        self.finish(6)
+        review = {"dispatch": "fix-6", "head_revision": HEAD, "verdict": "blocking", "review_mode": "full",
+                  "reviewer": "independent-reviewer", "report": str(self.review), "changed_paths": ["src/parser.py"]}
+        record_report(self.store, review, AT)
+        with self.assertRaisesRegex(UsageError, "already carries a recorded review"):
+            record_refusal(self.store, {"dispatch": "fix-6", "receipt": self.refusal_receipt("worker")}, AT, "codex", self.REPORT)
+        self.assertIsNone(_dispatch(self.store, "fix-6").get("refusal"))
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 6)
+        self.finish(7)
+        record_refusal(self.store, {"dispatch": "fix-7", "receipt": self.refusal_receipt("worker", "refusal-7.json")},
+                       AT, "codex", self.REPORT)
+        self.assertEqual(confirmed_fix(self.history, TASK, self.store), 6)
+        with self.assertRaisesRegex(UsageError, "terminal provider refusal"):
+            record_report(self.store, {**review, "dispatch": "fix-7"}, AT)
+        self.assertIsNone(_dispatch(self.store, "fix-7").get("report"))
+        validate_store(self.store, self.history)
+        # A ledger an earlier release wrote with both fields stays readable --
+        # rejecting it would strand its owner with no usable prior state -- and
+        # its delivered review keeps the correction number spent.
+        legacy = copy.deepcopy(self.store)
+        _dispatch(legacy, "fix-7")["report"] = {**_dispatch(legacy, "fix-6")["report"], "dispatch": "fix-7"}
+        validate_store(legacy, self.history)
+        self.assertEqual(confirmed_fix(self.history, TASK, legacy), 7)
+        path = self.root / "legacy-state.json"
+        save_state(path, {**self.state, "recovery": legacy})
+        restored, usable = load_state_checked(path)
+        self.assertTrue(usable)
+        self.assertEqual(confirmed_fix(restored["assignments"], TASK, restored["recovery"]), 7)
+        # Replaying the refusal already recorded on that row still replays;
+        # only a new refusal against a reviewed dispatch is refused.
+        self.assertEqual(record_refusal(legacy, {"dispatch": "fix-7", "receipt": self.refusal_receipt(
+            "worker", "refusal-7.json")}, AT, "codex", self.REPORT), _dispatch(legacy, "fix-7")["refusal"])
+        # A row counted as spent still owes its blocking review: the
+        # compatibility reading must not skip the gate it satisfies.
+        gated = copy.deepcopy(self.store)
+        _dispatch(gated, "fix-6")["refusal"] = copy.deepcopy(_dispatch(gated, "fix-7")["refusal"])
+        _dispatch(gated, "fix-6")["report"]["verdict"] = "approved"
+        validate_store(gated, self.history)
+        self.assertEqual(confirmed_fix(self.history, TASK, gated), 6)
+        with self.assertRaisesRegex(UsageError, "actual blocking review"):
+            validate_work(gated, self.history, TASK, 7, "plan-1", WORK)
 
     REPORT = "/reports/tester.md"
     BRIEF = "brief-identity-tester"

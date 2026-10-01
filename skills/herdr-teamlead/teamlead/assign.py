@@ -56,7 +56,7 @@ from .composer import COMPOSER_READ_LINES, COMPOSER_READ_SOURCE, checkable
 from .probe import PROBE_READ_LINES, PROBE_READ_SOURCE, resolve_status, stderr_warn
 from .chronology import latest_assignment
 from .state import MAX_FIX_ROUNDS
-from .recovery import empty_recovery, fresh_transition, task_record, validate_work
+from .recovery import developer_attempts, empty_recovery, fresh_transition, task_record, validate_work
 from .launch import restart_worker, verify_running, verify_running_permissions
 from .tiers import launch_flags, worker_launch_args
 from .qualification import require_qualification
@@ -239,7 +239,7 @@ def validate_agents(assignments, agents_by_name):
             )
 
 
-def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None):
+def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None, refusal_moves=None):
     """Validate the explicit context choice before any herdr operation."""
     parse_requirements(
         {"schema_version": 1, "assignments": requirements} if requirements else None,
@@ -279,14 +279,21 @@ def validate_context_mode(assignments, no_clear, retain_context, task, fix_round
         raise UsageError("Pass --task with --fix-round to identify the task.", {})
     store = recovery if recovery is not None else empty_recovery()
     validate_work(store, history or [], task, fix_round, plan_id, work, implementation="developer" in assignments)
-    transition = fresh_transition(store, history or [], task, fix_round)
+    # A replacement for a refused developer brief (#5) reuses the refused
+    # attempt's own correction number, so the handoff gates below are answered
+    # by the verified move itself: the number is not being advanced, and the
+    # new provider holds no context to retain or keep.
+    move = (refusal_moves or {}).get("developer")
+    if move and (no_clear or retain_context):
+        raise UsageError("A provider-refusal replacement requires a fresh developer context; omit --retain-context and --no-clear.", {})
+    transition = fresh_transition(store, history or [], task, fix_round) if not move else None
     if retain_context and (
         set(assignments) != {"developer"} or fix_round not in RETAIN_CONTEXT_ROUNDS
     ):
         raise UsageError(
             "--retain-context requires one developer assignment and --fix-round 1, 2 or 3.", {}
         )
-    if "developer" in assignments and fix_round in RETAIN_CONTEXT_ROUNDS and not retain_context:
+    if "developer" in assignments and fix_round in RETAIN_CONTEXT_ROUNDS and not retain_context and not move:
         if transition is None:
             raise UsageError("Early developer fixes require --retain-context or a recorded fresh handoff. Use recover-role-clear for a verified automatic role clear, or follow dispatch-recovery.md for other causes; never reset the task.", {})
         task_record(store, task)
@@ -297,12 +304,12 @@ def validate_context_mode(assignments, no_clear, retain_context, task, fix_round
     return transition if not retain_context and "developer" in assignments else None
 
 
-def validate_fix_history(assignments, history, task, fix_round):
+def validate_fix_history(assignments, history, task, fix_round, *, recovery=None):
     """A worker change cannot reset or skip the task's confirmed fix count."""
     if "developer" not in assignments or task is None:
         return
-    prior = [row for row in (history or []) if row.get("task") == task
-             and row.get("role") == "developer" and row.get("status") == "applied"]
+    # A refused dispatch consumed no attempt; see recovery.developer_attempts.
+    prior = developer_attempts(history or [], task, recovery)
     completed = max((row.get("fix_round") or 0 for row in prior), default=0)
     if fix_round is None:
         if prior:
@@ -578,7 +585,7 @@ def check_all_ready(client, assignments, agents_by_name, warn=None):
     return statuses
 
 
-def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, qualifications=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None, retain_specialist=False, requirements=None):
+def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, qualifications=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None, retain_specialist=False, requirements=None, refusal_moves=None):
     """Hand each agent its brief using the selected context mode.
 
     `on_assigned(role, agent, at, status, context)` is called after each hand-off so the
@@ -590,8 +597,8 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     validate_agents(assignments, agents_by_name)
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
                                        recovery=recovery, history=history, plan_id=plan_id, work=work,
-                                       retain_specialist=retain_specialist, requirements=requirements)
-    validate_fix_history(assignments, history, task, fix_round)
+                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves)
+    validate_fix_history(assignments, history, task, fix_round, recovery=recovery)
     prior = validate_retained_history(assignments, history, task, fix_round) if retain_context else None
     tiers = dict(tiers or {})
     specialist_prior = validate_specialist_history(assignments, history, task, requirements, tiers) if retain_specialist else None
@@ -849,7 +856,7 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     }
 
 
-def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, retain_context=False, task=None, fix_round=None, tiers=None, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None):
+def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, retain_context=False, task=None, fix_round=None, tiers=None, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None, refusal_moves=None):
     """Print the plan without contacting herdr at all.
 
     Deliberately makes zero herdr calls, including the status check: a dry run
@@ -858,7 +865,8 @@ def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_t
     """
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
                                        recovery=recovery, history=history, plan_id=plan_id, work=work,
-                                       retain_specialist=retain_specialist, requirements=requirements)
+                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves)
+    validate_fix_history(assignments, history, task, fix_round, recovery=recovery)
     if retain_specialist:
         validate_specialist_history(assignments, history, task, requirements, tiers)
     result = {
