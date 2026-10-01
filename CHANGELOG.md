@@ -4,6 +4,32 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.7 — 2026-09-30
+
+### Fixed
+
+Advisories deferred from the upstream 0.3.232 sync review (#4), tracked in #6. Each was read against the current tree first: the forgeable delivery receipt and the symlink-following untracked read were already closed in 0.7.3.
+
+- **A relaunch retry re-proves the pane.** After a late `agent_name_taken`, `start_after_release` waited for the name again and started, without checking that the pane still held only its archived shell. `launch.holds_only_shell`, the check the first start already follows, now also gates each retry; a pane something else occupied during the second wait is refused with no further start sent.
+- **A Grok attachment marker is stripped only with attachment evidence.** `prompt_matches` removed a trailing `[Image #N]` from any Grok prompt, so a transcript holding the dispatched text followed by that literal passed recovery with no attachment behind it. `prompt_evidence` now returns the prompt with whether its own user group carried an image chunk or an `image_compressed` row, and the marker is stripped only then. Evidence from an earlier turn does not carry forward.
+- **An attachment-metadata row is validated before it is skipped.** `source_prompt` serves the ordinary recovery path, where `grok_clear_identity` never runs, and it skipped any `image_compressed` row unchecked; a forged one between two text chunks joined them into the expected prompt. The row now needs the identity parser's method, a well-formed session equal to the recovery's own, and an object envelope, or the transcript is refused.
+- **A malformed assignment role reads as no usable state.** A persisted row with `requirements` and an unhashable `role` raised `TypeError` out of `load_state_checked` through the specialist validator's membership test. The loader rejects a non-string role first, so the file is preserved and reported.
+- **A snapshot worker absent from `config.json` is excluded from every role.** `selection_constraints` applied the exclusion only where the role carried specialist requirements, so a stale snapshot could rank a ghost agent for developer, reviewer or tester and only `apply` refused it.
+- **Trigger coverage counts only planned consultation roles.** `detect-triggers --roles developer` with a requirements file naming an unseated `advisor` marked a fired trigger addressed. With `--roles`, a requirement covers a trigger only when its role is in that list; without `--roles` the reading is unchanged.
+- **A partition's `schema_version` must be an integer.** `true` passed the `== 1` comparison.
+- **`poll-pr-reviews.sh` validates the PR number and passes it as a GraphQL variable.** The number was interpolated into the query text unvalidated. Owner, repo and number now travel as `-f`/`-F` variables against a `$pr: Int!` query, and `main` refuses a non-positive-integer number with exit 2 before any call — `-F` would otherwise read a file for an `@`-prefixed value. The failed-fetch diagnostic points at the GraphQL `reviewRequests` read the code performs, not the REST endpoint that omits bots.
+- `state-schema.md` states that new checkpoints are written at version 3 and version-1 rows migrate to 2; the paragraph said "version 2" while the collection table beside it was correct.
+
+### Testing
+
+- `test_poll_pr_reviews.sh`'s `gh api graphql` mock returned a pre-shaped login array for any call. It now checks the query's field selection and variables, builds a raw GraphQL response, and runs the production `--jq` filter over it, so a wrong selection reads every lane unrequested in the suite too.
+- `test_compose_briefs.sh` covers the `brief-specialist.md` fallback for advisor, investigator and architect, a role's own template winning over it, and a non-consultation role getting no fallback.
+
+### Not changed
+
+- The worktree-containment advisory against `hooks/stop-handoff-hygiene.sh` (`base..refs/heads/<branch>` instead of `HEAD`) is declined. A linked worktree with a branch checked out has a symbolic `HEAD`, so both spellings resolve to one commit; a branch ref moved underneath it leaves the index behind the new commit, which `git status --porcelain` reports and the same function already reads as `dirty`.
+- The accepted-defect issue reference on the `stop` diagnosis changes the `diagnoses` record and is tracked on its own.
+
 ## 0.7.6 — 2026-09-29
 
 ### Fixed
