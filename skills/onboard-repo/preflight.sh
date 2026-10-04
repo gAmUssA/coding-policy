@@ -3,8 +3,9 @@
 # the skill surfaces all failures together instead of one per run.
 #
 # Checks: git worktree, origin remote, GitHub CLI installed + authenticated,
-# the Codex subscription credential (`~/.codex/auth.json` with auth_mode
-# "chatgpt" and has_refresh_token true — the reviewer workflow runs on it),
+# the Codex subscription credential (`~/.codex/auth.json` holding a
+# `tokens.refresh_token`, with `auth_mode` "chatgpt" or absent — the reviewer
+# workflow runs on it),
 # the installed plugin's templates, and (install mode only) that no reviewer
 # target already exists. In --override mode an existing target is expected;
 # the check becomes "no uncommitted edits on a target the upgrade would
@@ -85,11 +86,19 @@ check_codex_auth() {
     push_failure "codex-auth" "Codex credential not found at ${CODEX_AUTH_FILE} — run 'codex login' (Sign in with ChatGPT) on this machine first"
     return 0
   fi
-  local mode refresh
-  mode=$(jq -r '.auth_mode // empty' "$CODEX_AUTH_FILE" 2>/dev/null) || mode=""
-  refresh=$(jq -r '.has_refresh_token // false' "$CODEX_AUTH_FILE" 2>/dev/null) || refresh="false"
-  if [[ "$mode" != "chatgpt" || "$refresh" != "true" ]]; then
-    push_failure "codex-auth" "${CODEX_AUTH_FILE} is not a ChatGPT-subscription credential with a refresh token (auth_mode='${mode:-?}', has_refresh_token=${refresh}) — run 'codex login' and pick Sign in with ChatGPT"
+  # `codex login` writes the refresh token under `tokens.refresh_token`; no
+  # `has_refresh_token` field exists (#21). Some codex releases omit
+  # `auth_mode` from a ChatGPT login, so absent reads as unstated, and only an
+  # explicit other mode (`apikey`) rejects.
+  local verdict
+  if ! verdict=$(jq -r '
+      if (.auth_mode // "chatgpt") != "chatgpt" then "mode:" + (.auth_mode | tostring)
+      elif ((.tokens.refresh_token? // "") | type) != "string" or (.tokens.refresh_token? // "") == "" then "no-refresh-token"
+      else "ok" end' "$CODEX_AUTH_FILE" 2>/dev/null); then
+    verdict="unreadable"
+  fi
+  if [[ "$verdict" != "ok" ]]; then
+    push_failure "codex-auth" "${CODEX_AUTH_FILE} is not a ChatGPT-subscription credential with a refresh token (${verdict}) — run 'codex login' and pick Sign in with ChatGPT"
   fi
 }
 

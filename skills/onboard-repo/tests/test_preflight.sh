@@ -7,7 +7,8 @@
 #   1. all green (install)         -> ok, exit 0, no failures.
 #   2. gh unauthenticated          -> gh-authenticated failure, exit 1.
 #   3. codex credential missing    -> codex-auth failure.
-#   4. codex credential not chatgpt -> codex-auth failure.
+#   4. codex credential not chatgpt -> codex-auth failure; one without
+#      auth_mode passes; an empty, legacy-shaped or unreadable one fails.
 #   5. templates missing           -> templates-present failure names tessl install.
 #   6. install with a target present -> targets-absent failure (says --override).
 #   7. override with dirty target  -> targets-clean failure.
@@ -60,8 +61,16 @@ if [[ "$1 $2" == "auth status" ]]; then [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1
 exit 0
 STUB
   chmod +x "$STUBBIN/gh"
-  AUTH_OK="$TMP/auth-ok.json"; printf '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}\n' > "$AUTH_OK"
-  AUTH_API="$TMP/auth-api.json"; printf '{"auth_mode":"apikey","has_refresh_token":false}\n' > "$AUTH_API"
+  # Credential fixtures carry the shapes `codex login` writes (#21): the
+  # refresh token lives under `tokens`, and `auth_mode` may be absent.
+  AUTH_OK="$TMP/auth-ok.json"
+  printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}\n' > "$AUTH_OK"
+  AUTH_NO_MODE="$TMP/auth-no-mode.json"
+  printf '{"OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}\n' > "$AUTH_NO_MODE"
+  AUTH_API="$TMP/auth-api.json"; printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}\n' > "$AUTH_API"
+  AUTH_EMPTY_RT="$TMP/auth-empty-rt.json"; printf '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}\n' > "$AUTH_EMPTY_RT"
+  AUTH_LEGACY="$TMP/auth-legacy.json"; printf '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}\n' > "$AUTH_LEGACY"
+  AUTH_BROKEN="$TMP/auth-broken.json"; printf '{broken\n' > "$AUTH_BROKEN"
   MOUNT="$TMP/mount"; mkmount "$MOUNT"
 
   # 1. all green
@@ -79,6 +88,17 @@ STUB
   # 4. codex credential wrong mode
   mkrepo "$TMP/r4"; run "$TMP/r4" CODEX_AUTH_FILE="$AUTH_API"
   if [[ $RC -eq 1 ]] && has_failure codex-auth; then pass; else fail "codex apikey: RC=$RC OUT=$OUT"; fi
+
+  # 4b. a ChatGPT login without auth_mode passes (#21)
+  mkrepo "$TMP/r4b"; run "$TMP/r4b" CODEX_AUTH_FILE="$AUTH_NO_MODE"
+  if [[ $RC -eq 0 ]] && ! has_failure codex-auth; then pass; else fail "codex no auth_mode: RC=$RC OUT=$OUT"; fi
+
+  # 4c. no usable refresh token, or an unreadable file, still fails
+  for bad in "$AUTH_EMPTY_RT" "$AUTH_LEGACY" "$AUTH_BROKEN"; do
+    mkrepo "$TMP/r4c"; run "$TMP/r4c" CODEX_AUTH_FILE="$bad"
+    if [[ $RC -eq 1 ]] && has_failure codex-auth; then pass; else fail "codex bad credential $(basename "$bad"): RC=$RC OUT=$OUT"; fi
+    rm -rf "$TMP/r4c"
+  done
 
   # 5. templates missing
   mkrepo "$TMP/r5"; run "$TMP/r5" PLUGIN_MOUNT="$TMP/empty-mount"
