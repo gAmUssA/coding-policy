@@ -4,6 +4,20 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.8 — 2026-10-04
+
+### Changed
+
+Three testing directives borrowed from the incident log of [andrebrov/drover](https://github.com/andrebrov/drover) (`docs/LESSONS.md`, MIT), a bash toolkit that runs a Herdr agent fleet from a daemon. Its code and architecture were not adopted; only the lessons that coding-policy's rules did not already state.
+
+- **A guard is tested in both directions** (`rules/testing-standards.md` Coverage). A new or changed shipped or CI check that decides pass or fail ships with one input it must reject and one it must accept; a test's own assertions are not guards, or the rule would recurse. A guard run only on the input it was written for may reject nothing, or everything. drover's log records a `printf | grep -q` guard under `pipefail` that rejected every input and idled 19 agents for about four hours, and a budget check that read an expired banner as live and refused over a hundred dispatches: both had been run only against the case they were written for. The onboard-repo preflight in #21, which can never pass its `codex-auth` check, is the same class here.
+- **Tests that cannot fail** (`rules/testing-standards.md` Assertions). Four bullets: a test that never runs the code under test, or observes none of its outcomes, is documentation — a raised error, crash or timeout counts as an observed outcome, so a no-throw smoke test is a test; a product decision is asserted as a literal, not recomputed by the code that makes it; a grep of the code's own source guards a name, not behavior; a run of zero tests is a failure, so the count is checked, not the exit code alone. Reading a manifest or config file to check it against another artifact is not a source grep — that file is the artifact under test.
+- **Prove the fix fires** (`rules/verify-before-done.md` Scope of Proof). A bug fix or new guard shows its new test failing with the fix reverted, then passing restored. A test written alongside a fix often passes on the old code too. PRs #20 and #24 already did this by hand; the rule makes it the expectation.
+
+### Not changed
+
+The audit after these edits found the Python suites already honour the zero-test bullet — `unittest.main` exits 5 on "NO TESTS RAN" and `scripts/run-tests.sh` counts it as a failure — but the shell harnesses each print their own summary and exit 0 on zero cases. Enforcing a count there needs a shared summary contract across every harness and is tracked separately.
+
 ## 0.7.7 — 2026-09-30
 
 ### Fixed
