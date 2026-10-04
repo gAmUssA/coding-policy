@@ -4,6 +4,17 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.9 — 2026-10-04
+
+### Fixed
+
+- **The onboard-repo `codex-auth` preflight can pass** (#21). It read a top-level `has_refresh_token` that `codex login` never writes, so it failed for every consumer and sent them back to a `codex login` that could not fix it. It now requires a non-empty `tokens.refresh_token`, where the login stores it. It also accepted only `auth_mode: "chatgpt"`, but a current ChatGPT login on the maintainer's machine writes no `auth_mode` at all — the same credential the policy reviewer in CI runs on — so an absent mode now reads as unstated and only an explicit other mode (`apikey`) rejects. The failure reason names which condition failed. `.env.example` and the script header describe the real shape.
+- Per `rules/testing-standards.md`, the check is tested in both directions on the shapes `codex login` writes: with and without `auth_mode` pass; `apikey`, an empty refresh token, the old invented `has_refresh_token` shape, and unreadable JSON fail. With the fix reverted, four checks fail, including the all-green case — the suite's success fixture had been built from the invented shape, which is why the defect shipped green.
+
+### Not changed
+
+- `.github/workflows/review-codex.yml` still describes the credential as `"auth_mode": "chatgpt"` and `"has_refresh_token": true` in its setup comment. It is a workflow file, so it is left to a CI-scoped change (`rules/ci-safety.md` Hands Off CI Config).
+
 ## 0.7.8 — 2026-10-04
 
 ### Changed

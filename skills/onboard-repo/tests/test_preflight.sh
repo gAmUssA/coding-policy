@@ -7,7 +7,8 @@
 #   1. all green (install)         -> ok, exit 0, no failures.
 #   2. gh unauthenticated          -> gh-authenticated failure, exit 1.
 #   3. codex credential missing    -> codex-auth failure.
-#   4. codex credential not chatgpt -> codex-auth failure.
+#   4. codex credential not chatgpt -> codex-auth failure; one without
+#      auth_mode passes; an empty, legacy-shaped or unreadable one fails.
 #   5. templates missing           -> templates-present failure names tessl install.
 #   6. install with a target present -> targets-absent failure (says --override).
 #   7. override with dirty target  -> targets-clean failure.
@@ -30,6 +31,12 @@ command -v jq >/dev/null 2>&1 || { echo "fatal: jq required" >&2; exit 2; }
 PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
+# Setup that fails would leave a missing or truncated fixture that still
+# produces the failure a negative case expects, so every write aborts the run.
+die() { echo "fatal: $1" >&2; exit 2; }
+fixture() { # <path> <content>
+  printf '%s\n' "$2" > "$1" || die "could not write fixture $1"
+}
 cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
 
 mkrepo() { # <dir>
@@ -59,10 +66,18 @@ main() {
 if [[ "$1 $2" == "auth status" ]]; then [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1; exit 0; fi
 exit 0
 STUB
-  chmod +x "$STUBBIN/gh"
-  AUTH_OK="$TMP/auth-ok.json"; printf '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}\n' > "$AUTH_OK"
-  AUTH_API="$TMP/auth-api.json"; printf '{"auth_mode":"apikey","has_refresh_token":false}\n' > "$AUTH_API"
-  MOUNT="$TMP/mount"; mkmount "$MOUNT"
+  chmod +x "$STUBBIN/gh" || die "could not make the gh stub executable at $STUBBIN/gh"
+  # Credential fixtures carry the shapes `codex login` writes (#21): the
+  # refresh token lives under `tokens`, and `auth_mode` may be absent.
+  AUTH_OK="$TMP/auth-ok.json"
+  fixture "$AUTH_OK" '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
+  AUTH_NO_MODE="$TMP/auth-no-mode.json"
+  fixture "$AUTH_NO_MODE" '{"OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
+  AUTH_API="$TMP/auth-api.json"; fixture "$AUTH_API" '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x","tokens":{"refresh_token":"r"}}'
+  AUTH_EMPTY_RT="$TMP/auth-empty-rt.json"; fixture "$AUTH_EMPTY_RT" '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}'
+  AUTH_LEGACY="$TMP/auth-legacy.json"; fixture "$AUTH_LEGACY" '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}'
+  AUTH_BROKEN="$TMP/auth-broken.json"; fixture "$AUTH_BROKEN" '{broken'
+  MOUNT="$TMP/mount"; mkmount "$MOUNT" || die "could not build the fixture plugin mount at $MOUNT"
 
   # 1. all green
   mkrepo "$TMP/r1"; run "$TMP/r1"
@@ -78,7 +93,19 @@ STUB
 
   # 4. codex credential wrong mode
   mkrepo "$TMP/r4"; run "$TMP/r4" CODEX_AUTH_FILE="$AUTH_API"
-  if [[ $RC -eq 1 ]] && has_failure codex-auth; then pass; else fail "codex apikey: RC=$RC OUT=$OUT"; fi
+  # The fixture carries a refresh token, so only the mode check can reject it.
+  if [[ $RC -eq 1 ]] && jq -e '.failures[] | select(.check=="codex-auth") | .reason | test("mode:apikey")' <<<"$OUT" >/dev/null; then pass; else fail "codex apikey: RC=$RC OUT=$OUT"; fi
+
+  # 4b. a ChatGPT login without auth_mode passes (#21)
+  mkrepo "$TMP/r4b"; run "$TMP/r4b" CODEX_AUTH_FILE="$AUTH_NO_MODE"
+  if [[ $RC -eq 0 ]] && ! has_failure codex-auth; then pass; else fail "codex no auth_mode: RC=$RC OUT=$OUT"; fi
+
+  # 4c. no usable refresh token, or an unreadable file, still fails
+  for bad in "$AUTH_EMPTY_RT" "$AUTH_LEGACY" "$AUTH_BROKEN"; do
+    mkrepo "$TMP/r4c"; run "$TMP/r4c" CODEX_AUTH_FILE="$bad"
+    if [[ $RC -eq 1 ]] && has_failure codex-auth; then pass; else fail "codex bad credential $(basename "$bad"): RC=$RC OUT=$OUT"; fi
+    rm -rf "$TMP/r4c"
+  done
 
   # 5. templates missing
   mkrepo "$TMP/r5"; run "$TMP/r5" PLUGIN_MOUNT="$TMP/empty-mount"
