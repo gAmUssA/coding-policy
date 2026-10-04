@@ -30,6 +30,10 @@ alwaysApply: true
   3. The project's README or contributor doc names this carve-out, each exempt artifact, and where its validation procedure lives
 - "Hard to install in CI" does NOT qualify — install the tool and test it per `rules/ci-safety.md` Install, Don't Skip
 - Every other module still ships tests that run in CI
+- A guard is any check that decides pass or fail: a validator, a lint, a gate, a hook, a preflight, a verdict parser
+- A new or changed guard ships with a test feeding it one input it must reject and one input it must accept
+- Use real historical artifacts as those inputs where they exist
+- A guard tested on one direction alone is untested — it may reject nothing, or everything
 
 ## Stack Conventions
 
@@ -50,6 +54,10 @@ alwaysApply: true
 - If an internal refactor breaks your tests, the tests were testing the wrong thing
 - Mock at the process boundary — the network, the clock, the filesystem, a paid external service — never the code under test's own collaborators
 - A test whose mocks outnumber its assertions tests the mocks
+- A test that reads no output from the code under test is documentation, never a test
+- Assert a value that encodes a product decision as a literal, never as a value recomputed by the code under test
+- A test that greps the code under test's own source guards a name, never behavior — exercise the code instead
+- A run that executes zero tests is a failure — check the reported test count, never the exit code alone
 - Narrow exception for mocking an in-process collaborator.
 - Preconditions (all required):
   1. The user stated permission for that collaborator in the current task
