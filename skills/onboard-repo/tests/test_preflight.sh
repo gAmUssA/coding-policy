@@ -31,6 +31,12 @@ command -v jq >/dev/null 2>&1 || { echo "fatal: jq required" >&2; exit 2; }
 PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
+# Setup that fails would leave a missing or truncated fixture that still
+# produces the failure a negative case expects, so every write aborts the run.
+die() { echo "fatal: $1" >&2; exit 2; }
+fixture() { # <path> <content>
+  printf '%s\n' "$2" > "$1" || die "could not write fixture $1"
+}
 cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
 
 mkrepo() { # <dir>
@@ -60,18 +66,18 @@ main() {
 if [[ "$1 $2" == "auth status" ]]; then [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1; exit 0; fi
 exit 0
 STUB
-  chmod +x "$STUBBIN/gh"
+  chmod +x "$STUBBIN/gh" || die "could not make the gh stub executable at $STUBBIN/gh"
   # Credential fixtures carry the shapes `codex login` writes (#21): the
   # refresh token lives under `tokens`, and `auth_mode` may be absent.
   AUTH_OK="$TMP/auth-ok.json"
-  printf '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}\n' > "$AUTH_OK"
+  fixture "$AUTH_OK" '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
   AUTH_NO_MODE="$TMP/auth-no-mode.json"
-  printf '{"OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}\n' > "$AUTH_NO_MODE"
-  AUTH_API="$TMP/auth-api.json"; printf '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}\n' > "$AUTH_API"
-  AUTH_EMPTY_RT="$TMP/auth-empty-rt.json"; printf '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}\n' > "$AUTH_EMPTY_RT"
-  AUTH_LEGACY="$TMP/auth-legacy.json"; printf '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}\n' > "$AUTH_LEGACY"
-  AUTH_BROKEN="$TMP/auth-broken.json"; printf '{broken\n' > "$AUTH_BROKEN"
-  MOUNT="$TMP/mount"; mkmount "$MOUNT"
+  fixture "$AUTH_NO_MODE" '{"OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
+  AUTH_API="$TMP/auth-api.json"; fixture "$AUTH_API" '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}'
+  AUTH_EMPTY_RT="$TMP/auth-empty-rt.json"; fixture "$AUTH_EMPTY_RT" '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}'
+  AUTH_LEGACY="$TMP/auth-legacy.json"; fixture "$AUTH_LEGACY" '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}'
+  AUTH_BROKEN="$TMP/auth-broken.json"; fixture "$AUTH_BROKEN" '{broken'
+  MOUNT="$TMP/mount"; mkmount "$MOUNT" || die "could not build the fixture plugin mount at $MOUNT"
 
   # 1. all green
   mkrepo "$TMP/r1"; run "$TMP/r1"
