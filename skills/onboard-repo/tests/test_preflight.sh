@@ -73,7 +73,7 @@ STUB
   fixture "$AUTH_OK" '{"auth_mode":"chatgpt","OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
   AUTH_NO_MODE="$TMP/auth-no-mode.json"
   fixture "$AUTH_NO_MODE" '{"OPENAI_API_KEY":null,"tokens":{"id_token":"i","access_token":"a","refresh_token":"r","account_id":"x"},"last_refresh":"2026-09-29T00:00:00Z"}'
-  AUTH_API="$TMP/auth-api.json"; fixture "$AUTH_API" '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x"}'
+  AUTH_API="$TMP/auth-api.json"; fixture "$AUTH_API" '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-x","tokens":{"refresh_token":"r"}}'
   AUTH_EMPTY_RT="$TMP/auth-empty-rt.json"; fixture "$AUTH_EMPTY_RT" '{"auth_mode":"chatgpt","tokens":{"access_token":"a","refresh_token":""}}'
   AUTH_LEGACY="$TMP/auth-legacy.json"; fixture "$AUTH_LEGACY" '{"auth_mode":"chatgpt","has_refresh_token":true,"tokens":{}}'
   AUTH_BROKEN="$TMP/auth-broken.json"; fixture "$AUTH_BROKEN" '{broken'
@@ -93,7 +93,8 @@ STUB
 
   # 4. codex credential wrong mode
   mkrepo "$TMP/r4"; run "$TMP/r4" CODEX_AUTH_FILE="$AUTH_API"
-  if [[ $RC -eq 1 ]] && has_failure codex-auth; then pass; else fail "codex apikey: RC=$RC OUT=$OUT"; fi
+  # The fixture carries a refresh token, so only the mode check can reject it.
+  if [[ $RC -eq 1 ]] && jq -e '.failures[] | select(.check=="codex-auth") | .reason | test("mode:apikey")' <<<"$OUT" >/dev/null; then pass; else fail "codex apikey: RC=$RC OUT=$OUT"; fi
 
   # 4b. a ChatGPT login without auth_mode passes (#21)
   mkrepo "$TMP/r4b"; run "$TMP/r4b" CODEX_AUTH_FILE="$AUTH_NO_MODE"
