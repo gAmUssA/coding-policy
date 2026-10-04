@@ -31,7 +31,7 @@ description: Done means a shown passing run — execute the thing, show the outp
 - CI or workflow change → the CI run itself, watched to its conclusion
 - Script change → the script executed against a fixture, plus its test harness
 - Bug fix or new guard → the new test shown failing with the fix reverted, then passing with it restored
-- A test never shown failing proves nothing about the fix — it may pass on the old code too
+- A test never shown failing proves nothing about the fix
 - Name what was run in the report; the reader should be able to rerun it
 
 ## Relationship to Other Rules
