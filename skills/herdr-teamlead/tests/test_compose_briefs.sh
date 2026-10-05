@@ -93,6 +93,14 @@ JSON
       and .briefs.tester == ($o + "/brief-tester.md")' >/dev/null 2>&1; then
     pass; else fail "emitted paths: got OUT=$OUT"; fi
 
+  # 1b. A value is written verbatim: `&` (bash 5.2+ patsub_replacement), a
+  # backslash, and glob characters survive substitution unchanged (#25).
+  local v1b="$TMP/v1b.json" o1b="$TMP/out1b" literal='run cd /tmp && ls & echo \& a\\b *[x]? done'
+  jq --arg v "$literal" '.roles.developer.ISSUE = $v' "$v1" > "$v1b" || die "could not write $v1b"
+  run "$TPL" "$v1b" "$o1b"
+  if [[ $RC -eq 0 ]] && grep -qxF "Dev on feat/x in /wt/dev for ${literal}" "$o1b/brief-developer.md"; then
+    pass; else fail "verbatim value: got RC=$RC ERR=$ERRTEXT BRIEF=$(cat "$o1b/brief-developer.md" 2>/dev/null)"; fi
+
   # 2. A role value beats the shared one.
   local v2="$TMP/v2.json" o2="$TMP/out2"
   cat > "$v2" <<'JSON' || die "could not write $v2"
