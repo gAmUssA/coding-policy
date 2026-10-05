@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.10 — 2026-10-05
+
+### Fixed
+
+- **`compose-briefs.sh` writes a brief value verbatim** (#25). Since bash 5.2 the `patsub_replacement` option is on by default, so an unquoted `&` in the replacement of `${content//pattern/$value}` expands to the matched text. A value such as `cd /tmp && ls` put the placeholder back into the brief, and the leftover check then refused composition with "still holds unfilled placeholders: {{ISSUE}}" — pointing at a missing value instead of the real cause. Both the placeholder pattern and the replacement are now quoted, so each is literal on every bash version; quoting the pattern also stops a key from acting as a glob. A new case composes a value holding `&&`, `&`, `\&`, a backslash and glob characters and asserts the brief line byte for byte; with the fix reverted it fails with the issue's exact error. No other `${var//…/$replacement}` with a variable replacement exists in the repo's shell scripts.
+
 ## 0.7.9 — 2026-10-04
 
 ### Fixed

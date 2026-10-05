@@ -150,7 +150,10 @@ substitute() { # <template-file> <values-json>
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
     value="$(printf '%s' "$2" | jq -r --arg k "$key" '.[$k]')"
-    content="${content//\{\{$key\}\}/$value}"
+    # Pattern and replacement quoted, so both are literal: since bash 5.2
+    # `patsub_replacement` expands an unquoted `&` in the replacement to the
+    # matched placeholder (#25), and an unquoted key would be a glob pattern.
+    content="${content//"{{$key}}"/"$value"}"
   done < <(printf '%s' "$2" | jq -r 'keys[]')
   printf '%s\n' "$content"
 }
