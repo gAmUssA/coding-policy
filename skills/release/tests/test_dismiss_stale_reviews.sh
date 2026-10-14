@@ -12,6 +12,12 @@
 
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/dismiss-stale-reviews.sh"
 [[ -r "$SCRIPT" ]] || { echo "fatal: dismiss-stale-reviews.sh not readable at $SCRIPT" >&2; exit 2; }
 
@@ -220,5 +226,5 @@ run "login is glob-safe against cwd files"      t_login_is_glob_safe_against_cwd
 
 echo
 echo "passed: ${PASS_COUNT}, failed: ${FAIL_COUNT}"
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
 [[ $FAIL_COUNT -eq 0 ]]

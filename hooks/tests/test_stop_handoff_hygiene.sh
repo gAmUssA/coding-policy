@@ -32,6 +32,12 @@
 # Run: bash hooks/tests/test_stop_handoff_hygiene.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/stop-handoff-hygiene.sh"
 
 die() { echo "fatal: $*" >&2; exit 2; }
@@ -480,7 +486,7 @@ STUB
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
+  echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

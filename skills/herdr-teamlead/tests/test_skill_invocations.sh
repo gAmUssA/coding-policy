@@ -26,6 +26,12 @@
 # Run: bash skills/herdr-teamlead/tests/test_skill_invocations.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 # Herdr skills whose SKILL.md invokes a plugin script. herdr-standup shipped
 # bare invocations while this suite resolved its target through its own
 # directory, so it only ever read herdr-teamlead's SKILL.md.
@@ -285,7 +291,7 @@ main() {
 
   echo
   echo "results: ${PASS} pass, ${FAIL} fail"
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
+  echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))
 }
 

@@ -18,6 +18,12 @@
 
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/version-compare.sh"
 [[ -f "$SCRIPT" && -r "$SCRIPT" ]] || { echo "fatal: version-compare.sh not readable at $SCRIPT" >&2; exit 2; }
 # shellcheck source=skills/release/version-compare.sh
@@ -92,5 +98,5 @@ assert_cli 2 "non-numeric input"      1.2 0.3.4
 
 echo ""
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
 [[ $FAIL_COUNT -eq 0 ]]

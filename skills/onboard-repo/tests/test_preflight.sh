@@ -19,6 +19,12 @@
 # Run: bash skills/onboard-repo/tests/test_preflight.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 # Isolate git from the operator's global/system config (a global gitignore
 # that ignores .github/ would make an untracked target read as clean).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -136,7 +142,7 @@ STUB
   echo "─────────────────────────────────────────────"
   if (( FAIL > 0 )); then echo "FAILED: ${FAIL} of $((PASS+FAIL)) checks" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks"
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
+  echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
 }
 
 main "$@"

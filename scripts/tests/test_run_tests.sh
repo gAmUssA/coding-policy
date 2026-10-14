@@ -13,6 +13,12 @@
 
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 RUNNER="$(cd "$(dirname "$0")/.." && pwd)/run-tests.sh"
 [[ -x "$RUNNER" ]] || { echo "fatal: run-tests.sh not executable at $RUNNER" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq required for these tests" >&2; exit 2; }
@@ -30,7 +36,8 @@ add_suite() {
   # A passing harness reports its pass count (the runner's summary contract,
   # #26); a failing one exits before it gets that far.
   if [[ "$exit_code" == 0 ]]; then
-    printf '#!/usr/bin/env bash\necho "test-summary: passed=1 failed=0"\nexit 0\n' > "$dir/test_$name.sh"
+    # shellcheck disable=SC2016 # expands inside the generated fixture, by design
+    printf '#!/usr/bin/env bash\necho "test-summary: passed=1 failed=0 token=$TEST_SUMMARY_TOKEN"\nexit 0\n' > "$dir/test_$name.sh"
   else
     printf '#!/usr/bin/env bash\nexit %s\n' "$exit_code" > "$dir/test_$name.sh"
   fi
@@ -267,12 +274,16 @@ else
 fi
 rm -rf "$base"
 
+# Fixture bodies are single-quoted: `$TEST_SUMMARY_TOKEN` expands inside the
+# fixture, to the token the runner exported for that suite.
+
 # --- a shell suite that exits 0 having run zero cases fails the run (#26) ---
 # Each harness counts its own failures and exits on that count alone, so a
 # harness whose cases were all removed, or never reached, exited 0 and read
 # as green.
 base="$(make_base)"; add_suite "$base" alpha 0
-add_sh_body "$base" empty 'echo "test-summary: passed=0 failed=0"; exit 0'
+# shellcheck disable=SC2016 # expands inside the generated fixture, by design
+add_sh_body "$base" empty 'echo "test-summary: passed=0 failed=0 token=$TEST_SUMMARY_TOKEN"; exit 0'
 invoke "$base"
 if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
   && jq -e '.failures | any(test("test_empty.sh$"))' <<<"$OUT" >/dev/null \
@@ -287,7 +298,7 @@ rm -rf "$base"
 base="$(make_base)"; add_sh_body "$base" silent 'echo "all good"; exit 0'
 invoke "$base"
 if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
-  && [[ "$ERR" == *"without ending on a test-summary line"* ]]; then
+  && [[ "$ERR" == *"without a test-summary line carrying its token"* ]]; then
   pass "shell suite without a summary line -> counted as a failure"
 else
   fail "missing summary: code=$CODE out=$OUT err=$ERR"
@@ -295,7 +306,9 @@ fi
 rm -rf "$base"
 
 # --- a shell suite that exits 0 while reporting failures fails the run ---
-base="$(make_base)"; add_sh_body "$base" liar 'echo "test-summary: passed=3 failed=2"; exit 0'
+base="$(make_base)"
+# shellcheck disable=SC2016 # expands inside the generated fixture, by design
+add_sh_body "$base" liar 'echo "test-summary: passed=3 failed=2 token=$TEST_SUMMARY_TOKEN"; exit 0'
 invoke "$base"
 if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
   && [[ "$ERR" == *"reported 2 failed"* ]]; then
@@ -305,43 +318,58 @@ else
 fi
 rm -rf "$base"
 
-# --- the suite's own final summary line wins over a nested run's ---
-# A harness that runs another harness echoes the nested summary first; only
-# the suite's final output line is its verdict (#31). Both orders are pinned.
+# --- a summary without the suite's token never counts (#31) ---
+# A harness that echoes a nested harness's passing summary and then exits 0
+# before printing its own must not inherit the nested verdict, wherever the
+# nested line sits — including as the very last line.
 base="$(make_base)"
-add_sh_body "$base" outer 'echo "test-summary: passed=0 failed=0"; echo "test-summary: passed=4 failed=0"; echo; exit 0'
+add_sh_body "$base" untokened 'echo "test-summary: passed=1 failed=0"; exit 0'
 invoke "$base"
-if [[ "$CODE" == 0 ]] && [[ "$(jq -r .passed <<<"$OUT")" == 1 ]]; then
-  pass "final summary line is the verdict (nested zero ignored, trailing blank allowed)"
+if [[ "$CODE" == 1 ]] && [[ "$ERR" == *"without a test-summary line carrying its token"* ]]; then
+  pass "summary line without a token, then exit 0 -> counted as a failure"
 else
-  fail "final summary wins: code=$CODE out=$OUT err=$ERR"
+  fail "untokened summary: code=$CODE out=$OUT err=$ERR"
 fi
 rm -rf "$base"
 base="$(make_base)"
-add_sh_body "$base" outer 'echo "test-summary: passed=4 failed=0"; echo "test-summary: passed=0 failed=0"; exit 0'
+add_sh_body "$base" foreign 'echo "test-summary: passed=1 failed=0 token=some-other-run"; exit 0'
 invoke "$base"
-if [[ "$CODE" == 1 ]]; then
-  pass "final summary line is the verdict (own zero not masked by nested)"
+if [[ "$CODE" == 1 ]] && [[ "$ERR" == *"without a test-summary line carrying its token"* ]]; then
+  pass "summary line with another run's token, then exit 0 -> counted as a failure"
 else
-  fail "final summary wins (reverse): code=$CODE out=$OUT err=$ERR"
+  fail "foreign token: code=$CODE out=$OUT err=$ERR"
 fi
 rm -rf "$base"
 
-# --- a nested pass followed by an early exit 0 fails the run (#31) ---
-# The outer harness echoes a nested harness's passing summary, then exits 0
-# before printing its own; the nested line must not stand in for it.
+# --- a harness run from a harness cannot speak for it (#31) ---
+# The outer harness saves and unsets the token, as every real harness does,
+# then runs an inner harness directly. The inner summary carries an empty
+# token, so it is rejected; the outer's own tokened summary is accepted.
+# shellcheck disable=SC2016 # expands inside the generated fixture, by design
+inner='bash -c '"'"'echo "test-summary: passed=5 failed=0 token=${TEST_SUMMARY_TOKEN:-}"'"'"
+# shellcheck disable=SC2016 # expands inside the generated fixture, by design
+prelude='SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"; unset TEST_SUMMARY_TOKEN; '
 base="$(make_base)"
-add_sh_body "$base" early 'echo "test-summary: passed=1 failed=0"; echo "  case 1: setting up"; exit 0'
+add_sh_body "$base" outer_early "${prelude}${inner}; exit 0"
 invoke "$base"
-if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
-  && [[ "$ERR" == *"without ending on a test-summary line"* ]]; then
-  pass "nested passing summary then early exit 0 -> counted as a failure"
+if [[ "$CODE" == 1 ]] && [[ "$ERR" == *"without a test-summary line carrying its token"* ]]; then
+  pass "inner harness summary, then outer exit 0 -> counted as a failure"
 else
-  fail "nested summary masking: code=$CODE out=$OUT err=$ERR"
+  fail "inner masking outer: code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+base="$(make_base)"
+# shellcheck disable=SC2016 # expands inside the generated fixture, by design
+add_sh_body "$base" outer_done "${prelude}"'echo "test-summary: passed=2 failed=0 token=$SUMMARY_TOKEN"; '"${inner}"'; exit 0'
+invoke "$base"
+if [[ "$CODE" == 0 ]] && [[ "$(jq -r .passed <<<"$OUT")" == 1 ]]; then
+  pass "outer's own tokened summary passes, even with an inner summary after it"
+else
+  fail "outer own summary: code=$CODE out=$OUT err=$ERR"
 fi
 rm -rf "$base"
 
 echo ""
 echo "run-tests.sh: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
 [[ $FAIL_COUNT -eq 0 ]] || exit 1
