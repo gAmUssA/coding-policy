@@ -295,10 +295,15 @@ fi
 rm -rf "$base"
 
 # --- a shell suite that exits 0 with no summary line fails the run ---
+# The remediation must be followable: it names the save-and-unset prelude and
+# the saved SUMMARY_TOKEN, never the variable the prelude unsets.
 base="$(make_base)"; add_sh_body "$base" silent 'echo "all good"; exit 0'
 invoke "$base"
+# shellcheck disable=SC2016 # literal text the runner prints, not an expansion
 if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
-  && [[ "$ERR" == *"without a test-summary line carrying its token"* ]]; then
+  && [[ "$ERR" == *"without a test-summary line carrying its token"* ]] \
+  && [[ "$ERR" == *'SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"; unset TEST_SUMMARY_TOKEN'* ]] \
+  && [[ "$ERR" == *'token=${SUMMARY_TOKEN}'* ]] && [[ "$ERR" != *'token=${TEST_SUMMARY_TOKEN}'* ]]; then
   pass "shell suite without a summary line -> counted as a failure"
 else
   fail "missing summary: code=$CODE out=$OUT err=$ERR"
