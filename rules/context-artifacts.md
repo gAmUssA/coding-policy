@@ -1,7 +1,7 @@
 ---
 alwaysApply: false
-applyTo: ".tessl-plugin/plugin.json, rules/**, skills/**, hooks/**, .tesslignore, CHANGELOG.md, README.md — when authoring or modifying plugin artifacts"
-description: Plugin structure, rule format and frontmatter, prose discipline, surface sync, manual versioning, consistency audits — the authoring contract for this plugin
+applyTo: ".tessl-plugin/plugin.json, .codex-plugin/plugin.json, rules/**, skills/**, hooks/**, .tesslignore, CHANGELOG.md, changelog.d/**, README.md — when authoring or modifying plugin artifacts"
+description: Plugin structure, rule format and frontmatter, prose discipline, surface sync, fragment versioning, consistency audits — the authoring contract for this plugin
 ---
 
 # Context Artifacts
@@ -51,17 +51,29 @@ When you add, remove, or rename a rule, skill, or hook, update **all** of these:
 
 - `.tessl-plugin/plugin.json` — the `rules`, `skills`, or `hooks` entry
 - `README.md` — the rules, skills, or hooks table
-- `CHANGELOG.md` — an entry describing the change
+- `changelog.d/` — a fragment describing the change
 - `.claude/CLAUDE.md` — the `@../rules/<name>.md` import list
 
 ## Versioning and CHANGELOG
 
-- Every PR that changes shipped content (`rules/`, `skills/`, `hooks/`, the manifest) bumps `.tessl-plugin/plugin.json` `version` by hand, per semver — patch by default, minor for a new rule/skill/hook, major for a removed or renamed one
-- The same PR writes the `## <version> — <date>` heading above its CHANGELOG entries by hand; no auto-stamp step exists
-- `scripts/check-version-bump.sh` fails CI when the manifest version is not strictly greater than the registry's latest
-- `.github/workflows/publish.yml` publishes the manifest version as-is on push to `main`; a version already in the registry reds the publish
+- Every PR that changes shipped content (`rules/`, `skills/`, `hooks/`, `.tessl-plugin/`, `.codex-plugin/`, `.tesslignore`) adds a fragment `changelog.d/<name>.md`
+- A fragment's front matter holds only `bump`: `patch` by default, `minor` for a new rule/skill/hook or a process change, `major` for a removed or renamed one
+- A fragment's body is one or more `### <Section>` headings, each with `- ` bullets; the format is `changelog.d/README.md`
+- A PR never edits a manifest `version` and never adds a `## <version>` heading to `CHANGELOG.md`
+- `scripts/check-changelog-fragment.sh` fails the PR on a missing or malformed fragment, an edited manifest version, or an added version heading
+- `.github/workflows/publish.yml` assigns the version on push to `main`: `scripts/assemble-release.sh` bumps both manifests by the highest pending `bump`, writes the `## <version> — <date>` heading with the merged fragments, and deletes them
+- The workflow commits that result to `main` as `chore(release): <version>` and publishes it
+- A merge with no pending fragment assigns no new version
+- The workflow publishes only a manifest version ahead of the registry; that re-publishes an already-assigned version whose earlier publish failed
+- Narrow exception for a plugin repo with no assembling publish workflow.
+- Preconditions (all required):
+  1. The repo carries no `changelog.d/` directory
+  2. Its publish workflow publishes the manifest version as-is
+- Such a PR bumps the manifest `version` by hand and writes the `## <version> — <date>` heading itself (`skills/release/SKILL.md` Step 3 Hand bump)
+- Every other plugin repo versions through fragments
 - No `Unreleased` section — the heading is forbidden
-- Consolidate: multiple PRs reworking the same rule become one entry with the final outcome; audit the top section for duplication
+- Consolidate: a PR reworking an entry that is still a pending fragment edits that fragment instead of adding a second one
+- Audit the top released section for duplication when editing CHANGELOG history
 
 ## Consistency Check
 

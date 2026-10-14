@@ -15,9 +15,10 @@ authoritative policy for the review.
   check it against `rules/skill-authoring.md`.
 - A new or changed `rules/*.md` must satisfy the rules it itself declares. Self-consistency is
   non-negotiable, because this repo is the policy.
-- A PR that changes shipped content (`rules/`, `skills/`, `hooks/`, the manifest) must bump
-  `.tessl-plugin/plugin.json` `version` and carry a matching `## <version> — <date>` heading
-  in `CHANGELOG.md` (`rules/context-artifacts.md` Versioning and CHANGELOG).
+- A PR that changes shipped content (`rules/`, `skills/`, `hooks/`, `.tessl-plugin/`,
+  `.codex-plugin/`) must add a `changelog.d/<name>.md` fragment with a `bump` level. It must
+  not edit a manifest `version` or add a `## <version>` heading to `CHANGELOG.md`; the publish
+  workflow writes both on merge (`rules/context-artifacts.md` Versioning and CHANGELOG).
 - Flag secrets, missing error handling, dependency hygiene, and violations of
   `rules/ci-safety.md`, `rules/no-secrets.md`, `rules/code-formatting.md`, and the rest.
 - Cite each finding as `rule: <name>` (e.g. `rule: ci-safety`) with the file, the line, the

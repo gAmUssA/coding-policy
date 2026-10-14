@@ -4,7 +4,7 @@
 
 Coding policy plugin for Viktor Gamov's AI agents. Language-agnostic code quality rules, autonomous shipping discipline, stack defaults for JVM, Swift, TypeScript, and Python, plus the hooks, reviewer, and release workflow that enforce them.
 
-A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-policy): the code rules, the ship-on-green stance, the session hooks, the Codex policy reviewer, and the [Herdr](https://herdr.dev) multi-agent team layer are ported; the fleet reviewer App and the auto-bump publishing pipeline are not. See [CHANGELOG.md](CHANGELOG.md) for what was kept, dropped, and added.
+A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-policy): the code rules, the ship-on-green stance, the session hooks, the Codex policy reviewer, and the [Herdr](https://herdr.dev) multi-agent team layer are ported; the fleet reviewer App and the auto-bump publishing pipeline are not; versions are assigned on merge from changelog fragments instead. See [CHANGELOG.md](CHANGELOG.md) for what was kept, dropped, and added.
 
 ## Installation
 
@@ -106,4 +106,10 @@ Remaining entry-point migration, under `rules/dependency-management.md` Python E
 - `.github/workflows/tests.yml` and `.github/workflows/publish.yml` run `bash scripts/run-tests.sh` without installing `uv`; migrate them first, in a CI-scoped PR that installs a pinned `uv` and runs the documented `uv run` command
 - `skills/herdr-teamlead/teamlead.sh` and `skills/herdr-teamlead/prune-worktrees.sh` launch `python3` directly; migrate them after the workflow migration lands
 
-Every PR that changes shipped content bumps `version` in `.tessl-plugin/plugin.json` and adds a `## <version> — <date>` heading to `CHANGELOG.md`; `scripts/check-version-bump.sh` enforces it in CI. Merging to `main` publishes that version.
+Every PR that changes shipped content adds a changelog fragment, `changelog.d/<name>.md`, carrying its semver `bump` and its CHANGELOG entry (format: [changelog.d/README.md](changelog.d/README.md)). A PR never edits a manifest `version` or adds a `## <version>` heading; `scripts/check-changelog-fragment.sh` enforces both in CI:
+
+```
+bash scripts/check-changelog-fragment.sh origin/main
+```
+
+On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to assign the version and write the CHANGELOG entry, commits it to `main` as `chore(release): <version>` through `scripts/push-release.sh`, and publishes. A merge with no fragment assigns no version and publishes only a version whose earlier publish failed. Re-running a publish run whose publish step failed publishes the version it already committed. The decision is recorded in [ADR 0003](docs/adr/0003-version-on-merge.md).

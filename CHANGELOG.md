@@ -1,8 +1,9 @@
 # Changelog
 
 Every entry carries the motivation and worked examples stripped from the rule bodies
-(`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
-heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
+(`rules/context-artifacts.md` Writing Style). PRs add their entries as `changelog.d/`
+fragments; the publish workflow writes each `## <version> — <date>` heading on merge
+(`changelog.d/README.md`).
 
 ## 0.8.6 — 2026-10-14
 

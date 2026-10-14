@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared version-comparison helper. Sourced by verify-publish-landed.sh and
-# scripts/check-version-bump.sh — defines version_gt() with no side effects and no
+# scripts/assemble-release.sh — defines version_gt() with no side effects and no
 # TOP-LEVEL `set` changes, so sourcing it under the caller's `set -euo pipefail`
 # is safe (a top-level `set -e` here would leak into the sourcing shell). Direct
 # execution is a guarded CLI (entry-point guard at the foot of the file):

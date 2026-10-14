@@ -4,7 +4,7 @@
 #
 # Extracted from verify-publish-landed.sh's inline fetch (it did this same
 # read to derive conjunct 2's `current`) so the read has ONE hardened home:
-# scripts/check-version-bump.sh needs the same "what does the registry say
+# scripts/assemble-release.sh needs the same "what does the registry say
 # now" answer, and rules/script-delegation.md wants that deterministic read in
 # a single script, not reproduced per caller.
 #
@@ -22,7 +22,7 @@
 #     never published) — verify-publish-landed.sh sources this file and calls
 #     it so an in-process `tessl` shell-mock (its unit suite) reaches the read.
 #   - the SCRIPT's main() emits STRUCTURED JSON (rules/script-delegation.md —
-#     deterministic scripts emit JSON, not prose) — scripts/check-version-bump.sh
+#     deterministic scripts emit JSON, not prose) — scripts/assemble-release.sh
 #     runs it as a subprocess and parses `.version`.
 # The EXIT-trap cleanup is installed inside main() (not at top level) so
 # sourcing this file never clobbers the caller's own trap.
