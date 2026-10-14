@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from typing import IO, cast
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,7 +57,9 @@ class CodexSessionStart(unittest.TestCase):
     def write_manifest(self):
         (self.root / ".tessl-plugin/plugin.json").write_text(json.dumps(self.manifest))
 
-    def run_hook(self, *args, event=EVENT):
+    def run_hook(
+        self, *args: str, event: object = EVENT
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(self.root / "hooks/codex-session-start.py"), *args],
             input=json.dumps(event),
@@ -184,18 +187,24 @@ class CodexSessionStart(unittest.TestCase):
         assert spec is not None and spec.loader is not None
         adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adapter)
-        communicate = subprocess.Popen.communicate
-        descendants = []
+        communicate = subprocess.Popen[str].communicate
+        descendants: list[tuple[int, int]] = []
 
-        def timeout_when_ready(process, input=None, timeout=None):
+        def timeout_when_ready(
+            process: subprocess.Popen[str],
+            input: str | None = None,
+            timeout: float | None = None,
+        ) -> tuple[str, str]:
             if timeout is not None:
                 self.assertIsNotNone(process.stdout)
+                # assertIsNotNone above proved the pipe exists.
+                stdout = cast(IO[str], process.stdout)
                 self.assertTrue(
-                    select.select([process.stdout], [], [], 5)[0],
+                    select.select([stdout], [], [], 5)[0],
                     "child did not report readiness",
                 )
-                pid = int(process.stdout.readline().strip())
-                descendants.append((pid, os.dup(process.stdout.fileno())))
+                pid = int(stdout.readline().strip())
+                descendants.append((pid, os.dup(stdout.fileno())))
                 raise subprocess.TimeoutExpired(process.args, timeout)
             # Bound cleanup in the test, so a regression fails instead of hanging.
             return communicate(process, input=input, timeout=5)
@@ -233,7 +242,7 @@ class CodexSessionStart(unittest.TestCase):
 CODEX_SESSION_START_SOURCES = ("startup", "resume", "clear", "compact", "fork")
 
 
-def codex_matcher_selects(matcher, source):
+def codex_matcher_selects(matcher: str | None, source: str) -> bool:
     """Mirror codex-rs/hooks/src/engine/matcher.rs `HookMatcher::matches`."""
     if matcher is None or matcher in ("", "*"):
         return True

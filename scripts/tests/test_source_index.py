@@ -19,6 +19,7 @@ import subprocess
 import sys
 import unittest
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -30,7 +31,7 @@ PYRIGHT = ROOT / "pyrightconfig.json"
 IMPORT = re.compile(r"^@\.\./(rules/[^\s]+\.md)\s*$", re.MULTILINE)
 
 
-def declared_rules():
+def declared_rules() -> list[str]:
     """Rule paths the plugin manifest publishes, repo-relative."""
     rules = json.loads(MANIFEST.read_text())["rules"]
     if isinstance(rules, str):
@@ -39,12 +40,12 @@ def declared_rules():
     return sorted(rules)
 
 
-def indexed_rules():
+def indexed_rules() -> list[str]:
     """Rule paths the source instruction index imports, repo-relative."""
     return sorted(IMPORT.findall(INDEX.read_text()))
 
 
-def duplicates(paths):
+def duplicates(paths: Iterable[str]) -> list[str]:
     """Paths listed more than once — a set difference would hide them."""
     return sorted(path for path, count in Counter(paths).items() if count > 1)
 
@@ -74,18 +75,18 @@ class SourceIndex(unittest.TestCase):
 class DiagnosticsScope(unittest.TestCase):
     """pyrightconfig.json's include list, files or directories, covers every tracked module."""
 
-    def tracked_python(self):
+    def tracked_python(self) -> list[str]:
         listing = subprocess.run(["git", "ls-files", "*.py"], cwd=ROOT,
                                  capture_output=True, text=True, check=True)
         return sorted(listing.stdout.split())
 
-    def included(self):
+    def included(self) -> list[str]:
         return sorted(json.loads(PYRIGHT.read_text())["include"])
 
     def test_no_path_is_included_twice(self):
         self.assertEqual(duplicates(self.included()), [], "pyrightconfig.json includes a path twice")
 
-    def covered(self, path):
+    def covered(self, path: str) -> bool:
         """Is `path` named by the include list, or under an included directory?"""
         for entry in self.included():
             if path == entry or path.startswith(entry.rstrip("/") + "/"):

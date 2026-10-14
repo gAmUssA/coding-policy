@@ -35,6 +35,8 @@ import json
 import os
 import sys
 import textwrap
+from collections.abc import Mapping
+from typing import TextIO, cast
 
 #: The four keys a worker answers with, in the order they must appear.
 REQUIRED_FIELDS = ("DONE", "PLAN", "BLOCKED", "REPORT")
@@ -58,12 +60,15 @@ TABLE_WIDTH = sum(w + 3 for w in COLUMN_WIDTHS.values()) + 1
 BANNER_TOP = "╔" + "═" * (TABLE_WIDTH - 2) + "╗"
 BANNER_BOTTOM = "╚" + "═" * (TABLE_WIDTH - 2) + "╝"
 
+#: One table row, keyed by the COLUMN_WIDTHS names.
+Row = dict[str, str]
+
 
 class ReportError(Exception):
     """A report file that does not carry the four-line standup shape."""
 
 
-def parse_report(text, source):
+def parse_report(text: str, source: str) -> dict[str, str]:
     """Parse the four standup lines out of `text`.
 
     Tolerant about blank lines, strict about everything else: a worker may
@@ -74,8 +79,8 @@ def parse_report(text, source):
     the non-compliant answer the four-line contract exists to catch, and a
     half-parsed standup row is worse than a missing one: it looks answered.
     """
-    found = {}
-    order = []
+    found: dict[str, str] = {}
+    order: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -115,34 +120,34 @@ def parse_report(text, source):
     return found
 
 
-def _wrap(text, width):
+def _wrap(text: str, width: int) -> list[str]:
     """Wrap one cell into a list of lines, never wider than `width`."""
     text = " ".join((text or "").split()) or "—"
     return textwrap.wrap(text, width=width) or ["—"]
 
 
-def _row_lines(cells):
+def _row_lines(cells: Mapping[str, str]) -> list[str]:
     """Lay one row out across however many lines its tallest cell needs."""
     columns = [
         _wrap(cells.get(key, ""), width) for key, width in COLUMN_WIDTHS.items()
     ]
     height = max(len(col) for col in columns)
-    lines = []
+    lines: list[str] = []
     for index in range(height):
-        parts = []
-        for (key, width), col in zip(COLUMN_WIDTHS.items(), columns):
+        parts: list[str] = []
+        for width, col in zip(COLUMN_WIDTHS.values(), columns):
             parts.append((col[index] if index < len(col) else "").ljust(width))
         lines.append("│ " + " │ ".join(parts) + " │")
     return lines
 
 
-def _separator(left, mid, right, fill="─"):
+def _separator(left: str, mid: str, right: str, fill: str = "─") -> str:
     """One horizontal rule, matching the column widths exactly."""
     parts = [fill * (width + 2) for width in COLUMN_WIDTHS.values()]
     return left + mid.join(parts) + right
 
 
-def render_terminal(rows, now, team):
+def render_terminal(rows: list[Row], now: str, team: str) -> str:
     """The block the operator scrolls back to find."""
     title = "STANDUP — {} {}".format(now, team).rstrip()
     lines = [BANNER_TOP, "║ " + title.ljust(TABLE_WIDTH - 4) + " ║", BANNER_BOTTOM]
@@ -165,7 +170,7 @@ def render_terminal(rows, now, team):
     return "\n".join(lines)
 
 
-def render_markdown(rows, now, team):
+def render_markdown(rows: list[Row], now: str, team: str) -> str:
     """The record, for the round's reports directory."""
     head = "# Standup — {} {}".format(now, team).rstrip()
     out = [head, ""]
@@ -184,13 +189,16 @@ def render_markdown(rows, now, team):
     return "\n".join(out) + "\n"
 
 
-def build_rows(answered, extra):
+def build_rows(
+    answered: Mapping[str, Mapping[str, str]],
+    extra: Mapping[str, Mapping[str, str] | None],
+) -> list[Row]:
     """One row per agent, answered first, then the ones nobody could ask.
 
     Sorted by name inside each group: a standup that reorders itself run to
     run is one the operator has to re-read every morning.
     """
-    rows = []
+    rows: list[Row] = []
     for name in sorted(answered):
         fields = answered[name]
         rows.append(
@@ -203,7 +211,7 @@ def build_rows(answered, extra):
             }
         )
     for name in sorted(extra):
-        record = extra[name] or {}
+        record: Mapping[str, str] = extra[name] or {}
         note = record.get("note", "")
         rows.append(
             {
@@ -217,7 +225,7 @@ def build_rows(answered, extra):
     return rows
 
 
-def parse_args(argv):
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="standup-render.py", description="Render one standup table."
     )
@@ -237,10 +245,12 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None, stdout=sys.stdout, stderr=sys.stderr):
+def main(
+    argv: list[str] | None = None, stdout: TextIO = sys.stdout, stderr: TextIO = sys.stderr
+) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
-    roles = {}
+    roles: dict[str, str] = {}
     if args.roles:
         try:
             with open(args.roles, encoding="utf-8") as handle:
@@ -256,7 +266,7 @@ def main(argv=None, stdout=sys.stdout, stderr=sys.stderr):
             )
             return 1
 
-    answered = {}
+    answered: dict[str, dict[str, str]] = {}
     for pair in args.agent:
         if "=" not in pair:
             print(
@@ -282,11 +292,11 @@ def main(argv=None, stdout=sys.stdout, stderr=sys.stderr):
         fields["roles"] = roles.get(name, "")
         answered[name] = fields
 
-    extra = {}
+    extra: dict[str, dict[str, str] | None] = {}
     if args.extra:
         try:
             with open(args.extra, encoding="utf-8") as handle:
-                extra = json.load(handle)
+                loaded = json.load(handle)
         except (OSError, ValueError) as exc:
             print(
                 "standup-render: cannot read --extra {}: {} — check that the path "
@@ -295,9 +305,12 @@ def main(argv=None, stdout=sys.stdout, stderr=sys.stderr):
                 file=stderr,
             )
             return 1
-        if not isinstance(extra, dict):
+        if not isinstance(loaded, dict):
             print("standup-render: --extra must hold a JSON object keyed by agent name", file=stderr)
             return 1
+        # The isinstance check above proves the object; its values are the
+        # optional per-agent records the contract in the module docstring names.
+        extra = cast("dict[str, dict[str, str] | None]", loaded)
 
     rows = build_rows(answered, extra)
     date = args.now.split("T")[0] if "T" in args.now else args.now.split(" ")[0]

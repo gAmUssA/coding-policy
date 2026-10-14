@@ -219,7 +219,7 @@ class CliTest(unittest.TestCase):
         self.out = io.StringIO()
         self.err = io.StringIO()
 
-    def run_cli(self, argv):
+    def run_cli(self, argv: list[str]) -> tuple[int, str, str]:
         code = main(argv, stdout=self.out, stderr=self.err)
         return code, self.out.getvalue(), self.err.getvalue()
 
