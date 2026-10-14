@@ -422,6 +422,7 @@ JSON
      && printf '%s' "$ERRTEXT" | grep -q 'overlaps a generated brief'; then
     pass; else fail "report/brief overlap: RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
 
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2

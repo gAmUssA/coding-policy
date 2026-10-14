@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.11 — 2026-10-13
+
+### Fixed
+
+- **A shell test harness that runs zero cases now fails the run** (#26). Each shell harness counted its own passes and failures and exited on the failure count alone, so a harness whose cases were all removed or never reached exited 0 and `scripts/run-tests.sh` reported it green. That broke the zero-test bullet added to `rules/testing-standards.md` Assertions in 0.7.8. Every shell harness now prints `test-summary: passed=<N> failed=<M>`. A shell suite exiting 0 passes only when its last such line reports at least one pass and zero failures; a missing line, a zero pass count, or a non-zero failure count fails the suite with the reason named. The last line wins so a harness that runs another harness (`scripts/tests/test_run_tests.sh`) is judged by its own count. Python suites need no line: unittest exits non-zero on "NO TESTS RAN". Five new cases in `scripts/tests/test_run_tests.sh` cover the zero-pass, missing-line and exit-0-with-failures rejections and both orderings of a nested summary; four of them fail with the runner change reverted.
+
 ## 0.7.10 — 2026-10-05
 
 ### Fixed

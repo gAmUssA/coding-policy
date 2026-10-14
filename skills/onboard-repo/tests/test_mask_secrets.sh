@@ -49,5 +49,6 @@ t_masks_long_tokens
 t_skips_short_fields
 t_missing_file_ok
 t_bad_args
+echo "test-summary: passed=${pass} failed=${fail}"
 echo "== summary: ${pass} passed, ${fail} failed =="
 [[ "$fail" -eq 0 ]]

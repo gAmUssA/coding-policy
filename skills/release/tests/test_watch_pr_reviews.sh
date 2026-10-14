@@ -373,5 +373,6 @@ test_non_json() {
 run "non-JSON snapshot exits 2" test_non_json
 
 echo
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"
 exit "$FAIL_COUNT"

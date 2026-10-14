@@ -18,6 +18,16 @@
 # exits non-zero; a unittest module does the same via its entry-point
 # guard), so dispatch is by extension and nothing else.
 #
+# A shell harness's exit code alone cannot prove it ran anything: each one
+# exits on its failure count, so a harness whose cases were all removed or
+# never reached exits 0 (#26). Every shell harness therefore prints its
+# counts as a summary line, and a shell suite exiting 0 passes only when its
+# LAST such line reports at least one pass and zero failures:
+#   test-summary: passed=<N> failed=<M>
+# The last line wins so a harness that runs another harness is judged by its
+# own summary, never the nested one. A Python suite needs no line: unittest
+# exits non-zero on "NO TESTS RAN".
+#
 # Output contract (rules/script-delegation.md — structured stdout):
 #   stdout: one JSON object, the run summary —
 #     {"suites": N, "passed": P, "failed": F, "failures": ["<path>", ...]}
@@ -80,6 +90,30 @@ run_suite() {
     return 1
   fi
   "$interp" "$suite"
+}
+
+# Judge a shell suite that exited 0 by its own summary line (see header).
+# Prints the reason on stdout when the suite fails the contract; prints
+# nothing when it passes. Returns 1 on a contract failure.
+SUMMARY_RE='^test-summary: passed=([0-9]+) failed=([0-9]+)$'
+summary_verdict() {
+  local output="$1" line last=""
+  while IFS= read -r line; do
+    [[ "$line" =~ $SUMMARY_RE ]] && last="$line"
+  done < "$output"
+  if [[ -z "$last" ]]; then
+    echo "exited 0 with no test-summary line — print 'test-summary: passed=<N> failed=<M>' as its last summary"
+    return 1
+  fi
+  [[ "$last" =~ $SUMMARY_RE ]]
+  if (( BASH_REMATCH[2] > 0 )); then
+    echo "exited 0 but reported ${BASH_REMATCH[2]} failed"
+    return 1
+  fi
+  if (( BASH_REMATCH[1] == 0 )); then
+    echo "exited 0 but ran zero cases"
+    return 1
+  fi
 }
 
 # JSON string escaper. A Unix path may contain any byte except NUL and
@@ -178,17 +212,25 @@ main() {
   # suite's verdict. That ordering is what lets a suite's own 2 or 125 count
   # as a failure while a dispatch fault (same numeric codes possible) does
   # not — the value never disambiguates them, the side channel does.
-  local failed=() setup_error=""
+  #
+  # A suite's output is captured to a file, not piped through `tee`: a pipe
+  # would run run_suite in a subshell and lose the side channel.
+  local failed=() setup_error="" suite_out reason
+  suite_out="$(mktemp)"
   for s in "${suites[@]}"; do
     echo "▶ $s" >&2
     local suite_rc=0
     DISPATCH_FAULT_SUITE=""
-    run_suite "$s" >&2 || suite_rc=$?
+    run_suite "$s" > "$suite_out" 2>&1 || suite_rc=$?
+    cat "$suite_out" >&2
     if [[ -n "$DISPATCH_FAULT_SUITE" ]]; then
       setup_error="$DISPATCH_FAULT_SUITE"
       break
     fi
-    if [[ $suite_rc -eq 0 ]]; then
+    if [[ $suite_rc -eq 0 && "$s" == *.sh ]] && ! reason="$(summary_verdict "$suite_out")"; then
+      echo "  ✗ $s — $reason" >&2
+      failed+=("$s")
+    elif [[ $suite_rc -eq 0 ]]; then
       echo "  ✓ $s" >&2
     else
       echo "  ✗ $s" >&2
@@ -196,6 +238,7 @@ main() {
     fi
     echo "" >&2
   done
+  rm -f "$suite_out"
 
   if [[ -n "$setup_error" ]]; then
     echo "─────────────────────────────────────────────" >&2

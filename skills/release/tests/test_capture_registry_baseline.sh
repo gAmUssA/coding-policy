@@ -195,5 +195,6 @@ else
 fi
 
 echo ""
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "capture-registry-baseline.sh: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 [[ $FAIL_COUNT -eq 0 ]] || exit 1

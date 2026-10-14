@@ -91,5 +91,6 @@ assert_cli 2 "wrong arity (1 arg)"    0.3.5
 assert_cli 2 "non-numeric input"      1.2 0.3.4
 
 echo ""
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 [[ $FAIL_COUNT -eq 0 ]]

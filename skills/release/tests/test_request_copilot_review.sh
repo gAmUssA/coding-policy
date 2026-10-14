@@ -323,5 +323,6 @@ run "main falls back to discovery on a rejected pinned bot ID"       t_main_fall
 run "requestReviews mutation runs in union mode (#297)"              t_mutation_runs_in_union_mode
 run "main surfaces the GraphQL error on a terminal failure (#297)"   t_main_surfaces_mutation_error_on_terminal_failure
 
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 [[ "$FAIL_COUNT" -eq 0 ]]

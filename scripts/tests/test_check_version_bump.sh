@@ -98,6 +98,7 @@ main() {
   run "$TMP/8" '{"version":"0.1.0"}'
   if [[ $RC -eq 2 ]]; then pass; else fail "missing manifest: RC=$RC"; fi
 
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────"
   if (( FAIL > 0 )); then echo "FAILED: ${FAIL} of $((PASS+FAIL)) checks" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks"
