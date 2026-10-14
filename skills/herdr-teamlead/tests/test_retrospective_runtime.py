@@ -18,7 +18,7 @@ from teamlead.config import load_config
 from teamlead.errors import HerdrError, StateError, UsageError
 from teamlead.state import add_assignment, empty_state, save_state
 from tests import test_cli as cli_fixture
-from tests.fakes import FakeRunner, agent_json
+from tests.fakes import FakeRunner, agent_json, forbid_processes, forbid_reads
 
 AT = "2026-09-09T10:00:00+00:00"
 OLD = "2026-09-09T09:00:00+00:00"
@@ -186,7 +186,8 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
         for report in self.reports.values():
             report.unlink()
         before = self.path.read_bytes()
-        with patch.dict(os.environ, {}, clear=True), patch("teamlead.cli._client", side_effect=AssertionError("offline")), patch("teamlead.cli.load_config", side_effect=AssertionError("offline")):
+        calls = len(self.runner.calls)
+        with patch.dict(os.environ, {}, clear=True), forbid_processes("offline"), forbid_reads(self.config, reason="offline"):
             rc, out, err = self.invoke("retro-list", "--since", AT)
             self.assertEqual(rc, 0, err)
             self.assertEqual(len(json.loads(out)["records"]), 1)
@@ -194,6 +195,7 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
             self.assertEqual(rc, 0, err)
             self.assertIn("Coordination", json.loads(out)["markdown"])
         self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.runner.calls[calls:], [], "offline readback contacted Herdr")
 
     def test_cli_record_revalidates_and_resumes_interrupted_first_write(self):
         check = runtime.check(self.path, self.state, self.client, self.agents, self.request(), AT)
@@ -204,7 +206,7 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
                     "unavailable": {}, "sources": [], "completed": True, "check": str(receipt)}
         record = self.root / "record.json"
         record.write_text(json.dumps(metadata))
-        with patch.object(notes, "_install_note", side_effect=StateError("interrupted", {})):
+        with patch.object(os, "link", side_effect=OSError("interrupted")):
             rc, _, _ = self.invoke("retro-record", "--record", str(record), "--now", AT)
         self.assertEqual(rc, 1)
         self.assertTrue((notes.directory(self.path) / "pending.json").exists())
