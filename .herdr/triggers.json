@@ -14,6 +14,7 @@
     "rules/*",
     "skills/herdr-teamlead/*.sh",
     "skills/herdr-teamlead/teamlead/*.py",
+    "skills/herdr-teamlead/references/team-operation.md",
     "skills/herdr-teamlead/verify-authority.sh",
     "skills/onboard-repo/*",
     "skills/onboard-repo/templates/*",

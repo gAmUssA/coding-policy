@@ -51,7 +51,7 @@ DECISIONS_SCHEMA_VERSION = 1
 #: Repo-relative location of the consuming repo's trigger declaration.
 DECLARATION_FILE = ".herdr/triggers.json"
 
-#: The four triggers `rules/agent-team-operation.md` Team Composition states
+#: The four triggers `skills/herdr-teamlead/references/team-operation.md` Team Composition states
 #: outside the exhaustion path, each mapped to the planned responsibility or
 #: requirements specialty that staffs it.
 TRIGGER_ROLES = {"architect": "architect"}

@@ -104,7 +104,7 @@ main() {
 
   # 1b. Behind, but read from a linked worktree with HERDR_ENV set -- a Herdr
   # worker. The shared checkout is the lead's (rules/agent-team-operation.md
-  # Writers and Checkouts), so the notice must report the drift WITHOUT telling
+  # Workers), so the notice must report the drift WITHOUT telling
   # the worker to fetch or fast-forward it.
   git -C "$TMP/r1" worktree add -q "$TMP/r1-wt" -b feat/worker >/dev/null 2>&1 \
     || die "r1 worktree add failed"

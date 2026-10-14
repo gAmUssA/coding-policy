@@ -22,7 +22,7 @@
 #             `herdr` or `jq` absent),
 #           2 a herdr failure, or an unreadable `agent get` payload,
 #           3 the worker is not idle or done — nothing was sent. A standup
-#             never interrupts a turn (`rules/agent-team-operation.md`
+#             never interrupts a turn (`skills/herdr-teamlead/references/team-operation.md`
 #             Dispatch Safety).
 #   env   : HERDR_BIN overrides the herdr binary; the tests point it at a fake.
 #           STANDUP_REPORT_PATH_MAX_COLS overrides the report path length

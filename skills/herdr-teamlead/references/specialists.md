@@ -16,7 +16,7 @@ task ledger. Renaming a worker cannot change what it contributed or grant new
 authority.
 
 The normal implementation, reviewer, tester, release and judge contracts remain
-in `rules/agent-team-operation.md`. A consultation uses the `advisor`,
+in `skills/herdr-teamlead/references/team-operation.md`. A consultation uses the `advisor`,
 `investigator` or `architect` responsibility and produces its bounded deliverable
 and report. A specialist who needs to implement receives the normal
 developer assignment, with a provisioned writing worktree and the relevant

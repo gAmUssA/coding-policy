@@ -127,7 +127,7 @@ A report is the worker's only channel to the lead. Read all of it, every time �
 a `## BLOCKED` section can sit under a report that otherwise reads as finished.
 
 - **Blocking findings present** — take Step 12's bounded fix path under
-  `rules/agent-team-operation.md` Fix Loops. Keep a stable task identifier and
+  `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Keep a stable task identifier and
   advance its fix counter; changing worker or scope never restarts it.
   Name the findings and prior report in each brief. Re-check the findings
   with scoped briefs, then run full verification before release.
@@ -148,7 +148,7 @@ a `## BLOCKED` section can sit under a report that otherwise reads as finished.
   absent, the worker is terminal, and the budget measured from `--since` is
   spent. This is terminal for that wait: schedule no further recheck. Read the
   `stall.class`, record the user-attention obligation, and take the recovery
-  `rules/agent-team-operation.md` Stalled Workers names for that class. Never
+  `skills/herdr-teamlead/references/team-operation.md` Stalled Workers names for that class. Never
   commit the partial work on the strength of the tree building.
 - Persist blocked dialogs, missing reports, and required operator decisions in
   the attention queue before presenting them. Keep observing unrelated work.
@@ -195,7 +195,7 @@ wrote a rule index missing a private dependency.
 The brief names a task-owned fixture root for that work, outside every ancestor
 that configures the tool, and the worker keeps every report, plan and patch
 artifact under the reports directory as usual
-(`rules/agent-team-operation.md` Writers and Checkouts carries the
+(`skills/herdr-teamlead/references/team-operation.md` Writers and Checkouts carries the
 preconditions).
 
 The root is this assignment's own: created under a name no other assignment
@@ -289,7 +289,7 @@ whatever GitHub's merge box says.
 ## The Judge
 
 A reserved seat outside ordinary staffing, on the most capable model
-available. It holds no other responsibility. `rules/agent-team-operation.md`
+available. It holds no other responsibility. `skills/herdr-teamlead/references/team-operation.md`
 Judge Seat is the contract; this section is the operational detail for
 Steps 13–19 of `skills/herdr-teamlead/SKILL.md`.
 
@@ -356,7 +356,7 @@ never reissued, the ladder never runs backwards, a rung already repeated is
 spent, and `stop` is terminal, so a task takes at most five diagnoses. No
 operator sits in the path of any of them.
 
-`rules/agent-team-operation.md` Judge Seat carries the contract; the record
+`skills/herdr-teamlead/references/team-operation.md` Judge Seat carries the contract; the record
 shapes are the owner's, in `skills/herdr-teamlead/references/dispatch-recovery.md`.
 
 It is read-only without exception in either mode: no file edit, no mutating

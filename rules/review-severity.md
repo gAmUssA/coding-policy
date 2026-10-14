@@ -39,7 +39,7 @@ description: Review findings carry a severity — blocking gates the merge, advi
 - Narrow exception for shipping with a blocking finding still open
 - Applies when a fix loop did not converge and the pinned judge's diagnosis answers it with `REMEDY: stop`
 - Preconditions (all required):
-  1. The task's current exhaustion carries a recorded `stop` diagnosis under `rules/agent-team-operation.md` Judge Seat
+  1. The task's current exhaustion carries a recorded `stop` diagnosis under `skills/herdr-teamlead/references/team-operation.md` Judge Seat
   2. The remaining blocking finding is recorded as a tracked accepted defect with its issue reference
   3. The shipped scope excludes that defect's work, and what ships carries no other blocking finding
   4. Every other release gate holds: CI green, the external reviews, and independent reviewer and tester passes on the shipped tip

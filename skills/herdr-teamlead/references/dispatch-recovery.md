@@ -163,7 +163,7 @@ number and fresh top-tier behavior. Each subsequent correction within a plan
 requires the preceding attempt's actual blocking review, recorded through
 `record-report`. Approved or absent findings do not justify another attempt.
 
-At budget exhaustion, record a new concrete checkpoint and take the judge's diagnosis through `diagnose`; its remedy supplies the bound under `rules/agent-team-operation.md` Judge Seat.
+At budget exhaustion, record a new concrete checkpoint and take the judge's diagnosis through `diagnose`; its remedy supplies the bound under `skills/herdr-teamlead/references/team-operation.md` Judge Seat.
 Changed scope or a changed operator decision requires new explicit bounds;
 unchanged in-scope work reuses its approval. Do not rename the task or reset
 the counter. Every changed tip still needs full independent reviewer and

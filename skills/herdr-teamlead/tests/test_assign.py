@@ -464,7 +464,7 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(runner.writes(), [])
 
     def test_a_busy_agent_has_no_override(self):
-        # rules/agent-team-operation.md Dispatch Safety is unconditional. The
+        # skills/herdr-teamlead/references/team-operation.md Dispatch Safety is unconditional. The
         # refusal is the whole behavior: nothing is typed, and no argument
         # exists that would type it anyway.
         runner = runner_with({"grok": "working"})

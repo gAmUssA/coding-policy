@@ -69,7 +69,7 @@ emit_notice() { # <notice-text>
 # The team rules reserve the shared checkout and every worktree operation for
 # the lead: a worker "runs no git command against the shared checkout,
 # mutating or otherwise" and "never creates, moves, or removes a worktree"
-# (rules/agent-team-operation.md Writers and Checkouts). A hook that tells a
+# (rules/agent-team-operation.md Workers). A hook that tells a
 # worker to fast-forward `main` or remove a worktree is instructing it to
 # break that rule -- which is exactly what happened in a live round, where the
 # worker reported the contradiction and then obeyed the hook.
@@ -294,7 +294,7 @@ main() {
   # A worker never touches the shared checkout, so telling it to sync one is
   # telling it to break the rule. Report the drift, name whose job it is.
   if is_herdr_worker; then
-    emit_notice "Session-start status — git: local \`${db}\` is ${behind} behind / ${ahead} ahead of \`origin/${db}\`. This is a Herdr worker session: the shared checkout is the lead's (rules/agent-team-operation.md Writers and Checkouts). Do not sync it — work in this worktree and report the drift."
+    emit_notice "Session-start status — git: local \`${db}\` is ${behind} behind / ${ahead} ahead of \`origin/${db}\`. This is a Herdr worker session: the shared checkout is the lead's (rules/agent-team-operation.md Workers). Do not sync it — work in this worktree and report the drift."
     return 0
   fi
 

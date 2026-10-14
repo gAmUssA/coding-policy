@@ -179,7 +179,7 @@ main() {
 
   # 4a-ii. A DETACHED worktree at a commit main already has. No branch name
   # could ever have matched it — and the lead never removes one
-  # (rules/agent-team-operation.md Writers and Checkouts), so it is surfaced on
+  # (skills/herdr-teamlead/references/team-operation.md Writers and Checkouts), so it is surfaced on
   # stderr and never listed under "remove them".
   mk_origin o4b; clone_from "$BARE" "$TMP/r4b"
   g -C "$TMP/r4b" worktree add -q --detach "$TMP/r4b-detached" || die "r4b detached add failed"
@@ -297,7 +297,7 @@ main() {
 
   # 4b. The same orphaned worktree, seen from INSIDE a linked worktree with
   # HERDR_ENV set: that is a worker session, and removing a worktree is the
-  # lead's job (rules/agent-team-operation.md). Blocking here would force the
+  # lead's job (rules/agent-team-operation.md Workers). Blocking here would force the
   # worker to either disobey the rule or fail to hand off.
   OUT="$(cd "$TMP/r4-wt" && printf '%s' '{"stop_hook_active":false}' \
     | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?

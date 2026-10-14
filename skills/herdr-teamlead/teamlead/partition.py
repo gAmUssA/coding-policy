@@ -1,6 +1,6 @@
 """Validate a review partition: one owner per changed file, no file unowned.
 
-`rules/agent-team-operation.md` Review Before PR describes one reviewer per
+`skills/herdr-teamlead/references/team-operation.md` Review Before PR describes one reviewer per
 round. A reviewer roaming an unbounded surface that reports no findings has not
 established that the surface is clean -- only that this pass happened not to
 reach a defect, which is why a twenty-round delivery ran three, three, two,
