@@ -362,6 +362,9 @@ have null native evidence even after their confirmed automatic clear. Recovery
 never replaces those fields, increases allowance, or sends a brief. Missing or
 conflicting evidence, stale attempts, unresolved dispatches, changed task/base,
 unauthorized paths and exhausted bounds refuse without modifying history.
+A preceding developer dispatch that a provider refused bore no work, so no
+correction follows it and recovery refuses; move its unchanged brief instead.
+A recovery an earlier release recorded on such a row keeps reading.
 
 Continue with the same task, next fix, correction plan and `--work FILE` in
 plan and normal apply. Omit `--retain-context` and `--no-clear`. Apply rechecks
@@ -459,6 +462,11 @@ Import missing attempts in order. An identical identity/input/byte replay is
 idempotent; a different identity for the same attempt, relabeled completed
 report/transport evidence, changed evidence, skipped
 count, conflicting head chain, pending dispatch, or out-of-scope diff refuses.
+A numbered correction also requires at least one work-bearing developer attempt
+on the task: after a refused initial dispatch the import refuses, since nothing
+was corrected. Move the unchanged initial brief to one other provider first.
+An import an earlier release recorded after a refused initial dispatch keeps
+reading; only new imports are refused.
 All planning, status, next-fix validation and budget checks consume the imported
 count. Five canonical fixes plus imported fix6 means six consumed attempts;
 fix7 still requires its applicable checkpoint and the judge's diagnosed bounded remedy.

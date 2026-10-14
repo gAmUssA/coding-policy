@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,10 +18,12 @@ from teamlead.cli import main
 from teamlead.config import load_config
 from teamlead.state import add_assignment, empty_state, load_state, save_state
 from tests import test_cli as fixture
-from tests.fakes import FakeRunner
+from tests.fakes import FakeRunner, ScriptedReads, agent_json
 
 AT = fixture.AT
 TASK = "developer-refusal"
+IMPORTED = "2026-02-03T11:00:00+00:00"
+IMPORT_AT = "2026-02-03T12:00:00+00:00"
 
 
 class DeveloperRefusalTest(unittest.TestCase):
@@ -57,9 +60,9 @@ class DeveloperRefusalTest(unittest.TestCase):
                     stdout=out, stderr=err, client=client)
         return code, out.getvalue(), err.getvalue()
 
-    def seed(self, fix):
+    def seed(self, fix, base="a" * 40):
         state = empty_state()
-        recovery.register_task(state["recovery"], {"task": TASK, "base_revision": "a" * 40,
+        recovery.register_task(state["recovery"], {"task": TASK, "base_revision": base,
             "scope": "Repair parser", "allowed_paths": ["src/*"],
             "authorization": {"source": "fixture operator", "quote": "Repair the parser."}}, AT)
         if fix is not None:
@@ -82,9 +85,9 @@ class DeveloperRefusalTest(unittest.TestCase):
                 "--report", "developer=" + report, "--dispatch-id", identifier, "--composer-settle", "0", "--now", at]
         return args + (["--fix-round", str(fix)] if fix is not None else []) + list(extra)
 
-    def prepare_retrospective(self, agent, args, client, identifier):
+    def prepare_retrospective(self, agent, args, client, identifier, role="developer", task=TASK):
         at = args[args.index("--now") + 1]
-        request = {"transitions": [{"agent": agent, "role": "developer", "task": TASK,
+        request = {"transitions": [{"agent": agent, "role": role, "task": task,
             "context": "retain" if "--retain-context" in args else "clear", "model": None, "effort": None,
             "pane": {"codex": "w3:p1", "claude": "w2:p1", "grok": "w4:p1"}[agent],
             "brief": str(self.brief), "common": str(self.common), "report": None,
@@ -96,6 +99,65 @@ class DeveloperRefusalTest(unittest.TestCase):
             notes.record(self.state, {"id": identifier, "note": str(self.note), "period_start": AT,
                 "period_end": at, "triggers": ["daily", "transition"], "tasks": [TASK], "participants": [agent],
                 "unavailable": {}, "sources": [], "completed": True, "check": str(path)}, check["coverage"], at)
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.root / "checkout"), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def history(self):
+        """A real checkout with one completed correction and its archived evidence (#23)."""
+        (self.root / "checkout/src").mkdir(parents=True)
+        self.git("init", "-q")
+        self.git("config", "user.name", "Refusal Fixture")
+        self.git("config", "user.email", "refusal@example.invalid")
+        (self.root / "checkout/src/parser.py").write_text("result = 1\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "Initial fixture")
+        base = self.git("rev-parse", "HEAD")
+        (self.root / "checkout/src/parser.py").write_text("result = 2\n")
+        self.git("commit", "-qam", "Completed manual correction")
+        head = self.git("rev-parse", "HEAD")
+        for name, body in (("authorization.md", TASK + "\nRepair parser\nRepair the parser.\n"),
+                           ("transport.md", "Fresh conversation confirmed.\nWorker grok received the correction.\nWorker grok started the correction.\n"),
+                           ("completed.md", "Completed " + head + "\n")):
+            (self.root / name).write_text(body)
+        return base, {"id": "manual-1", "task": TASK, "agent": "grok", "base_revision": base, "scope": "Repair parser",
+                      "allowed_paths": ["src/*"], "fix_round": 1, "authorized_first_fix": 1, "authorized_last_fix": 1,
+                      "authorization": {"source": "fixture operator", "quote": "Repair the parser."},
+                      "occurred_at": IMPORTED, "checkout": str(self.root / "checkout"), "previous_head": base,
+                      "head_revision": head, "authorization_evidence": str(self.root / "authorization.md"),
+                      "transport_evidence": str(self.root / "transport.md"), "report": str(self.root / "completed.md"),
+                      "transport": {"sent": True, "started": True, "clear": "fresh",
+                                    "sent_quote": "Worker grok received the correction.",
+                                    "started_quote": "Worker grok started the correction.",
+                                    "clear_quote": "Fresh conversation confirmed."}}
+
+    def import_correction(self, data):
+        record = self.root / "import-correction.json"
+        record.write_text(json.dumps(data))
+        return self.invoke(["import-correction", "--record", str(record), "--now", IMPORT_AT])
+
+    def refused_initial(self, base, fresh=False):
+        """Dispatch the initial brief to codex and record the provider's refusal.
+
+        `fresh` observes the cleared native session, so the refused row carries
+        the developer proof a role-clear recovery requires.
+        """
+        self.seed(None, base)
+        report = str(self.root / "first.md")
+        args = self.args("codex", report, "first", None)
+        client = self._client({"codex": "idle"}, sessions={"codex": "codex-native"})
+        self.prepare_retrospective("codex", args, client, "before-first")
+        if fresh:
+            self.runner.responses["agent get codex"] = ScriptedReads([
+                agent_json("codex", "idle", "w3:p1", "codex-previous"), agent_json("codex", "idle", "w3:p1", "codex-native")])
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        if fresh:
+            self.assertIsNotNone(load_state(self.state)["assignments"][0]["context_session"])
+        dispatch = json.loads(out)["applied"][0]["dispatch_id"]
+        self.refuse(dispatch, "codex", report)
+        return dispatch
 
     def refuse(self, dispatch, agent, report):
         receipt = self.root / (dispatch.replace(":", "-") + "-refusal.json")
@@ -198,6 +260,68 @@ class DeveloperRefusalTest(unittest.TestCase):
 
     def test_last_ordinary_fix_remains_inside_the_five_fix_budget(self):
         self.workflow(5)
+
+    def test_refused_initial_dispatch_cannot_be_followed_by_an_imported_fix_one(self):
+        base, data = self.history()
+        self.refused_initial(base)
+        before = self.state.read_bytes()
+        code, out, err = self.import_correction(data)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("no work-bearing developer attempt", err)
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_moved_initial_work_is_followed_by_an_imported_fix_one(self):
+        base, data = self.history()
+        self.refused_initial(base)
+        args = self.args("claude", str(self.root / "moved.md"), "replacement", None)
+        client = self._client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-move")
+        code, _, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        code, out, err = self.import_correction(data)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["fix_round"], 1)
+        code, out, err = self.invoke(["status"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["tasks"][TASK]["confirmed_fixes"], 1)
+
+    def test_refused_initial_dispatch_cannot_open_a_role_clear_fix_one(self):
+        dispatch = self.refused_initial("a" * 40, fresh=True)
+        # The lead assessed the refusal, so codex is free for another role.
+        supervision.resolve(self.state, {"id": dispatch, "outcome": "Provider refused; no report delivered",
+            "evidence": [str(self.root / (dispatch.replace(":", "-") + "-refusal.json"))]}, AT)
+        other = "another-authorized-task"
+        state = load_state(self.state)
+        recovery.register_task(state["recovery"], {"task": other, "base_revision": "a" * 40, "scope": "Verify another task",
+            "allowed_paths": ["src/*"], "authorization": {"source": "fixture operator", "quote": "Verify it."}}, AT)
+        save_state(self.state, state)
+        brief = self.brief
+        brief.write_text("Verify the other task.\n")
+        at = (datetime.fromisoformat(AT) + timedelta(minutes=5)).isoformat()
+        args = ["apply", "--assignments", json.dumps({"tester": "codex"}), "--task", other, "--common", str(self.common),
+                "--brief", "tester=" + str(brief), "--report", "tester=" + str(self.root / "tester-report.md"),
+                "--dispatch-id", "clearing", "--composer-settle", "0", "--now", at]
+        client = self._client({"codex": "idle"}, sessions={"codex": "codex-cleared"})
+        self.prepare_retrospective("codex", args, client, "before-tester", role="tester", task=other)
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        evidence = self.root / "clear-output.json"
+        evidence.write_text(out)
+        record = self.root / "recover-role-clear.json"
+        record.write_text(json.dumps({"id": "role-clear-1", "task": TASK, "base_revision": "a" * 40,
+            "assignment_index": 0, "clearing_assignment_index": 1, "next_fix": 1, "correction_plan": None,
+            "work": {"base_revision": "a" * 40, "scope": "Repair parser", "paths": ["src/parser.py"],
+                     "findings": ["Parser still returns the wrong result."]},
+            "clearing_authorization": {"task": other}, "evidence": str(evidence),
+            "reason": "The lead reused the developer for another authorized tester role"}))
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(["recover-role-clear", "--record", str(record), "--now", IMPORT_AT],
+                                     self._client({"codex": "idle"}, sessions={"codex": "later-observation"}))
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("was refused and bore no work", err)
+        self.assertEqual(self.state.read_bytes(), before)
 
     def test_operator_authorization_allows_one_more_dispatch_at_the_same_number(self):
         # Two independent refusals stop the line. The operator's decision
