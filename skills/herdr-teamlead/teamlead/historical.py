@@ -137,6 +137,9 @@ def import_attempt(store, assignments, data, at):
            and completed_evidence(row["receipts"]) == completed_evidence(receipts) for row in store["historical_attempts"]):
         raise UsageError("That completed report and transport evidence already consumed an attempt; do not relabel it with another fix number.", {})
     previous = prior_developer(assignments, data["task"])
+    if previous is not None and not ledger.developer_attempts(assignments, data["task"], store):
+        raise UsageError("This task has no work-bearing developer attempt: a refused dispatch delivered nothing, so no correction can follow it yet. "
+                         "Move the unchanged initial brief to one other provider at the same number, then import the correction that follows that work.", {})
     if previous is None or data["fix_round"] != ledger.confirmed_fix(assignments, data["task"], store) + 1:
         raise UsageError("Import only the actual next missing completed correction after its canonical developer history; do not skip or reuse a count.", {})
     if timestamp(data["occurred_at"], "occurred_at") <= timestamp(assignments[previous]["at"], "preceding developer time"):
@@ -251,7 +254,12 @@ def record_release_clear(store, assignments, data, at, observed_session):
 
 
 def validate_history(store, assignments):
-    """Validate stored relationships without re-reading historical artifacts."""
+    """Validate stored relationships without re-reading historical artifacts.
+
+    The work-bearing-attempt requirement import_attempt enforces is a write
+    gate only: an import a release before it recorded after a refused initial
+    dispatch keeps reading, so an existing ledger never becomes unreadable.
+    """
     slots = set()
     completed = set()
     for row in store["historical_attempts"]:

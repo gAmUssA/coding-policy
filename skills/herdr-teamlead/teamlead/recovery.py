@@ -326,6 +326,13 @@ def bore_work(row):
     return row.get("refusal") is None or row.get("report") is not None
 
 
+def refused_developer_indices(task, store):
+    """Assignment indices of the task's developer rows that bore no work."""
+    return {row["assignment_index"] for row in (store or {}).get("dispatches", [])
+            if row.get("task") == task and row.get("role") == "developer"
+            and row.get("status") == "applied" and not bore_work(row)}
+
+
 def developer_attempts(assignments, task, store):
     """The task's work-bearing developer assignments, newest last.
 
@@ -340,9 +347,7 @@ def developer_attempts(assignments, task, store):
 
     A row that bore work stays counted whatever else it carries; see bore_work.
     """
-    refused = {row["assignment_index"] for row in (store or {}).get("dispatches", [])
-               if row.get("task") == task and row.get("role") == "developer"
-               and row.get("status") == "applied" and not bore_work(row)}
+    refused = refused_developer_indices(task, store)
     return [row for index, row in enumerate(assignments)
             if index not in refused and row.get("task") == task
             and row.get("role") == "developer" and row.get("status") == "applied"]
