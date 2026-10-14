@@ -166,12 +166,14 @@ gh run watch "$tessl_run_id"
 Assign-on-merge repos: classify the run before the two checks below (contract and exit codes in the `skills/release/publish-outcome.sh` header):
 
 ```bash
-outcome=$(skills/release/publish-outcome.sh <owner> <repo> "$tessl_run_id" | jq -r .outcome)
+outcome_rc=0
+outcome_json=$(skills/release/publish-outcome.sh <owner> <repo> "$tessl_run_id") || outcome_rc=$?
 ```
 
-- `no_publication` — the merge published nothing; report "no publication" and skip the two checks below
-- `published` — run the two checks below
-- `failed`, `ambiguous`, or a non-zero exit — report it with the run URL; never a release
+- Exit 2 (empty output) — the outcome is unknown; report the stderr diagnostic and resolve it before reporting anything
+- Exit 1 — `failed` or `ambiguous` in `.outcome`; report it with the run URL, never a release
+- Exit 0, `.outcome` `no_publication` — the merge published nothing; report "no publication" and skip the two checks below
+- Exit 0, `.outcome` `published` — run the two checks below
 
 ```bash
 landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$tessl_run_id") \

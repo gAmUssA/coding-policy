@@ -185,6 +185,13 @@ main() {
     pass  # root reads a mode-000 directory; the permission case cannot arise
   fi
 
+  # 11d. a missing changelog.d/ is a broken configuration, never "no fragments"
+  tree "$TMP/11d"; rm -rf "$TMP/11d/changelog.d" || { echo "fatal: rm changelog.d" >&2; exit 2; }
+  before=$(snapshot "$TMP/11d")
+  run "$TMP/11d" 0.8.5; after=$(snapshot "$TMP/11d")
+  if [[ $RC -eq 1 && -z "$OUT" && "$before" == "$after" ]] && grep -q "changelog.d/ is missing" <<<"$ERR"; then pass
+  else fail "missing changelog.d: RC=$RC OUT=$OUT ERR=$ERR"; fi
+
   # 12. CHANGELOG with no `## ` heading -> appended after the preamble
   tree "$TMP/12"; printf '# Changelog\n\nPreamble line.\n' > "$TMP/12/CHANGELOG.md"; frag "$TMP/12" a.md patch $'### Fixed\n\n- a\n'
   run "$TMP/12" null
