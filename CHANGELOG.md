@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.15 — 2026-10-14
+
+### Fixed
+
+- **A refused initial developer dispatch no longer admits an imported or role-clear fix round 1** (#23). `import-correction` and `recover-role-clear` checked whether a preceding developer row existed, not whether it bore work. A provider-refused initial dispatch leaves an applied row while the confirmed count stays 0, so both commands accepted fix 1. That skipped the initial slot instead of requiring the same brief to move to another provider. New imports now require at least one work-bearing developer attempt, and a new role-clear recovery refuses a refused preceding developer dispatch. A shared `recovery.refused_developer_indices` helper backs both checks and `developer_attempts`. Both are write gates only: ledgers that earlier releases wrote with such records still read. `state-schema.md` and `references/dispatch-recovery.md` document that compatibility decision. New tests in `tests/test_developer_refusal.py` drive the real CLI, real Git and a real `record-refusal`: both refusals fail with the fix reverted, and moving the initial work to another provider still admits fix 1.
+
 ## 0.7.14 — 2026-10-13
 
 ### Fixed
