@@ -11,7 +11,9 @@ description: Herdr team rounds — the mode switch, the worker essentials, and w
 - **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set
 - Read `HERDR_ENV` to tell the modes apart
 - Never infer the mode from how large or careful the task is
-- In standalone mode none of this rule or its reference applies — no roles, no briefs, no report files, no worktree-per-writer, no judge seat
+- **Every section below, and `skills/herdr-teamlead/references/team-operation.md`, governs a Herdr team round only**
+- In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer, no judge seat
+- A standalone agent does the task directly
 - A standalone agent never simulates the roles, the briefs, or the reports
 - Standalone work is still governed by every other rule in this plugin
 

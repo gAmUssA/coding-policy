@@ -18,7 +18,11 @@ Before any finish with enrolled work, reconcile the whole fleet under
 or handoff covering every active assignment. Keep user attention visible under
 `skills/herdr-teamlead/references/attention.md`.
 
-Read `skills/herdr-teamlead/references/team-operation.md` in full before Step 1; it is the team contract every step runs under.
+Read the team contract in full before Step 1; every step runs under it:
+
+```text
+skills/herdr-teamlead/references/team-operation.md
+```
 
 Each command resolves `CP` to the local or home plugin. Repeat its resolver in
 every call. Prose `skills/...` paths are relative to that root.

@@ -4,15 +4,8 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 
 ## Two Modes
 
-- **Standalone** — one agent working a task on its own, with no Herdr session around it. `HERDR_ENV` is unset
-- **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set
-- Read `HERDR_ENV` to tell the modes apart
-- Never infer the mode from how large or careful the task is
+- The standalone/team mode switch lives in `rules/agent-team-operation.md` Two Modes, which every session loads
 - **Every section below governs a Herdr team round only**
-- In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer, no judge seat
-- A standalone agent does the task directly
-- A standalone agent never simulates the roles, the briefs, or the reports
-- Standalone work is still governed by every other rule in this plugin
 
 ## Team Composition
 
