@@ -48,19 +48,24 @@ main() {
 
   command -v jq >/dev/null 2>&1 || { warn "jq not found — install jq to load the beans guide"; return 0; }
   command -v beans >/dev/null 2>&1 || {
-    warn "${root}/.beans.yml is present but the beans CLI is not on PATH — install it (brew install beans) so the work tracker's guide loads (rules/work-tracking.md)"
+    warn "${root}/.beans.yml is present but the beans CLI is not on PATH — install it (brew install hmans/beans/beans) so the work tracker's guide loads (rules/work-tracking.md)"
     return 0
   }
 
-  # The CLI's stderr goes to a private mktemp file: a predictable path could be
-  # a stale file or a planted symlink, and concurrent sessions must not share it.
-  local errfile
-  errfile="$(mktemp "${TMPDIR:-/tmp}/beans-prime.XXXXXX")" || { warn "mktemp failed — cannot capture the CLI's diagnostics; the guide was not loaded"; return 0; }
+  # Capture the CLI's stderr without a temp file. Codex kills a timed-out hook's
+  # whole process group, and no trap runs on that kill, so any file made here
+  # would be left behind. The inner group writes the CLI's stderr first, then
+  # its exit code and stdout, each ended by a NUL, all onto one pipe.
   # Run from the beans root so the CLI's upward config search matches ours.
-  out="$(cd "$root" && beans prime 2>"$errfile")" || rc=$?
-  local err=""
-  err="$(tr '\n' ' ' < "$errfile")" || warn "could not read ${errfile}"
-  rm -f "$errfile" || warn "could not remove temp file ${errfile}"
+  local err="" rc_text=""
+  if ! { IFS= read -r -d '' err; IFS= read -r -d '' rc_text; IFS= read -r -d '' out; } < <(
+    { r=0; o="$(cd "$root" && beans prime)" || r=$?; printf '\0%s\0%s\0' "$r" "$o" >&2; } 2>&1
+  ); then
+    warn "could not read the output of beans prime in ${root} — the guide was not loaded"
+    return 0
+  fi
+  rc="$rc_text"
+  err="${err//$'\n'/ }"
   if (( rc != 0 )); then
     warn "beans prime failed (exit ${rc}) in ${root}: ${err:-no diagnostic} — run \`beans check\` there; the guide was not loaded"
     return 0

@@ -4,6 +4,17 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.14 — 2026-10-13
+
+### Fixed
+
+- **`beans-prime` leaves no temp file when it is killed** (#13). The hook captured `beans prime`'s stderr in a `mktemp` file and removed it afterwards. On a Codex timeout, `codex-rs/hooks/src/engine/command_runner.rs` kills the hook's whole process group with a signal no trap sees, so the file leaked. An EXIT trap, the fix the review suggested, cannot run on that kill. The hook now reads stderr, the exit code and stdout off one pipe, NUL-separated, and creates no file. A new case SIGKILLs the hook's process group while a fake `beans` hangs and asserts its private `TMPDIR` is empty; it fails against the previous hook. The other #13 advisories:
+  - The missing-CLI hint is now the tap-qualified `brew install hmans/beans/beans`, the form in the upstream beans README.
+  - The fixture's `/usr/bin:/bin` PATH segment can no longer let a real `beans` stand in for the fake: `run_hook` aborts if one resolves outside the case dir, and the missing-CLI case asserts none resolves at all.
+  - `rules/work-tracking.md`'s compound status/type bullet is split in two.
+- **The Stop hook's shellcheck engine failures are tested** (#18). The hook already blocked when shellcheck exits above 1, but only a finding (exit 1) and a missing engine were covered. New cases stub exits 2 and 3 and assert a block naming the exit and carrying the tool's own diagnostic. With the threshold loosened, both fail.
+- **The runner's summary remediation names the saved token**. The message for a shell suite without a tokened summary told the author to print `TEST_SUMMARY_TOKEN`, which the contract unsets; following it printed an empty token and failed again. It now shows the save-and-unset line and `token=${SUMMARY_TOKEN}`. This is the Copilot advisory deferred from #32.
+
 ## 0.7.13 — 2026-10-13
 
 ### Fixed

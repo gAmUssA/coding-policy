@@ -31,4 +31,5 @@ description: In a repo that tracks work with beans (`.beans.yml`), every task li
 
 - The Herdr lead's task ledger (`rules/agent-team-operation.md` Task Ledger) is round evidence owned by the lead; a bean is the repo's record of the work — both exist in a beans repo, neither substitutes for the other
 - A bean whose decision alters the architecture links its ADR (`rules/architecture-decisions.md`)
-- Status and priority follow the repo's `.beans.yml`; a type is always given with `-t`
+- Status and priority follow the repo's `.beans.yml`
+- A type is always given with `-t`
