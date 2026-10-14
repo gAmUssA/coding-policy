@@ -1,15 +1,32 @@
 name: Publish Plugin
 
-# Publishes the manifest version AS-IS on every push to main. No auto-bump,
-# no commit-back: the PR that lands the change already bumped
-# .tessl-plugin/plugin.json and headed CHANGELOG.md (gated pre-merge by
-# tests.yml's version-bump job via scripts/check-version-bump.sh). A version
-# that already exists in the registry fails this run red — the signal that a
-# bump was skipped, never silently re-published.
+# Assigns the version and publishes on every push to main
+# (docs/adr/0003-version-on-merge.md). PRs never edit the manifest version or
+# add a CHANGELOG heading; each one carries changelog.d/ fragments instead,
+# gated pre-merge by tests.yml's changelog-fragment job.
+#
+# Steps, in order:
+#   1. Check out the CURRENT tip of main, not the triggering SHA: a run queued
+#      behind another publish must see the release commit that run pushed, or
+#      it would re-assemble fragments already consumed.
+#   2. Lint, diagnostics and unit suites, as defense-in-depth over tests.yml.
+#   3. scripts/assemble-release.sh: with pending fragments it bumps both
+#      manifests from max(registry, manifest), heads a CHANGELOG entry and
+#      deletes the fragments; with none it changes nothing.
+#   4. scripts/push-release.sh (only after an assembly): commits
+#      `chore(release): <version>` as github-actions[bot] and pushes to main,
+#      rebasing once if a merge landed meanwhile. A push made with the
+#      workflow's GITHUB_TOKEN does not trigger new workflow runs, so the
+#      release commit cannot loop back into this workflow.
+#   5. `tessl plugin publish` only when the manifest version is strictly ahead
+#      of the registry (assemble-release.sh's `publish` field). A merge with no
+#      fragments publishes nothing; re-running a run whose publish failed
+#      publishes the already-committed version.
 #
 # The release skill (skills/release/SKILL.md Step 7) resolves this run by the
-# merge commit SHA + push event and confirms the registry advanced and the
-# moderation state cleared before reporting the release done.
+# merge commit SHA + push event — the run's headSha stays the triggering merge
+# even though the job checks out the current tip — and confirms the registry
+# advanced and the moderation state cleared before reporting the release done.
 
 on:
   push:
@@ -26,8 +43,13 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
 
       - uses: tesslio/setup-tessl@v2
         with:
@@ -46,5 +68,31 @@ jobs:
       - name: Run unit tests
         run: bash scripts/run-tests.sh
 
-      - name: Publish (manifest version as-is)
+      - name: Assemble pending changelog fragments
+        id: assemble
+        run: |
+          out=$(bash scripts/assemble-release.sh)
+          echo "$out"
+          {
+            echo "assembled=$(jq -r .assembled <<<"$out")"
+            echo "version=$(jq -r .version <<<"$out")"
+            echo "registry=$(jq -r .registry <<<"$out")"
+            echo "publish=$(jq -r .publish <<<"$out")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push the release
+        if: steps.assemble.outputs.assembled == 'true'
+        env:
+          VERSION: ${{ steps.assemble.outputs.version }}
+        run: bash scripts/push-release.sh "$VERSION"
+
+      - name: Report no publication
+        if: steps.assemble.outputs.publish != 'true'
+        env:
+          VERSION: ${{ steps.assemble.outputs.version }}
+          REGISTRY: ${{ steps.assemble.outputs.registry }}
+        run: echo "::notice::No pending changelog fragments and manifest ${VERSION} is not ahead of the registry (${REGISTRY}) — nothing to publish"
+
+      - name: Publish
+        if: steps.assemble.outputs.publish == 'true'
         run: tessl plugin publish

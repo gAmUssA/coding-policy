@@ -10,9 +10,9 @@ name: Tests
 #      breaks publish.yml after merge.
 #   3. unit-tests   — every module's bash unit suite via scripts/run-tests.sh
 #      (rules/testing-standards.md). Gated on diagnostics + lint passing.
-#   4. version-bump — PR only: the manifest version must be ahead of the
-#      registry and CHANGELOG.md must carry its heading, because publish.yml
-#      publishes the manifest version as-is on merge (no auto-bump).
+#   4. changelog-fragment — PR only: a change to shipped content carries a
+#      changelog.d/ fragment, and the PR edits no manifest version and adds no
+#      CHANGELOG version heading; publish.yml assigns the version on merge.
 # publish.yml reruns lint + diagnostics + the suites before release as
 # defense-in-depth.
 on:
@@ -51,13 +51,17 @@ jobs:
       - name: Run unit test suites
         run: bash scripts/run-tests.sh
 
-  version-bump:
+  changelog-fragment:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      # Full history: the gate diffs the PR head from its merge base with the
+      # base branch.
       - uses: actions/checkout@v7
-      - uses: tesslio/setup-tessl@v2
         with:
-          token: ${{ secrets.TESSL_TOKEN }}
-      - name: Manifest version is ahead of the registry and CHANGELOG is headed
-        run: bash scripts/check-version-bump.sh
+          fetch-depth: 0
+      - name: Shipped changes carry a fragment and assign no version
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-changelog-fragment.sh "origin/${BASE_REF}" "$HEAD_SHA"
