@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.6 — 2026-10-14
+
+### Added
+
+- **`teamlead preflight` gathers the lead's pre-planning facts in one call**. Before this, the Herdr lead spent four turns before planning a round: roster, repo authority, retrospective cadence plus headroom, and trigger detection. Each turn re-read its whole context. `teamlead.sh preflight --repo <dir> --slug <owner/repo> [--base/--head/--planned]` runs the existing owners in one call: `roster.sh`, `verify-authority.sh`, the daily `retro-check`, `measure`, and `detect-triggers` without staffing. It returns one JSON with `verdict`, every blocker in `stops`, and the references this round needs in `read_next`. A stop exits 0. Only bad arguments, an unreadable config or planned file, or a git failure exit non-zero, and all of these are checked before any worker is contacted. `herdr-teamlead` Steps 2–4 collapse into one preflight step and the later steps renumber to 3–20. `detect-triggers` and `plan` keep the staffing check unchanged, and the standalone commands stay documented in `round-setup.md` for recovery. `DeclarationError` and `UnclassifiedRoundError` now give two trigger refusals their own types; `detect-triggers` output is unchanged.
+
 ## 0.8.5 — 2026-10-14
 
 ### Changed
