@@ -19,6 +19,7 @@ from unittest.mock import patch
 from teamlead import memory
 from teamlead.errors import StateError, UsageError
 from teamlead.state import state_lock
+from tests.fakes import forbid_locks, forbid_network
 
 
 AT = "2026-09-01T12:00:00+00:00"
@@ -66,7 +67,7 @@ class MemoryTest(unittest.TestCase):
 
     def test_missing_readers_create_no_files(self):
         before = sorted(self.root.rglob("*"))
-        with patch.object(memory, "state_lock", side_effect=AssertionError("reader must not lock")):
+        with forbid_locks("reader must not lock"):
             self.assertEqual(memory.list_lessons(self.state, AT)["lessons"], [])
             with self.assertRaisesRegex(UsageError, "No saved memory"):
                 memory.show(self.state, AT)
@@ -76,7 +77,7 @@ class MemoryTest(unittest.TestCase):
         result = self.record()
         self.assertFalse(result["replayed"])
         before = memory.location(self.state).read_bytes()
-        with patch.object(memory, "state_lock", side_effect=AssertionError("reader must not lock")):
+        with forbid_locks("reader must not lock"):
             row = memory.list_lessons(self.state, LATER)["lessons"][0]
         self.assertEqual(row["last_verified_at"], AT)
         self.assertTrue(row["use_requires_live_verification"])
@@ -157,7 +158,7 @@ class MemoryTest(unittest.TestCase):
 
     def test_https_sources_are_not_fetched_offline(self):
         self.record({**self.lesson, "sources": ["https://example.org/issues/1"]})
-        with patch.object(memory, "_receipt", side_effect=AssertionError("URL read must remain offline")):
+        with forbid_network("URL read must remain offline"):
             row = memory.list_lessons(self.state, LATER)["lessons"][0]
         self.assertEqual(row["sources"][0]["observation"], "not_checked_offline")
 
