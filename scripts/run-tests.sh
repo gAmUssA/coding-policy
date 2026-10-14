@@ -108,7 +108,7 @@ summary_verdict() {
     fi
   done < "$output"
   if [[ -z "$passed" ]]; then
-    echo "exited 0 without a test-summary line carrying its token — print 'test-summary: passed=<N> failed=<M> token=\${TEST_SUMMARY_TOKEN}' (saved before running anything)"
+    echo "exited 0 without a test-summary line carrying its token — start the harness with 'SUMMARY_TOKEN=\"\${TEST_SUMMARY_TOKEN:-}\"; unset TEST_SUMMARY_TOKEN' and end it with 'echo \"test-summary: passed=<N> failed=<M> token=\${SUMMARY_TOKEN}\"'"
     return 1
   fi
   if (( failed > 0 )); then
