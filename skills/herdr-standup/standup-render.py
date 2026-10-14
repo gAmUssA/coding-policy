@@ -245,6 +245,28 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def extra_records(loaded: object) -> dict[str, dict[str, str] | None] | None:
+    """Narrow parsed --extra JSON to its per-agent records, or None if malformed."""
+    if not isinstance(loaded, dict):
+        return None
+    records: dict[str, dict[str, str] | None] = {}
+    for name, record in cast("dict[object, object]", loaded).items():
+        if not isinstance(name, str):
+            return None
+        if record is None:
+            records[name] = None
+            continue
+        if not isinstance(record, dict):
+            return None
+        fields: dict[str, str] = {}
+        for key, value in cast("dict[object, object]", record).items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                return None
+            fields[key] = value
+        records[name] = fields
+    return records
+
+
 def main(
     argv: list[str] | None = None, stdout: TextIO = sys.stdout, stderr: TextIO = sys.stderr
 ) -> int:
@@ -305,12 +327,16 @@ def main(
                 file=stderr,
             )
             return 1
-        if not isinstance(loaded, dict):
-            print("standup-render: --extra must hold a JSON object keyed by agent name", file=stderr)
+        records = extra_records(loaded)
+        if records is None:
+            print(
+                "standup-render: --extra must hold a JSON object keyed by agent name, "
+                "each value null or an object of text fields (note, roles, done, plan, "
+                "blocked) — fix {} and rerun.".format(args.extra),
+                file=stderr,
+            )
             return 1
-        # The isinstance check above proves the object; its values are the
-        # optional per-agent records the contract in the module docstring names.
-        extra = cast("dict[str, dict[str, str] | None]", loaded)
+        extra = records
 
     rows = build_rows(answered, extra)
     date = args.now.split("T")[0] if "T" in args.now else args.now.split(" ")[0]
