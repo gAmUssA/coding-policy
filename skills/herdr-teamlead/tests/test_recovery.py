@@ -17,7 +17,7 @@ from pathlib import Path
 from teamlead.errors import UsageError
 from teamlead.recovery import (
     DIAGNOSIS_BOUND_CEILING,
-    abort_pre_send, active_plans, authorize_context, authorize_plan, authorize_refused_dispatch, brief_identity, checkpoint, confirmed_fix,
+    abort_pre_send, active_plans, defect_issue, authorize_context, authorize_plan, authorize_refused_dispatch, brief_identity, checkpoint, confirmed_fix,
     diagnose, require_investigation_before_judge, require_judge_mode,
     dispatch_identity, finish_dispatch, fresh_transition, mark_sending,
     migrate_store, prior_dispatch, record_refusal, record_report, refusal_move, register_task, reserve,
@@ -405,10 +405,13 @@ class RecoveryTests(unittest.TestCase):
             self.run_diagnosis(missing, "judge")
         for malformed in ("#22", "22", "coding-policy#22", "gAmUssA/coding-policy#0", "gAmUssA/coding-policy",
                           "https://github.com/gAmUssA/coding-policy/issues/22", " gAmUssA/coding-policy#22",
-                          "-owner/repo#1", "owner/..#1", "owner/repo#22 extra", None, 22):
+                          "-owner/repo#1", "owner-/repo#1", "owner--name/repo#1", "o" * 40 + "/repo#1",
+                          "owner/..#1", "owner/repo#22 extra", None, 22):
             with self.assertRaisesRegex(UsageError, "owner/repo#number"):
                 self.run_diagnosis({**request, "defect_issue": malformed}, "judge")
         self.assertEqual(self.store["diagnoses"], [])
+        for valid in ("a/b#1", "a-b/repo#1", "o" * 39 + "/repo.name_x-y#9"):
+            self.assertEqual(defect_issue(valid), valid)
         record = self.run_diagnosis(request, "judge")
         self.assertEqual((record["schema_version"], record["remedy"], record["defect_issue"]), (3, "stop", DEFECT_ISSUE))
         validate_store(self.store, self.history)
