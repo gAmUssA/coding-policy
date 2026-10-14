@@ -1538,6 +1538,62 @@ class ApplyCommandTest(CliCase):
                 self.assertEqual(sum(command.startswith("agent prompt grok 'New assignment")
                                      for command in self.runner.commands()), 1)
 
+    def _plain_apply(self):
+        return self.base() + ["apply", "--composer-settle", "0", "--assignments", json.dumps({"developer": "grok"}),
+                              "--common", str(self.common), "--now", AT] + self.brief_args("developer")
+
+    def _direct(self, argv, client=None):
+        # Straight to main, skipping run_cli's recorded coverage: the real
+        # retrospective Guard alone decides.
+        out, err = io.StringIO(), io.StringIO()
+        code = main(argv, stdout=out, stderr=err, client=client)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    def _error(stderr):
+        return json.loads(stderr[stderr.find("{\n"):])
+
+    def test_real_retrospective_gate_refuses_an_uncovered_transition(self):
+        client = self._client({"grok": "idle"})
+        code, out, err = self._direct(self._plain_apply(), client)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        error = self._error(err)
+        self.assertIn("A retrospective is due before dispatch", error["message"])
+        self.assertEqual(error["details"]["missing_coverage"], ["grok"])
+        self.assertEqual(self.runner.writes(), [])
+        self.assertFalse(self.state.exists() and json.loads(self.state.read_text())["assignments"])
+
+    def test_real_retrospective_gate_accepts_a_recorded_transition(self):
+        code, _, err = self._direct(self._plain_apply(), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        item = self._error(err)["details"]["request"]["transitions"][0]
+        reason = "First dispatch to this worker; no prior report exists."
+        request = self.tmp / "retro-request.json"
+        request.write_text(json.dumps({"transitions": [{**item, "unavailable": reason}]}))
+        code, out, err = self._direct(self.base() + ["retro-check", "--record", str(request), "--now", AT],
+                                      self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["due"])
+        check = self.tmp / "retro-check.json"
+        check.write_text(out)
+        note = self.tmp / "retro-note.md"
+        note.write_text("# Retrospective\n" + "".join(
+            "\n## " + section + "\nObserved the idle worker; brief it next.\n" for section in notes.SECTIONS))
+        record = self.tmp / "retro-record.json"
+        record.write_text(json.dumps({"id": "before-first-dispatch", "note": str(note), "period_start": AT,
+                                      "period_end": AT, "triggers": ["daily", "transition"], "tasks": [],
+                                      "participants": [], "unavailable": {"grok": reason}, "sources": [],
+                                      "completed": True, "check": str(check)}))
+        code, _, err = self._direct(self.base() + ["retro-record", "--record", str(record), "--now", AT],
+                                    self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        client = self._client({"grok": "idle"})
+        code, out, err = self._direct(self._plain_apply(), client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["applied"][0]["status"], "applied")
+        self.assertEqual(sum(command.startswith("agent prompt grok") for command in self.runner.commands()), 1)
+
     def test_missing_brief_flag_is_an_actionable_error(self):
         client = self._client({})
         code, _, err = self.run_cli(
