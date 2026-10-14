@@ -66,10 +66,16 @@ class NativeDeliveryTests(unittest.TestCase):
         self.report = self.tmp / "report [361]+.md"
         self.report.write_text("Current report bytes.\n")
         self.marker = "REPORT: " + str(self.report)
-        self.source = self.tmp / "native.jsonl"
+        # Where Codex keeps this session's rollout; native_home() points the
+        # real source resolution at it.
+        self.source = self.tmp / "native-home" / "sessions" / "2026" / "09" / "01" / ("rollout-fixed-" + SESSION + ".jsonl")
+        self.source.parent.mkdir(parents=True)
         self.pane = {"pane_id": PANE, "agent_status": "idle", "agent_session": identity("codex"),
                      "terminal_id": "terminal-1", "revision": 1, "scroll": {"offset_from_bottom": 0}}
         self.visible = "• " + self.marker
+
+    def native_home(self):
+        return patch.dict(os.environ, {"CODEX_HOME": str(self.tmp / "native-home")})
 
     def write_source(self, rows):
         self.source.write_text(encode(rows))
@@ -155,7 +161,7 @@ class NativeDeliveryTests(unittest.TestCase):
 
     def test_probe_requires_stable_native_pane_source_and_file(self):
         self.write_source(codex_rows(self.marker))
-        with patch.object(delivery, "source_path", return_value=self.source):
+        with self.native_home():
             self.assertTrue(delivery.probe(self.fake_client(), "worker", PANE, str(self.report), self.visible, 40)["found"])
             for field, value in (("terminal_id", "replacement"), ("revision", 2), ("agent_status", "working"),
                                  ("scroll", {"offset_from_bottom": 1}), ("agent_session", identity("grok"))):
@@ -186,11 +192,12 @@ class NativeDeliveryTests(unittest.TestCase):
                 {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "new-turn"}}]))
             return self.visible
 
-        with patch.object(delivery, "source_path", return_value=self.source), patch.object(client, "pane_read", side_effect=append_turn):
+        with self.native_home(), patch.object(client, "pane_read", side_effect=append_turn):
             self.assertFalse(delivery.probe(client, "worker", PANE, str(self.report), self.visible, 40)["found"])
 
     def test_public_probe_reports_first_read_and_reread_failures(self):
         source_bytes = encode(codex_rows(self.marker)).encode("utf-8")
+        self.source.write_bytes(source_bytes)
         errors = (PermissionError(13, "Permission denied", str(self.source)),
                   OSError(5, "Input/output error", str(self.source)),
                   UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"))
@@ -200,7 +207,7 @@ class NativeDeliveryTests(unittest.TestCase):
                 outcomes = [source_bytes] * (read_number - 1) + [error]
                 output, diagnostic = io.StringIO(), io.StringIO()
                 with self.subTest(read_number=read_number, error=type(error).__name__), \
-                        patch.object(delivery, "source_path", return_value=self.source), \
+                        self.native_home(), \
                         patch.object(Path, "read_bytes", side_effect=outcomes), patch.object(sys, "stdin", io.StringIO(self.visible)):
                     code = cli.main(args, stdout=output, stderr=diagnostic, client=self.fake_client())
                     self.assertEqual(code, 1)
@@ -212,18 +219,19 @@ class NativeDeliveryTests(unittest.TestCase):
 
     def test_absent_native_source_stays_unconfirmed_on_either_read(self):
         source_bytes = encode(codex_rows(self.marker)).encode("utf-8")
+        self.source.write_bytes(source_bytes)
         for outcomes in ([FileNotFoundError()], [source_bytes, FileNotFoundError()]):
-            with patch.object(delivery, "source_path", return_value=self.source), patch.object(Path, "read_bytes", side_effect=outcomes):
+            with self.native_home(), patch.object(Path, "read_bytes", side_effect=outcomes):
                 result = delivery.probe(self.fake_client(), "worker", PANE, str(self.report), self.visible, 40)
                 self.assertFalse(result["found"])
                 self.assertEqual(result["reason"], "native_source_unavailable")
-        with patch.object(delivery, "source_path", side_effect=FileNotFoundError()):
+        with patch.dict(os.environ, {"CODEX_HOME": str(self.tmp / "absent-home")}):
             self.assertFalse(delivery.probe(self.fake_client(), "worker", PANE, str(self.report), self.visible, 40)["found"])
 
     def test_native_directory_permission_error_is_not_a_missing_source(self):
         root = self.tmp / "sessions"
         error = PermissionError(13, "Permission denied", str(root))
-        with patch.object(delivery, "source_root", return_value=root), patch("os.scandir", side_effect=error):
+        with patch.dict(os.environ, {"CODEX_HOME": str(self.tmp)}), patch("os.scandir", side_effect=error):
             with self.assertRaises(UsageError) as caught:
                 delivery.probe(self.fake_client(), "worker", PANE, str(self.report), self.visible, 40)
         self.assertIn(str(root), str(caught.exception))

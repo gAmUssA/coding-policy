@@ -253,7 +253,11 @@ class ClaudeSourceTests(unittest.TestCase):
         self.report = self.tmp / "report [366]+.md"
         self.report.write_text("Current report bytes.\n")
         self.marker = "REPORT: " + str(self.report)
-        self.source = self.tmp / "native.jsonl"
+        # The session transcript where Claude Code keeps it under the
+        # fixture's CLAUDE_CONFIG_DIR; probe() resolves it for real.
+        self.native_config = self.tmp / "native-config"
+        self.source = self.native_config / "projects" / "fixture-project" / (SESSION + ".jsonl")
+        self.source.parent.mkdir(parents=True)
         self.visible = GLYPH + self.marker
         self.pane = {"pane_id": PANE, "agent_status": "done", "agent_session": identity(),
                      "terminal_id": "term_65aea777271938", "revision": 13,
@@ -557,7 +561,7 @@ class ClaudeSourceTests(unittest.TestCase):
 
     def probe(self, transcript):
         self.source.write_text(transcript.body())
-        with patch.object(delivery, "source_path", return_value=self.source):
+        with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.native_config)}):
             return delivery.probe(self.fake_client(), "claude-review", PANE,
                                   str(self.report), self.visible, 40)
 
