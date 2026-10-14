@@ -53,7 +53,7 @@ DECLARATION = {
 }
 
 FAKE_HERDR = """#!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 if [[ "${1:-} ${2:-}" == "agent list" ]]; then
   if [[ -n "${FAKE_ROSTER_EMPTY:-}" ]]; then
     printf '{"result":{"agents":[{"name":"lead","agent":"claude","pane_id":"lead-pane","agent_status":"working"}]}}\\n'
@@ -67,7 +67,7 @@ exit 2
 """
 
 FAKE_GH = """#!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 if [[ "${1:-} ${2:-}" == "auth status" ]]; then printf 'Logged in\\n'; exit 0; fi
 [[ "${1:-}" == "api" ]] || { echo "fake gh: unsupported $*" >&2; exit 2; }
 case "${2:-}" in
