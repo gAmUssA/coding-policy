@@ -65,7 +65,11 @@ DIAGNOSIS_VERSIONS = frozenset({REISSUE_DIAGNOSIS_VERSION, DIAGNOSIS_RECORD_VERS
 #: The issue reference a `stop` remedy's accepted defect carries:
 #: `owner/repo#number`. A bare `#number` names no repository, and a task's
 #: recovery record names none either, so it is refused as ambiguous.
-DEFECT_ISSUE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.{1,2}#)[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,9}\Z")
+#: The owner follows GitHub's account-name rules: 1-39 characters, letters,
+#: digits and single hyphens, never leading or trailing.
+DEFECT_ISSUE_RE = re.compile(
+    r"(?=[A-Za-z0-9-]{1,39}/)[A-Za-z0-9](?:-?[A-Za-z0-9])*/(?!\.{1,2}#)[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,9}\Z"
+)
 DEFAULT_FIX_LIMIT = 5
 #: The most attempts one remedy may buy, in developer attempts. A remedy that
 #: needs more than the task's own original allowance is not a bounded

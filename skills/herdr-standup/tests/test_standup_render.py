@@ -317,6 +317,31 @@ class CliTest(unittest.TestCase):
         self.assertIn("grok (busy:", payload["block"])
         self.assertEqual(payload["unasked"], ["grok"])
 
+    def test_malformed_extra_records_are_refused_not_crashed(self):
+        for bad in ({"grok": "absent"}, {"grok": {"note": 3}}, {"grok": ["busy"]}):
+            extra = self.tmp / "extra.json"
+            extra.write_text(json.dumps(bad), encoding="utf-8")
+            code, out, err = self.run_cli(
+                ["--reports", str(self.reports), "--now", NOW, "--extra", str(extra)]
+            )
+            self.assertEqual(code, 1, bad)
+            self.assertEqual(out, "", bad)
+            self.assertIn("each value null or an object of text fields", err)
+
+    def test_a_null_extra_record_renders_the_bare_name(self):
+        extra = self.tmp / "extra.json"
+        extra.write_text(json.dumps({"grok": None}), encoding="utf-8")
+        code, out, _err = self.run_cli(
+            [
+                "--reports", str(self.reports),
+                "--now", NOW,
+                "--agent", "claude={}".format(self.report),
+                "--extra", str(extra),
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["unasked"], ["grok"])
+
     def test_a_bad_agent_pair_is_refused(self):
         code, _out, err = self.run_cli(
             ["--reports", str(self.reports), "--now", NOW, "--agent", "claude"]

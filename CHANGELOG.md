@@ -4,6 +4,15 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.4 — 2026-10-14
+
+### Fixed
+
+- **A stop diagnosis's defect issue must name a valid GitHub owner**. In 0.8.0 the `defect_issue` owner segment accepted a trailing hyphen (`owner-/repo#1`), a doubled hyphen (`owner--name/repo#1`) and 40-character names. GitHub account names allow none of these, so a `stop` could record a reference that resolves to no issue. `DEFECT_ISSUE_RE` now holds the owner to GitHub's rules: 1–39 characters of letters, digits and single hyphens, never leading or trailing. The new reject cases fail with the old pattern. Valid owners still pass, including a single character, an inner hyphen and the 39-character limit. This was a Copilot advisory deferred from #36.
+- **The Herdr invocation guard rejects a backslash escape after the script path**. Its quote stripping was not escape-aware. For `bash "$CP/…/roster.sh" \" | other-command \"`, which bash runs as a pipeline, the guard removed the text between the escaped quotes and found no pipe. A backslash anywhere after the script path is now rejected; only the trailing line continuation stays allowed. Two new reject fixtures, for escaped double and single quotes, fail with the check removed. This was a Copilot advisory deferred from #37.
+- **`standup-render.py` refuses a malformed `--extra` record instead of crashing**. Only the outer JSON object was checked. A record such as `{"grok": "absent"}` reached `build_rows` and raised `AttributeError`. A new `extra_records` helper validates each value as null or an object of text fields and returns the CLI diagnostic otherwise. The new reject cases crash with the previous renderer, and a null record still renders the bare name. This was a Copilot advisory deferred from #38.
+- **ADR 0002 names its strict trees exactly**. Its Consequences said all new Python outside `herdr-teamlead` is strict. Only `hooks/`, `scripts/` and `skills/herdr-standup` are, and a new top-level tree inherits `standard` until it is added to the list. This clarifies the recorded scope and does not change the Decision. It was a Copilot advisory deferred from #38.
+
 ## 0.8.3 — 2026-10-14
 
 ### Changed
