@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from teamlead.herdr import HerdrClient
 from teamlead.planner import plan
 from teamlead.state import add_assignment, empty_state, load_state_checked, role_counts
-from tests.fakes import FakeRunner, ScriptedReads, agent_json, composer_reads, composer_screen, ok_json
+from tests.fakes import FakeRunner, PhasedReads, agent_json, composer_reads, composer_screen, ok_json
 from tests.test_cli import CliCase, CONFIG
 from tests.test_qualification import AT, qualified_tier
 
@@ -160,9 +160,15 @@ class TierIntegrationTest(CliCase):
         shell = {**process, "foreground_processes": [{"name": "bash", "pid": 100}]}
         argv = ["claude", "--dangerously-skip-permissions", "--model", "sonnet-5", "--effort", "high"]
         started = {**process, "foreground_processes": [{"name": "claude", "pid": 300, "argv": argv}]}
-        runner.responses["pane process-info"] = ScriptedReads([
-            json.dumps({"result": {"process_info": item}}) for item in (process, process, shell, started)])
+        # The running worker, its shell after the kill, the relaunched worker.
+        runner.responses["pane process-info"] = PhasedReads([
+            (None, [json.dumps({"result": {"process_info": process}})]),
+            ("-TERM 200", [json.dumps({"result": {"process_info": shell}})]),
+            ("agent start", [json.dumps({"result": {"process_info": started}})]),
+        ])
         runner.set("-TERM 200")
+        # The retrospective gate reads the shell's own argv before the relaunch.
+        runner.set("-o args= -p 100", "bash\n")
         runner.set("agent start", json.dumps({"result": {"agent": info, "argv": argv}}))
         runner.responses["agent read"] = composer_reads("claude", ("ready", "ready", "> New assignment from the team lead."))
         runner.set("agent prompt", ok_json())
