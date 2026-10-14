@@ -172,7 +172,12 @@ class CliCase(unittest.TestCase):
             return
         state = self._state_argument(argv)
         # argparse keeps the last --now, as some fixtures override a base one.
-        at = argv[len(argv) - argv[::-1].index("--now")] if "--now" in argv else cli.now_iso()
+        # Coverage is stamped with the command's own --now, never the wall
+        # clock. A command without one gets no coverage: if it reaches the
+        # real Guard it is refused the same way on every run date.
+        if "--now" not in argv:
+            return
+        at = argv[len(argv) - argv[::-1].index("--now")]
         recorded = []
         for _ in range(self.RETROSPECTIVE_REHEARSALS):
             saved = self._save_workspace()
