@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.5 — 2026-10-14
+
+### Changed
+
+- **The always-on team rule is a stub; the lead's contract moves into the `herdr-teamlead` skill**. `rules/agent-team-operation.md` loads in every session. That included standalone sessions and every worker pane in a team round, so each one carried about 5,000 words of lead-only contract it never acts on: staffing, specialist triggers, judge seat, tiers, fix loops, dispatch safety, ledger, memory, attention, supervision, retrospectives and review before the PR. In a five-worker round that text loaded six times. The rule now carries only the standalone/team mode switch and the worker essentials (about 380 words): one writer per worktree, no git on the shared checkout, report files, deciding instead of blocking, and no subagents in reviewer or tester briefs. The full contract moves verbatim to `skills/herdr-teamlead/references/team-operation.md`. The skill's preamble has the lead read it in full before Step 1, and it binds every team round as before. A line-by-line check confirms every line of the old rule is in the stub or the reference, and the two do not repeat each other: the reference points to the stub for the worker directives. All 28 citing files are repointed, hooks and the worker notice to the stub and lead-side citations to the reference. `.herdr/triggers.json` lists the reference as a trust boundary, as `rules/*` covered it before.
+
 ## 0.8.4 — 2026-10-14
 
 ### Fixed
