@@ -160,10 +160,10 @@ main() {
   if [[ $RC -eq 2 && -z "$OUT" ]] && printf '%s' "$ERRTEXT" | grep -q "agent_blocked"; then
     pass; else fail "prompt refused: expected exit 2, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

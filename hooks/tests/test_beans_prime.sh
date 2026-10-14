@@ -105,10 +105,10 @@ main() {
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"printed nothing"* ]]; then
     pass; else fail "empty CLI: expected a warning, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; return 1; fi
   echo "PASSED: all ${PASS} checks" >&2
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   return 0
 }
 

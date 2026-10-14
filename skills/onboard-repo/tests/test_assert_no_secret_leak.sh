@@ -73,6 +73,6 @@ t_leaked_refresh_token_fails
 t_short_field_in_prose_passes
 t_missing_files_pass
 t_bad_args
-echo "test-summary: passed=${pass} failed=${fail}"
 echo "== summary: ${pass} passed, ${fail} failed =="
+echo "test-summary: passed=${pass} failed=${fail}"
 [[ "$fail" -eq 0 ]]

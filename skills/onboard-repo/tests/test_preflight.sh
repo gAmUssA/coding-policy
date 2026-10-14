@@ -133,10 +133,10 @@ STUB
   mkrepo "$TMP/r10"; OUT="$(cd "$TMP/r10" && bash "$SCRIPT" --bogus 2>/dev/null)"; RC=$?
   if [[ $RC -eq 2 ]]; then pass; else fail "bad arg: RC=$RC"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────"
   if (( FAIL > 0 )); then echo "FAILED: ${FAIL} of $((PASS+FAIL)) checks" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks"
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
 }
 
 main "$@"

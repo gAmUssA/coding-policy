@@ -477,10 +477,10 @@ STUB
   if [[ $RC -eq 0 ]] && reason_has 'pyright is not installed'; then
     pass; else fail "missing Pyright must retain install guidance: OUT=$OUT"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

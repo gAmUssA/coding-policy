@@ -179,10 +179,10 @@ JSON
   if [[ $RC -eq 1 && -z "$OUT" ]] && grep -q "HERDR_WORKSPACE_ID" "$TMP/e8c"; then
     pass; else fail "no workspace id: expected exit 1, got RC=$RC"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -528,6 +528,6 @@ test_non_numeric_run_id_rejected() {
 run "non-numeric run id rejected with diagnostic" test_non_numeric_run_id_rejected
 
 echo
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 exit "$FAIL_COUNT"

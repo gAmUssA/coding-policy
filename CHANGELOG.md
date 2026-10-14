@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.12 — 2026-10-13
+
+### Fixed
+
+- **A shell suite's summary must be its final output line** (#31). 0.7.11 judged a shell suite exiting 0 by its last `test-summary:` line anywhere in its output. A harness that echoed a nested harness's passing summary and then exited 0 before printing its own inherited the nested line and passed: the same early-exit shape #26 closed. The runner now requires the suite's last non-blank output line to be the summary, and every harness prints it as its final line on the passing path. A per-suite token was the alternative; it would not cover a harness that calls another harness directly instead of through the runner, and a nested runner's lines are never last anyway. A new case echoes a nested `passed=1` and exits 0 without its own summary; with the runner change reverted the suite passes, with it restored it fails.
+
 ## 0.7.11 — 2026-10-13
 
 ### Fixed

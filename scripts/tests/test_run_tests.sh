@@ -287,7 +287,7 @@ rm -rf "$base"
 base="$(make_base)"; add_sh_body "$base" silent 'echo "all good"; exit 0'
 invoke "$base"
 if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
-  && [[ "$ERR" == *"no test-summary line"* ]]; then
+  && [[ "$ERR" == *"without ending on a test-summary line"* ]]; then
   pass "shell suite without a summary line -> counted as a failure"
 else
   fail "missing summary: code=$CODE out=$OUT err=$ERR"
@@ -305,29 +305,43 @@ else
 fi
 rm -rf "$base"
 
-# --- the suite's own (last) summary line wins over a nested run's ---
+# --- the suite's own final summary line wins over a nested run's ---
 # A harness that runs another harness echoes the nested summary first; only
-# the final line is this suite's verdict. Both orders are pinned.
+# the suite's final output line is its verdict (#31). Both orders are pinned.
 base="$(make_base)"
-add_sh_body "$base" outer 'echo "test-summary: passed=0 failed=0"; echo "test-summary: passed=4 failed=0"; exit 0'
+add_sh_body "$base" outer 'echo "test-summary: passed=0 failed=0"; echo "test-summary: passed=4 failed=0"; echo; exit 0'
 invoke "$base"
 if [[ "$CODE" == 0 ]] && [[ "$(jq -r .passed <<<"$OUT")" == 1 ]]; then
-  pass "last summary line is the verdict (nested zero ignored)"
+  pass "final summary line is the verdict (nested zero ignored, trailing blank allowed)"
 else
-  fail "last summary wins: code=$CODE out=$OUT err=$ERR"
+  fail "final summary wins: code=$CODE out=$OUT err=$ERR"
 fi
 rm -rf "$base"
 base="$(make_base)"
 add_sh_body "$base" outer 'echo "test-summary: passed=4 failed=0"; echo "test-summary: passed=0 failed=0"; exit 0'
 invoke "$base"
 if [[ "$CODE" == 1 ]]; then
-  pass "last summary line is the verdict (own zero not masked by nested)"
+  pass "final summary line is the verdict (own zero not masked by nested)"
 else
-  fail "last summary wins (reverse): code=$CODE out=$OUT err=$ERR"
+  fail "final summary wins (reverse): code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+
+# --- a nested pass followed by an early exit 0 fails the run (#31) ---
+# The outer harness echoes a nested harness's passing summary, then exits 0
+# before printing its own; the nested line must not stand in for it.
+base="$(make_base)"
+add_sh_body "$base" early 'echo "test-summary: passed=1 failed=0"; echo "  case 1: setting up"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
+  && [[ "$ERR" == *"without ending on a test-summary line"* ]]; then
+  pass "nested passing summary then early exit 0 -> counted as a failure"
+else
+  fail "nested summary masking: code=$CODE out=$OUT err=$ERR"
 fi
 rm -rf "$base"
 
 echo ""
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "run-tests.sh: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 [[ $FAIL_COUNT -eq 0 ]] || exit 1

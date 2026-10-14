@@ -20,12 +20,15 @@
 #
 # A shell harness's exit code alone cannot prove it ran anything: each one
 # exits on its failure count, so a harness whose cases were all removed or
-# never reached exits 0 (#26). Every shell harness therefore prints its
-# counts as a summary line, and a shell suite exiting 0 passes only when its
-# LAST such line reports at least one pass and zero failures:
+# never reached exits 0 (#26). Every shell harness therefore ends its
+# output with its counts, and a shell suite exiting 0 passes only when its
+# LAST non-blank output line is that summary, reporting at least one pass and
+# zero failures:
 #   test-summary: passed=<N> failed=<M>
-# The last line wins so a harness that runs another harness is judged by its
-# own summary, never the nested one. A Python suite needs no line: unittest
+# Requiring the final line, not merely the last matching line, binds the
+# summary to the suite that printed it (#31): a harness that echoes a nested
+# harness's summary and then exits 0 before its own never ends on a summary
+# line of its own making. A Python suite needs no line: unittest
 # exits non-zero on "NO TESTS RAN".
 #
 # Output contract (rules/script-delegation.md — structured stdout):
@@ -92,20 +95,19 @@ run_suite() {
   "$interp" "$suite"
 }
 
-# Judge a shell suite that exited 0 by its own summary line (see header).
+# Judge a shell suite that exited 0 by its final summary line (see header).
 # Prints the reason on stdout when the suite fails the contract; prints
 # nothing when it passes. Returns 1 on a contract failure.
 SUMMARY_RE='^test-summary: passed=([0-9]+) failed=([0-9]+)$'
 summary_verdict() {
   local output="$1" line last=""
-  while IFS= read -r line; do
-    [[ "$line" =~ $SUMMARY_RE ]] && last="$line"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "${line//[[:space:]]/}" ]] && last="$line"
   done < "$output"
-  if [[ -z "$last" ]]; then
-    echo "exited 0 with no test-summary line — print 'test-summary: passed=<N> failed=<M>' as its last summary"
+  if ! [[ "$last" =~ $SUMMARY_RE ]]; then
+    echo "exited 0 without ending on a test-summary line — print 'test-summary: passed=<N> failed=<M>' as its final output"
     return 1
   fi
-  [[ "$last" =~ $SUMMARY_RE ]]
   if (( BASH_REMATCH[2] > 0 )); then
     echo "exited 0 but reported ${BASH_REMATCH[2]} failed"
     return 1

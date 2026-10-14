@@ -219,6 +219,6 @@ run "multiple stale CRs all dismissed"          t_multiple_stale_crs_all_dismiss
 run "login is glob-safe against cwd files"      t_login_is_glob_safe_against_cwd_files
 
 echo
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "passed: ${PASS_COUNT}, failed: ${FAIL_COUNT}"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 [[ $FAIL_COUNT -eq 0 ]]

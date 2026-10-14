@@ -705,6 +705,6 @@ run "a non-integer PR number is refused before any call"              t_non_inte
 run "main marks a lane nobody requested (#369)"                       t_main_marks_an_unrequested_lane
 run "main marks a requested-and-pending lane (#369)"                  t_main_marks_a_pending_lane_requested
 
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 [[ "$FAIL_COUNT" -eq 0 ]]

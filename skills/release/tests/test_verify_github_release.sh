@@ -533,6 +533,6 @@ test_missing_gh() {
 run "missing gh exits 2 with an install hint" test_missing_gh
 
 echo
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 exit "$FAIL_COUNT"
