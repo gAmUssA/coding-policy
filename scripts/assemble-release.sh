@@ -187,6 +187,12 @@ main() {
 
   # Collect and validate fragments before any read of the registry or write.
   local frags=() entry base_name
+  # The publish workflow assembles only in a repo that carries changelog.d/;
+  # its absence is a broken configuration, never "no fragments".
+  if [[ ! -d "$FRAGMENT_DIR" ]]; then
+    echo "error: ${FRAGMENT_DIR}/ is missing — restore it with its README.md (git checkout <last-good> -- ${FRAGMENT_DIR}/README.md), or drop the assembling publish workflow; nothing was written" >&2
+    return 1
+  fi
   if [[ -d "$FRAGMENT_DIR" ]]; then
     # A checked substitution, not a process substitution: a failed scan must
     # stop the release, never read as "no fragments".

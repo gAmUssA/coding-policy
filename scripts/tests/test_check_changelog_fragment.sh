@@ -147,6 +147,13 @@ main() {
   if [[ $RC -eq 1 ]] && grep -q 'shipped content changed (.tesslignore)' <<<"$ERR"; then pass
   else fail "tesslignore change: RC=$RC ERR=$ERR"; fi
 
+  # 8c. deleting CHANGELOG.md or changelog.d/README.md -> fail: assembly needs both
+  repo "$TMP/8c"; git -C "$TMP/8c" rm -q CHANGELOG.md changelog.d/README.md || { echo "fatal: git rm in $TMP/8c" >&2; exit 2; }
+  commit "$TMP/8c"
+  run "$TMP/8c"
+  if [[ $RC -eq 1 ]] && grep -q 'CHANGELOG.md: the PR deletes it' <<<"$ERR" && grep -q 'changelog.d/README.md: the PR deletes it' <<<"$ERR"; then pass
+  else fail "deleted changelog files: RC=$RC ERR=$ERR"; fi
+
   # 9. docs/ + scripts/ only -> ok without a fragment
   repo "$TMP/9"; printf 'more\n' >> "$TMP/9/docs/a.md"; printf 'echo bye\n' >> "$TMP/9/scripts/a.sh"; commit "$TMP/9"
   run "$TMP/9"

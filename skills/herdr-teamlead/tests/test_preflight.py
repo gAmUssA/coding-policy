@@ -320,6 +320,13 @@ class BadArgumentsTest(PreflightCase):
         argv[argv.index("viewer/project")] = "viewer/project\n"
         self.assert_refused(argv, "<owner>/<repo>")
 
+    def test_a_malformed_now_is_refused_before_any_contact(self):
+        for bad in ("yesterday", "2026-10-14T12:00:00"):
+            with self.subTest(now=bad):
+                argv = self.argv()
+                argv[argv.index("--now") + 1] = bad
+                self.assert_refused(argv, "ISO-8601 timestamp with a timezone")
+
     def test_head_without_base_is_refused(self):
         self.assert_refused(self.argv(base=False) + ["--head", self.head], "--base")
 

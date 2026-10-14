@@ -27,6 +27,7 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,6 +91,13 @@ def validate(args):
         raise UsageError("--repo {} is not a directory; pass the repository checkout holding .herdr/triggers.json.".format(args.repo), {})
     if args.base is None and (args.head is not None or args.planned is not None):
         raise UsageError("--head and --planned classify against a base; pass the task's recorded --base.", {})
+    if args.now is not None:
+        try:
+            parsed = datetime.fromisoformat(args.now.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+        if parsed is None or parsed.tzinfo is None:
+            raise UsageError("--now {!r} is not an ISO-8601 timestamp with a timezone; pass e.g. 2026-10-14T12:00:00+00:00, or omit it for the current time.".format(args.now), {})
 
 
 def gather_triggers(args, runner=None):

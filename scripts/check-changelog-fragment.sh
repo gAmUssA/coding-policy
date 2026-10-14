@@ -251,6 +251,13 @@ main() {
     fi
   done
 
+  local kept
+  for kept in CHANGELOG.md "$FRAGMENT_README"; do
+    if git cat-file -e "${mb}:${kept}" 2>/dev/null && ! git cat-file -e "${head}:${kept}" 2>/dev/null; then
+      errors+=("${kept}: the PR deletes it — restore it; the publish workflow needs it to assemble the release")
+    fi
+  done
+
   local cl_diff line
   cl_diff=$(git diff --no-renames "$mb" "$head" -- CHANGELOG.md) \
     || { echo "error: git diff over CHANGELOG.md failed" >&2; return 2; }
