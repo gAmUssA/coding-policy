@@ -35,7 +35,7 @@ Option 3. `pyrightconfig.json` lists `hooks`, `scripts` and `skills/herdr-standu
 
 ## Consequences
 
-New first-party Python outside `herdr-teamlead` is written to strict from the start, and the strict trees cannot regress silently.
+New Python under `hooks/`, `scripts/` and `skills/herdr-standup` is written to strict from the start, and those trees cannot regress silently. A new top-level Python tree inherits `standard` until it is added to the `strict` list.
 
 `herdr-teamlead` keeps the `standard` guarantees: unresolved imports, optional misuse, call and argument mismatches. It does not get the unknown-type coverage strict adds. Revisit the decision if `herdr-teamlead` stops syncing from upstream or gains typed record definitions. Either change makes a strict adoption a bounded series, and that adoption gets a new ADR superseding this one.
 
