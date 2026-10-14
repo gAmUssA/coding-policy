@@ -316,7 +316,7 @@ class BusyAgentTest(unittest.TestCase):
 
     def test_a_working_agent_has_no_override(self):
         # The usage command is a prompt. There is no argument that sends it to
-        # an agent mid-turn (rules/agent-team-operation.md Dispatch Safety).
+        # an agent mid-turn (skills/herdr-teamlead/references/team-operation.md Dispatch Safety).
         runner = runner_with({"codex": "working"}, {"codex": CODEX_PANE})
         record = measure_agent(HerdrClient(runner=runner), BY_NAME["codex"])
         self.assertTrue(record["skipped"])

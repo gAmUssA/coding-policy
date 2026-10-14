@@ -257,7 +257,7 @@ class CliSurfaceTest(unittest.TestCase):
                                               {"src/cli/main.py": ["    return payload"]}), [])
 
     def test_a_declared_refusal_marker_fires(self):
-        # rules/agent-team-operation.md: a new user-facing refusal path is a
+        # skills/herdr-teamlead/references/team-operation.md: a new user-facing refusal path is a
         # UX and product trigger, not only a new command or flag.
         found = triggers.cli_surface(declaration(cli_surface_markers=["raise UsageError("]),
                                      {"src/cli/main.py": "M"},
@@ -358,7 +358,7 @@ class ThisRepoDeclarationTest(unittest.TestCase):
         self.declaration = triggers.load_declaration(self.repo)
 
     def test_the_modules_that_gate_generated_evidence_are_trust_boundaries(self):
-        # rules/agent-team-operation.md: anything deciding whether generated
+        # skills/herdr-teamlead/references/team-operation.md: anything deciding whether generated
         # content or a proposed change is safe triggers security.
         for path in ("skills/herdr-teamlead/teamlead/recovery.py",
                      "skills/herdr-teamlead/teamlead/engagement.py",
@@ -373,6 +373,7 @@ class ThisRepoDeclarationTest(unittest.TestCase):
                      "skills/herdr-teamlead/teamlead.sh",
                      ".herdr/triggers.json",
                      "rules/agent-team-operation.md",
+                     "skills/herdr-teamlead/references/team-operation.md",
                      "rules/review-severity.md",
                      "skills/release/watch-pr-reviews.sh",
                      "skills/release/poll-pr-reviews.sh",

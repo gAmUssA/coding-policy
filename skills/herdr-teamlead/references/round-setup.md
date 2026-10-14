@@ -315,7 +315,7 @@ against. A report against an older tip does not gate anything.
 
 Name the issue, file, finding, and report path in full in every brief.
 Context retention follows Fix Loops or Specialist Consultations in
-`rules/agent-team-operation.md`. Fresh-worker fix briefs include
+`skills/herdr-teamlead/references/team-operation.md`. Fresh-worker fix briefs include
 the prior attempt count and the ownership handoff that section requires.
 Reviewer and tester verification briefs name `full` or `scoped` review,
 the prior findings, and the follow-up issue for new advisories. The final
@@ -340,8 +340,8 @@ contract; see the header of
 `skills/herdr-teamlead/provision-worktree.sh`.
 
 The lead provisions every worktree a brief names, so a worker never runs git
-against the shared checkout (`rules/agent-team-operation.md` Writers and
-Checkouts). A consultation inspecting artifacts without git needs none. Provision
+against the shared checkout (`rules/agent-team-operation.md`
+Workers). A consultation inspecting artifacts without git needs none. Provision
 a read-only checkout if its evidence work requires git. Remove worktrees per
 `rules/agent-worktree-isolation.md` Cleanup once the branch lands.
 

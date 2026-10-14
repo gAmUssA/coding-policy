@@ -5,7 +5,7 @@ reaches a state that means "reviewed": a slice is saturated when its reviewer
 reports clean at the current tip, and the change is reviewed when every slice
 is saturated at one tip.
 
-`rules/agent-team-operation.md` Review Before PR carries the contract this
+`skills/herdr-teamlead/references/team-operation.md` Review Before PR carries the contract this
 format serves. Write the document only for a round filling several seats of one
 role; a single-seat round needs none.
 

@@ -58,7 +58,7 @@ to know goes in the report.
   Prove the tool's effective root inside it before any command writes through
   the tool, record every user-level file the run can reach before and after,
   stop on an unexpected change, and remove the root when you finish
-  (`rules/agent-team-operation.md` Writers and Checkouts carries the
+  (`skills/herdr-teamlead/references/team-operation.md` Writers and Checkouts carries the
   preconditions).
 - Write nowhere else — not the shared checkout, not your home directory, not a
   path no brief named. Restoring a user-level file to the state you recorded

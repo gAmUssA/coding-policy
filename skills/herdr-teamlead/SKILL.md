@@ -18,7 +18,7 @@ Before any finish with enrolled work, reconcile the whole fleet under
 or handoff covering every active assignment. Keep user attention visible under
 `skills/herdr-teamlead/references/attention.md`.
 
-Follow `rules/agent-team-operation.md` for round constraints.
+Read `skills/herdr-teamlead/references/team-operation.md` in full before Step 1; it is the team contract every step runs under.
 
 Each command resolves `CP` to the local or home plugin. Repeat its resolver in
 every call. Prose `skills/...` paths are relative to that root.
@@ -355,7 +355,7 @@ delivery, 1 remains pending, 3 confirms blocked, 4 lacks confirmed delivery, and
 reports in full. Pass this dispatch's recorded send time as `--since`, its
 recorded base as `--base`, and the worker's checkout as `--worktree`. An exit 1
 then carries either `reason: checkpoint_pending` or a `stall` object; act on a
-stall under `rules/agent-team-operation.md` Stalled Workers and record the
+stall under `skills/herdr-teamlead/references/team-operation.md` Stalled Workers and record the
 obligation through `skills/herdr-teamlead/references/attention.md`. Preserve the blocked/refusal and native-recovery paths in the
 following references; never re-dispatch over uncertainty or resend a refused
 brief to its provider.
@@ -399,7 +399,7 @@ user decisions; proceed to Step 21 if a task worktree needs cleanup, otherwise
 Step 22. No implementation or release is inferred from the diagnostic result.
 
 - **Any blocking finding** — apply the round-flow reference's Blocking Gate
-  contract and `rules/agent-team-operation.md` Fix Loops. Return to Step 4 for
+  contract and `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Return to Step 4 for
   an authorized correction or Step 13 for a required judge ruling. At an
   exhausted allowance, record the checkpoint through
   `skills/herdr-teamlead/references/dispatch-recovery.md`, consult the investigator under

@@ -10,7 +10,7 @@ burn out of an agent's remaining budget. `developer` is the heaviest seat and
 them with a `role_costs` map in config.json. Seats are filled heaviest first,
 whatever order `--roles` arrives in, and each seat goes to the eligible agent
 that leaves the round's minimum projected headroom highest -- the minimum
-across the agents holding a seat, per `rules/agent-team-operation.md`
+across the agents holding a seat, per `skills/herdr-teamlead/references/team-operation.md`
 ("Headroom is the minimum remaining window per worker, never the average").
 An agent holding no seat burns nothing, so it is not part of that minimum.
 

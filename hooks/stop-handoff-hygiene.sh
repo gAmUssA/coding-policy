@@ -75,7 +75,7 @@ in_list() { # <needle> <haystack...>
 # The team rules reserve the shared checkout and every worktree operation for
 # the lead: a worker "runs no git command against the shared checkout,
 # mutating or otherwise" and "never creates, moves, or removes a worktree"
-# (rules/agent-team-operation.md Writers and Checkouts). A hook that tells a
+# (rules/agent-team-operation.md Workers). A hook that tells a
 # worker to fast-forward `main` or remove a worktree is instructing it to
 # break that rule -- which is exactly what happened in a live round, where the
 # worker reported the contradiction and then obeyed the hook.
@@ -142,7 +142,7 @@ main() {
   [[ "$inside" == "true" ]] || return 0
 
   # Branch and worktree cleanup is the lead's, never a worker's
-  # (rules/agent-team-operation.md Writers and Checkouts). Blocking a worker's
+  # (rules/agent-team-operation.md Workers). Blocking a worker's
   # stop over leftovers it is forbidden to remove would force it to either
   # disobey the rule or fail to hand off. The lead's own teardown runs at the
   # end of its round.
@@ -167,7 +167,7 @@ main() {
     if [[ -z "$base" ]]; then
       warn "could not resolve origin's default branch — reporting only worktrees whose upstream is gone"
     fi
-    # `rules/agent-team-operation.md` Writers and Checkouts: the lead removes
+    # `skills/herdr-teamlead/references/team-operation.md` Writers and Checkouts: the lead removes
     # only a merged, clean worktree, and reports a dirty, unmerged, locked or
     # detached one to the operator. So removal ALWAYS requires clean and
     # contained -- a gone upstream is a reason to look, never a licence, since
