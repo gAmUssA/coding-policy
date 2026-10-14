@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from teamlead import retrospective as retro
 from teamlead.errors import StateError, UsageError
+from tests.fakes import failing_replace, forbid_writes, replaces_into
 
 
 AT = "2026-09-01T12:00:00+00:00"
@@ -94,6 +95,11 @@ class RetrospectiveTest(unittest.TestCase):
         with retro.lock(self.path):
             return retro.record(self.path, self.data if data is None else data, [] if coverage is None else coverage, at)
 
+    def failing_note_install(self):
+        # The note lands through os.link; failing that syscall is how a
+        # crash between the pending journal and the installed note looks.
+        return patch.object(os, "link", side_effect=OSError("injected note failure"))
+
     def index(self):
         return json.loads((self.sidecar / "index.json").read_text(encoding="utf-8"))
 
@@ -129,7 +135,7 @@ class RetrospectiveTest(unittest.TestCase):
         self.check.unlink()
         self.path.write_bytes(b"not dispatch JSON")
         before = {path: path.read_bytes() for path in self.sidecar.iterdir()}
-        with patch.dict(os.environ, {"HERDR_ENV": ""}), patch.object(retro, "save_state", side_effect=AssertionError("readback wrote state")):
+        with patch.dict(os.environ, {"HERDR_ENV": ""}), forbid_writes("readback wrote state"):
             self.assertEqual(retro.list_notes(self.path, task="owner/repo#1")["records"][0]["id"], recorded["id"])
             self.assertIn("release approval remains open", retro.show(self.path)["markdown"])
         self.assertEqual({path: path.read_bytes() for path in self.sidecar.iterdir()}, before)
@@ -279,7 +285,7 @@ except StateError:
             retro.show(self.path)
 
     def test_partial_record_before_note_installation_can_resume(self):
-        with patch.object(retro, "_install_note", side_effect=StateError("injected note failure", {})):
+        with self.failing_note_install():
             with self.assertRaises(StateError):
                 self.record()
         self.assertFalse((self.sidecar / "index.json").exists())
@@ -290,12 +296,7 @@ except StateError:
         self.assertFalse((self.sidecar / "pending.json").exists())
 
     def test_index_failure_keeps_installed_note_uncommitted_until_identical_retry(self):
-        original_save = retro.save_state
-        def fail_index(path, value):
-            if Path(path).name == "index.json":
-                raise StateError("injected index failure", {})
-            return original_save(path, value)
-        with patch.object(retro, "save_state", side_effect=fail_index):
+        with failing_replace(replaces_into(self.sidecar / "index.json"), "injected index failure"):
             with self.assertRaises(StateError):
                 self.record()
         installed = (self.sidecar / "retro-1.md").read_bytes()
@@ -351,7 +352,7 @@ except StateError:
         self.assertFalse((self.sidecar / "pending.json").exists())
 
     def test_pending_conflict_or_malformed_journal_is_never_overwritten(self):
-        with patch.object(retro, "_install_note", side_effect=StateError("injected note failure", {})):
+        with self.failing_note_install():
             with self.assertRaises(StateError):
                 self.record()
         pending = self.sidecar / "pending.json"
@@ -366,7 +367,7 @@ except StateError:
             self.assertEqual(pending.read_bytes(), content)
 
     def test_baseline_cannot_overwrite_pending_ancestry(self):
-        with patch.object(retro, "_install_note", side_effect=StateError("injected note failure", {})):
+        with self.failing_note_install():
             with self.assertRaises(StateError):
                 self.record()
         index = retro.load(self.path, allow_pending=True)
@@ -398,7 +399,7 @@ except StateError:
         self.assertEqual(retro.show(self.path)["record"]["id"], "retro-3")
 
     def test_changed_evidence_cannot_resume_pending_coverage(self):
-        with patch.object(retro, "_install_note", side_effect=StateError("injected note failure", {})):
+        with self.failing_note_install():
             with self.assertRaises(StateError):
                 self.record()
         pending = (self.sidecar / "pending.json").read_bytes()
@@ -415,7 +416,7 @@ except StateError:
         self.assertEqual(len(self.index()["records"]), 1)
 
     def test_failed_pending_write_never_installs_or_completes_note(self):
-        with patch.object(retro, "save_state", side_effect=StateError("injected journal failure", {})):
+        with failing_replace(replaces_into(self.sidecar / "pending.json"), "injected journal failure"):
             with self.assertRaises(StateError):
                 self.record()
         self.assertFalse((self.sidecar / "retro-1.md").exists())
