@@ -371,6 +371,23 @@ STUB
      && [[ "$ERR" == *"info/style notes"* ]] && [[ "$ERR" == *"SC2012"* ]]; then
     pass; else fail "mixed severities: expected a warning block plus a stderr note, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
+  # 6e. engine failure (exit 2 or 3) -> block, naming the exit and carrying the
+  #     tool's own diagnostic. shellcheck exits 2 when a file cannot be
+  #     processed and 3 on bad options; neither is a finding, and treating
+  #     either as "no findings" would let an unchecked script through.
+  local sc_fail
+  for sc_fail in 2 3; do
+    mk_origin "o6e$sc_fail"; clone_from "$BARE" "$TMP/r6e$sc_fail"
+    printf '#!/usr/bin/env bash\necho hi\n' > "$TMP/r6e$sc_fail/new.sh" || die "r6e new.sh failed"
+    mk_stub_bin "$TMP/r6e$sc_fail-bin" 0 0
+    printf '#!/usr/bin/env bash\necho "shellcheck: engine broke (stub exit %s)" >&2\nexit %s\n' "$sc_fail" "$sc_fail" \
+      > "$TMP/r6e$sc_fail-bin/shellcheck" || die "r6e stub failed"
+    run_hook "$TMP/r6e$sc_fail" '{"stop_hook_active":false}' "$TMP/r6e$sc_fail-bin:$PATH"
+    if [[ $RC -eq 0 ]] && [[ "$(printf '%s' "$OUT" | jq -r '.decision')" == "block" ]] \
+       && reason_has "shellcheck failed \\(exit ${sc_fail}\\)" && reason_has "engine broke \\(stub exit ${sc_fail}\\)"; then
+      pass; else fail "engine failure exit ${sc_fail}: expected a block naming the failure, got RC=$RC OUT=$OUT"; fi
+  done
+
   # 6d. The REAL engine on a real SC2012 (`ls | tr`): shellcheck 0.11 prints
   #     info-tier findings as `note` in gcc format, so this must be allowed and
   #     reported. Proves the level split against the engine, not a stub.
