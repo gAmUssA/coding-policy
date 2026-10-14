@@ -91,6 +91,8 @@ class FakeRunner:
                 )
             )
         response = self.responses[best]
+        if isinstance(response, PhasedReads):
+            response = response.next_completed(self)
         if isinstance(response, ScriptedReads):
             response = response.next_completed()
         if argv[1:3] == ["agent", "get"] and response.returncode == 0:
@@ -152,6 +154,39 @@ class ScriptedReads:
     def next_completed(self):
         text = self._texts[min(self._index, len(self._texts) - 1)]
         self._index += 1
+        return FakeCompleted(0, text, "")
+
+
+class PhasedReads:
+    """A response that changes when the worker's terminal receives input.
+
+    `phases` is a list of `(command_prefix, texts)`. The first phase's prefix
+    is None; a later phase starts once the runner has recorded a command
+    starting with its prefix (a clear, a prompt, a kill, a start), after the
+    previous phase's command. Within a phase, reads walk `texts` and the last
+    one repeats. However many read-only probes run between two actions
+    (readiness, retrospective evidence), each sees the same worker.
+    """
+
+    def __init__(self, phases):
+        self._phases = [(prefix, list(texts)) for prefix, texts in phases]
+        self._reads = [0] * len(self._phases)
+
+    def _phase(self, runner):
+        commands, current, cursor = runner.commands(), 0, 0
+        for index, (prefix, _texts) in enumerate(self._phases[1:], start=1):
+            match = next((position for position in range(cursor, len(commands))
+                          if commands[position].startswith(prefix)), None)
+            if match is None:
+                break
+            current, cursor = index, match + 1
+        return current
+
+    def next_completed(self, runner):
+        phase = self._phase(runner)
+        texts = self._phases[phase][1]
+        text = texts[min(self._reads[phase], len(texts) - 1)]
+        self._reads[phase] += 1
         return FakeCompleted(0, text, "")
 
 
