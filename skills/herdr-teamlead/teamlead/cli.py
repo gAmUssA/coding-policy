@@ -1107,6 +1107,7 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     state = _load_state_for_write(state_path, warn)
     store, history = state["recovery"], state["assignments"]
     data, at = _read_record(args.record), args.now or now_iso()
+    stopped = None
     if args.command == "task":
         result = recovery.register_task(store, data, at)
     elif args.command == "checkpoint":
@@ -1132,8 +1133,12 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
         result = recovery.diagnose(store, history, data, at, judge.agent if judge else None, enrolled,
                                    supervision.dispatch_binding(state_path) is not None,
                                    state["specialist_assessments"])
+        # The obligation is filed after the store saves, never before: a
+        # refused save would leave it announcing a stop nobody recorded. A
+        # failed write after the save is repaired by replaying the diagnosis,
+        # which returns the saved record and files the same obligation.
         if result["remedy"] == "stop":
-            _record_stopped_task(state_path, result, at)
+            stopped = result
     elif args.command == "record-report":
         if isinstance(data, dict):
             dispatch = next((item for item in store["dispatches"] if item["id"] == data.get("dispatch")), None)
@@ -1210,6 +1215,8 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     recovery.validate_store(store, history)
     engagement.validate_assessments(state)
     save_state(state_path, state)
+    if stopped is not None:
+        _record_stopped_task(state_path, stopped, at)
     return result, None
 
 
