@@ -213,22 +213,27 @@ check_mode_gate() { # <skill-name> <skill-file>
 # fixtures. Substitute a task-owned fixture root for the HOME token without
 # changing the process's HOME or touching the user's installed plugin.
 check_install_shapes() { # <skill-file>
-  local fixture resolver original_resolver invocation code output rc shape local_root global_root
+  local fixture resolver original_resolver invocation script code output rc shape local_root global_root
   fixture="$(mktemp -d)" || die "cannot create install-shape fixture"
   INSTALL_FIXTURE="$fixture"
   resolver="$(awk '/^CP=/{print; exit}' "$1")" || die "cannot read documented resolver"
-  invocation="$(awk '/^bash .*roster[.]sh/{print; exit}' "$1")" || die "cannot read roster invocation"
-  [[ -n "$resolver" && -n "$invocation" ]] || die "missing executable roster example"
+  # The first complete one-line invocation: a plugin script plus only plain
+  # word arguments, so it runs as written against the fixture.
+  # shellcheck disable=SC2016 # Match the documented `$CP` literally.
+  invocation="$(awk '/^bash "[$]CP\/[^"]+[.]sh"( [a-z][a-z-]*)*$/{print; exit}' "$1")" || die "cannot read a script invocation"
+  [[ -n "$resolver" && -n "$invocation" ]] || die "missing executable script example"
+  script="${invocation#bash \"\$CP/}"
+  script="${script%%\"*}"
   original_resolver="$resolver"
   resolver="${resolver//\$HOME/\$INVOCATION_FIXTURE_GLOBAL}"
   code="$resolver"$'\n'"$invocation"
   local_root="$fixture/project with spaces/.tessl/plugins/gamussa/coding-policy"
   global_root="$fixture/global with spaces/.tessl/plugins/gamussa/coding-policy"
-  mkdir -p "$local_root/skills/herdr-teamlead" "$global_root/skills/herdr-teamlead" \
+  mkdir -p "$(dirname "$local_root/$script")" "$(dirname "$global_root/$script")" \
     || die "cannot create installed plugin fixtures"
-  printf 'printf "local\\n"\n' > "$local_root/skills/herdr-teamlead/roster.sh" || die "cannot write local fixture"
-  printf 'printf "global\\n"\n' > "$global_root/skills/herdr-teamlead/roster.sh" || die "cannot write global fixture"
-  chmod 0644 "$local_root/skills/herdr-teamlead/roster.sh" "$global_root/skills/herdr-teamlead/roster.sh" \
+  printf 'printf "local\\n"\n' > "$local_root/$script" || die "cannot write local fixture"
+  printf 'printf "global\\n"\n' > "$global_root/$script" || die "cannot write global fixture"
+  chmod 0644 "$local_root/$script" "$global_root/$script" \
     || die "cannot set published file modes"
   for shape in local global missing; do
     rc=0

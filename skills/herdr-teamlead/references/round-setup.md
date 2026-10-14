@@ -1,15 +1,64 @@
 # Round Setup Reference
 
-Detailed setup contracts and examples for Steps 2–9 of `skills/herdr-teamlead/SKILL.md`.
+Detailed setup contracts and examples for Steps 2–7 of `skills/herdr-teamlead/SKILL.md`.
 The skill retains the execution order and continuation gates.
 
-Step 7's brief-completeness requirements apply to every composed brief: identify
+Step 5's brief-completeness requirements apply to every composed brief: identify
 every issue, finding, file, and prior report in full. Phase 2 names the pushed
 SHA. Fixes carry the prior attempt count and required ownership handoff.
 Verification names `full` or `scoped`, prior findings, and the follow-up for new
 advisories. Final release verification is `full`.
 
-## Step 2 — Verify Herdr and the Roster
+## Step 2 — Run the Preflight
+
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight \
+  --repo <repo-path> --slug <owner/repo> \
+  [--base <recorded-base> [--head <pushed-head>] [--planned <planned.json>]]
+```
+
+Gathers the five pre-planning facts in one run. Each fact reuses its standalone
+owner; the sections below document those owners for recovery and for a
+standalone rerun.
+
+| Field | Source | Shape |
+| ----- | ------ | ----- |
+| `roster` | `roster.sh` | `exit`, `caller`, `agents`, `empty`, `diagnostic` |
+| `authority` | `verify-authority.sh <owner/repo>` | `exit`, `result` (the script's verdict), `diagnostic` |
+| `retrospective` | `retro-check`'s daily check, no transitions | `due`, `cadence`, `error` |
+| `headroom` | `measure` over every configured worker | `saved`, `snapshot`, `failed_agents`, `skipped_busy`, `error` |
+| `triggers` | `detect-triggers` without roles, requirements or decisions | `declaration`, `base`, `head`, `fired`, `triggers[]` with `signals` |
+
+- `verdict` is `ready` or `stop`. `stops` lists every blocker found in this
+  run as `{code, message, reference}`.
+- `read_next` lists each stop's reference, plus `specialists.md` when any
+  trigger fired. An all-clear run lists nothing.
+- `triggers` is `null` with `triggers_reason` when no `--base` is given or a
+  declaration or classification stop prevented it. A fired trigger is a fact,
+  never a stop; `detect-triggers` with `--roles` stays the staffing check.
+- The headroom step is a real `measure`: it sends usage commands to idle
+  workers and saves the snapshot to `--state`. It is skipped when the roster is
+  empty or unavailable.
+- `--head` and `--planned` require `--base`. `--herdr-bin` also points
+  `roster.sh` at that binary; `GH_BIN` reaches `verify-authority.sh` from the
+  environment. `--now` fixes the check and snapshot time. The measure tuning
+  flags match `measure`.
+- **Exit 0** — the facts were gathered; a `stop` verdict is an answer.
+- **Exit 1** — a JSON error on stderr for a malformed `--slug`, a missing
+  `--repo`, `--head` or `--planned` without `--base`, an unreadable config or
+  planned file, or a git failure on the given revisions. Nothing was measured.
+- **Exit 2** — an argparse error.
+
+| Stop code | Resolve under |
+| --------- | ------------- |
+| `roster_empty`, `roster_unavailable` | Roster below |
+| `authority_not_owned`, `authority_failed` | Authority below |
+| `retrospective_due`, `retrospective_unavailable` | `skills/herdr-teamlead/references/retrospectives.md` |
+| `headroom_failed`, `headroom_unavailable` | Headroom below |
+| `trigger_declaration`, `triggers_unclassified` | `skills/herdr-teamlead/references/specialists.md` |
+
+### Roster
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -19,13 +68,13 @@ bash "$CP/skills/herdr-teamlead/roster.sh"
 Takes no arguments. Emits `{"caller":{"pane_id":...},"agents":[{"name","kind","pane_id","state"}]}`,
 listing every named live agent other than your own pane.
 
-- **Exit 0 with a populated `agents`** — proceed to Step 3.
+- **Exit 0 with a populated `agents`** — the roster is usable.
 - **Exit 0 with `agents: []`** — nobody is named. Report the unnamed panes from
   `herdr agent list` and the `herdr agent rename <pane-id> <name>` command that
-  fixes it, then finish here.
+  fixes it, then finish here (`roster_empty`).
 - **Exit 1** — the precondition failed (outside Herdr, or `herdr` absent).
-  Report the message verbatim and finish here.
-- **Exit 2** — herdr failed. Report the message verbatim and finish here.
+  Report the message verbatim and finish here (`roster_unavailable`).
+- **Exit 2** — herdr failed. Report the message verbatim and finish here (`roster_unavailable`).
 
 An unused specialist profile needs no pane. When the next responsibilities
 outnumber eligible workers, record a staffing decision: name another configured
@@ -33,7 +82,7 @@ worker or schedule separate bounded assignments. Combine compatible expertise
 inside one responsibility when justified. Never combine independent verification
 with the design or implementation it assesses, and never duplicate dispatch targets.
 
-## Step 3 — Verify Authority for the Repo
+### Authority
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -52,11 +101,11 @@ Emits `{"repo","viewer_login","owner_login","owner_type","viewer_permission","na
   covers the required write, prepare a preview and ask only for that missing
   permission under `rules/external-repo-contributions.md`, or proceed read-only.
   Without permission, set `EXTERNAL_PERMISSION` and `AUTHORIZED_ACTIONS` to
-  `none`. Never infer permission from a role assignment.
+  `none`. Never infer permission from a role assignment (`authority_not_owned`).
 - **Exit 1** — a precondition failed: usage, `gh` or `jq` absent, or `gh` not
-  logged in. Report the message verbatim, finish here.
+  logged in. Report the message verbatim, finish here (`authority_failed`).
 - **Exit 2** — GitHub could not answer. An unanswerable question is not a
-  permission. Report it and finish here.
+  permission. Report it and finish here (`authority_failed`).
 
 For either result, `TASK_AUTHORIZATION` records the actual operator source and
 words. `AUTHORIZED_ACTIONS` names the target repo and the actions permitted for
@@ -83,9 +132,8 @@ For an inspection-only task, owner or non-owner, `AUTHORIZED_ACTIONS: none`
 keeps the repository read-only. An unapproved non-owner assignment also uses
 `EXTERNAL_PERMISSION: none`; the lead selects read-only work or stops. A role
 requiring writes must report BLOCKED under COMMON's bounds before any write.
-Proceed immediately to Step 4.
 
-## Step 4 — Measure Headroom
+### Headroom
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -116,16 +164,17 @@ marker. The tracing contract is in
 `skills/herdr-teamlead/references/herdr.md`, "Tracing a Live Run".
 
 Report a `failed_agents` entry to the user and measure that worker by hand
-before relying on its role. Proceed immediately to Step 5.
+before relying on its role (`headroom_failed`).
 
-## Step 5 — Plan the Roles
+## Step 3 — Plan the Roles
 
 Choose the next needed responsibilities before selecting workers. Consult the
 profiles and requirement contract in `skills/herdr-teamlead/references/specialists.md`; available
 profiles need no activation until a bounded question or deliverable warrants it.
 
-Run `detect-triggers` against the task's base first, with the roles and
-requirements this round intends. It classifies the diff against this repo's
+Step 2's preflight lists the fired triggers without a staffing check. Run
+`detect-triggers` against the task's base, with the roles and requirements
+this round intends. It classifies the diff against this repo's
 `.herdr/triggers.json` and exits 1 when a fired trigger is neither staffed nor
 answered by a recorded staffing decision. A Phase 1 round has no diff yet and
 passes `--planned` naming the surfaces the work will touch; a round that
@@ -162,7 +211,7 @@ never weaken required independence to fill a seat.
 Planning also refuses a field nothing could have been ranked in: a snapshot
 missing an agent `config.json` declares, an `--exclude` list naming nobody the
 snapshot measured, and a ranked seat measured against a single agent beside the
-pinned judge. Re-run Step 4's `measure` over the whole roster rather than
+pinned judge. Re-run `measure` over the whole roster rather than
 planning from a single-worker snapshot; the pinned judge seat and a config whose
 rankable roster holds one worker are the only exemptions.
 
@@ -200,11 +249,11 @@ skills/herdr-teamlead/references/model-tiers.md
 Save the output to a file for dispatch. Relay the `rationale` lines to the user
 as the round's role announcement: they name the weight behind each seat, the
 exclusions applied, and any worker whose headroom reading is stale. Proceed
-immediately to Step 6.
+immediately to Step 4.
 
 Default planning excludes unqualified tiers. Use `plan --preview-tiers` only to inspect an uncommissioned table; live dispatch still requires qualification.
 
-## Step 6 — Build the Review Package
+## Step 4 — Build the Review Package
 
 For reviewer or tester briefs, run from a checkout containing the recorded
 commits:
@@ -225,7 +274,7 @@ review after scoped fixes.
 For a pre-development tester plan, use the recorded base for both endpoints.
 That empty-range package is planning input, never verified implementation.
 Consultation, developer-only, release, and judge briefs need no package;
-proceed to Step 7. Reviewer briefs are post-push verification only.
+proceed to Step 5. Reviewer briefs are post-push verification only.
 
 Success prints only the absolute artifact path, not JSON. The file contains
 the resolved range, commit list, stat, and patch. Set `TEAMLEAD_REPORTS_DIR`
@@ -234,9 +283,9 @@ Exit 2 names invalid input; exit 1 names a tool or output failure. On either,
 fix the named cause and repeat; never compose verification briefs without a
 completed package. Existing different content is preserved.
 
-Proceed immediately to Step 7 with the printed path as `REVIEW_PACKAGE`.
+Proceed immediately to Step 5 with the printed path as `REVIEW_PACKAGE`.
 
-## Step 7 — Compose the Briefs
+## Step 5 — Compose the Briefs
 
 Consult the applicable working-memory lessons and verify any operational fact
 the assignment relies on. Include concise relevant lessons with source pointers
@@ -274,7 +323,7 @@ an unfilled placeholder, a supplied key no template uses, a value that is not
 text, a relative, multiline, existing or duplicated `REPORT` destination,
 a report overlapping a generated brief, or a `REPORT` longer than the
 script's limit (the worker's `REPORT: <path>` line must fit one pane row for
-Step 11 to confirm it; use a short reports directory). Exit 3 means the placeholder scan
+Step 9 to confirm it; use a short reports directory). Exit 3 means the placeholder scan
 itself failed, so whether the briefs are clean is unknown: re-run, never
 dispatch on it. The placeholder set and both validation directions are the
 script's contract; see the header of
@@ -285,12 +334,12 @@ What you decide, and it is the whole of your job here:
 - `SHARED_CHECKOUT` — the checkout the workers read.
 - `POLICY_INDEX` and `RELEASE_SKILL` — the resolver's absolute artifact paths.
 - `AUTHORITY_STATEMENT`, `TASK_AUTHORIZATION`, `AUTHORIZED_ACTIONS`, and
-  `EXTERNAL_PERMISSION` — Step 3's verified ownership, actual operator source,
+  `EXTERNAL_PERMISSION` — Step 2's verified ownership, actual operator source,
   bounded task actions, and any additional non-owner permission.
 - Per role: `ISSUE`, `BRANCH`, `WORKTREE`, `REPORT`, `REPORTS_DIR`, and the
   phase and mode that role runs this round.
 - For reviewer and tester: `REVIEW_PACKAGE`, `REVIEW_BASE`, and `REVIEW_HEAD`
-  from Step 6. Missing, empty, or non-file package paths refuse composition
+  from Step 4. Missing, empty, or non-file package paths refuse composition
   before any brief is written.
 - For advisor, investigator or architect: the bounded consultation values in
   `skills/herdr-teamlead/references/specialists.md`; the composer selects `brief-specialist.md`.
@@ -319,11 +368,11 @@ Context retention follows Fix Loops or Specialist Consultations in
 the prior attempt count and the ownership handoff that section requires.
 Reviewer and tester verification briefs name `full` or `scoped` review,
 the prior findings, and the follow-up issue for new advisories. The final
-release-gating verification is `full`. Proceed immediately to Step 8.
+release-gating verification is `full`. Proceed immediately to Step 6.
 
-## Step 8 — Provision the Worktrees
+## Step 6 — Provision the Worktrees
 
-Run the prune in the skill's Step 8 first, every round. Then one call per
+Run the prune in the skill's Step 6 first, every round. Then one call per
 worker that writes anything:
 
 ```bash
@@ -346,9 +395,9 @@ a read-only checkout if its evidence work requires git. Remove worktrees per
 `rules/agent-worktree-isolation.md` Cleanup once the branch lands.
 
 On any non-zero exit, fix the input it names and re-run this step; do not
-dispatch a brief whose worktree does not exist. Proceed immediately to Step 9.
+dispatch a brief whose worktree does not exist. Proceed immediately to Step 7.
 
-## Step 9 — Label the Layout (optional, once per team)
+## Step 7 — Label the Layout (optional, once per team)
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -364,4 +413,4 @@ JSON says which. A label failure never stops a round.
 
 Run this once per team, not once per round: a name already in place is
 reported `unchanged` and nothing is sent. Skip it on a team whose sidebar is
-already named. Proceed immediately to Step 10.
+already named. Proceed immediately to Step 8.

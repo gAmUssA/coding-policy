@@ -34,7 +34,7 @@ role; a single-seat round needs none.
 ## Validate before planning
 
 Run it through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
-Step 5. The argument contract:
+Step 3. The argument contract:
 
 ```text
 validate-partition --repo <repo> --base <base> [--head <head>] --partition <partition.json>

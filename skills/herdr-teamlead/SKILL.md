@@ -87,76 +87,67 @@ to latest. For other requests, read `HERDR_ENV` before running scripts.
 - **Set, with a single edit, question, lookup, or existing-code review** — do
   it directly. Finish here.
 
-## Step 2 — Verify Herdr and the Roster
+## Step 2 — Run the Preflight
+
+For an explicit retrospective request, complete a new retrospective under
+`skills/herdr-teamlead/references/retrospectives.md` and finish here. Otherwise
+run the preflight on every round start, resume, and return from a later step:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/roster.sh"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight \
+  --repo <repo-path> --slug <owner/repo> \
+  [--base <recorded-base> [--head <pushed-head>] [--planned <planned.json>]]
 ```
 
-Emits the caller and live workers with kind, pane, and state.
+Emits one JSON with `roster`, `authority`, `retrospective`, `headroom`,
+`triggers`, `verdict`, `stops` and `read_next`. The headroom fact is a `measure`
+run: idle workers receive their usage command and the snapshot is saved. Busy
+workers are skipped; unmeasured billing stays `unknown`. The JSON contract and
+the standalone recovery commands are in
+`skills/herdr-teamlead/references/round-setup.md` Step 2.
 
-- **Exit 0, agents present** — proceed to Step 3.
-- **Exit 0, empty roster** — report unnamed panes from `herdr agent list` and
-  the correcting `herdr agent rename <pane-id> <name>` command. Finish here.
-- **Exit 1 or 2** — report the diagnostic verbatim and finish here.
+- **Non-zero exit** — report the diagnostic, fix the named argument or config,
+  and rerun.
+- **`verdict: "ready"`** — proceed below.
+- **`verdict: "stop"`** — read every `read_next` reference, then resolve each
+  `stops` entry:
+  - `roster_empty`, `roster_unavailable`, `authority_failed` — report the
+    message verbatim and finish here.
+  - `authority_not_owned` — reuse explicit per-action operator permission;
+    absent permission, remain read-only or finish here.
+  - `retrospective_due`, `retrospective_unavailable` — complete or reconcile the
+    retrospective, then rerun the preflight.
+  - `headroom_failed`, `headroom_unavailable` — obtain the missing readings
+    before relying on those seats.
+  - `trigger_declaration`, `triggers_unclassified` — write the declaration or
+    pass `--planned`, then rerun the preflight.
 
-Record staffing gaps under `skills/herdr-teamlead/references/round-setup.md`. Leave unused specialist
-profiles unlaunched. Never duplicate targets or fold verification onto a contributor.
-Start workers in YOLO mode under `skills/herdr-teamlead/references/model-tiers.md`; preserve it on
-relaunch. Verify live permission flags before dispatch, including existing workers.
+Record the `authority` evidence using Step 2 of
+`skills/herdr-teamlead/references/round-setup.md`. Record task authorization and
+permitted actions under the same reference. Create or resume the stable ledger
+under `skills/herdr-teamlead/references/task-ledger.md`; record its absolute path
+before dispatch. Apply the round-setup accepted-behavior, resume and supervision
+binding requirements.
 
-## Step 3 — Verify Authority for the Repo
+Record staffing gaps under `skills/herdr-teamlead/references/round-setup.md`.
+Leave unused specialist profiles unlaunched. Never duplicate targets or fold
+verification onto a contributor. Start workers in YOLO mode under
+`skills/herdr-teamlead/references/model-tiers.md`; preserve it on relaunch.
+Verify live permission flags before dispatch, including existing workers.
+Proceed immediately to Step 3.
 
-```bash
-CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/verify-authority.sh" <owner/repo>
-```
-
-Record the emitted namespace ownership evidence using Step 3 of
-`skills/herdr-teamlead/references/round-setup.md`. For a non-owned repo, reuse explicit per-action
-operator permission; absent permission, remain read-only or finish here.
-On non-zero, report the diagnostic and finish here.
-
-Record task authorization and permitted actions under the round-setup reference.
-Create or resume the stable ledger under `skills/herdr-teamlead/references/task-ledger.md`; record its
-absolute path before dispatch. Apply the round-setup accepted-behavior, resume
-and supervision binding requirements.
-Proceed immediately to Step 4.
-
-## Step 4 — Measure Headroom
-
-Run `skills/herdr-teamlead/references/retrospectives.md` on resume, before planning, or for an explicit
-retrospective request. For an explicit request, complete a new retrospective and
-finish here; otherwise continue below.
-
-```bash
-CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" measure
-```
-
-Emits and saves headroom, windows, state, `tier_billing`, and `failed_agents`.
-Busy workers are skipped. Unmeasured billing stays `unknown`. Report failed
-measurements and obtain their readings before relying on those seats.
-
-Usage and `--trace` contracts:
-
-```text
-skills/herdr-teamlead/references/round-setup.md
-```
-
-Proceed immediately to Step 5 once the required readings are available.
-
-## Step 5 — Plan the Roles
+## Step 3 — Plan the Roles
 
 Choose the responsibilities needed next under `skills/herdr-teamlead/references/specialists.md`.
 Supply its requirements file for specialized work. Keep the developer reserved
 through early fixes; schedule consultation and verification as the task needs them.
 
-The composition triggers decide part of that roster. Classify this round
-against the repo's declaration first. For a pre-implementation round, pass
-`--planned` naming the surfaces the work will touch. A round with work already
-written classifies that work:
+The composition triggers decide part of that roster. Step 2's `triggers.fired`
+lists the fired triggers and their signals; preflight never checks staffing.
+Staff each fired trigger in the roles below or record a decision with its
+reason, then confirm with the staffing check. Pass the same `--planned` for a
+pre-implementation round:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -202,7 +193,7 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
 Emits the role plan without worker contact. A judge seat declares its mode:
 `adjudication` rules on a contested verdict, `diagnosis` on the investigator's
 assessment at an exhausted allowance. Pass the same `--judge-mode` to `apply`.
-On exit 1, resolve the diagnostic before continuing. Apply the Step 5 constraints in `skills/herdr-teamlead/references/round-setup.md`:
+On exit 1, resolve the diagnostic before continuing. Apply the Step 3 constraints in `skills/herdr-teamlead/references/round-setup.md`:
 exclude contributors from verification, reserve the developer through early fixes,
 preserve task identity and fix count, and reuse recorded correction bounds.
 Tier and qualification contracts:
@@ -213,9 +204,9 @@ skills/herdr-teamlead/references/dispatch-recovery.md
 ```
 
 `--preview-tiers` authorizes no dispatch. Save the plan and rationale.
-Proceed immediately to Step 6.
+Proceed immediately to Step 4.
 
-## Step 6 — Build the Review Package
+## Step 4 — Build the Review Package
 
 For reviewer/tester briefs, run from a checkout holding the recorded commits:
 
@@ -225,15 +216,15 @@ bash "$CP/skills/herdr-teamlead/review-package.sh" \
   <recorded-base-sha> <pushed-head-sha> <round-reports-dir>/review-<base7>..<head7>.diff
 ```
 
-Apply the Step 6 base, range, and rebuild requirements in
+Apply the Step 4 base, range, and rebuild requirements in
 `skills/herdr-teamlead/references/round-setup.md`. Success prints the absolute review-package path;
 set it as `REVIEW_PACKAGE`. On non-zero, fix the diagnostic and retry before
 composing verification briefs. Other roles need no package.
-Proceed immediately to Step 7.
+Proceed immediately to Step 5.
 
-## Step 7 — Compose the Briefs
+## Step 5 — Compose the Briefs
 
-Resolve policy paths through the Step 7 reference first. Write its outputs in
+Resolve policy paths through the Step 5 reference first. Write its outputs in
 `shared` within `{"shared": {...}, "roles": {"<role>": {...}}}` and run:
 
 ```bash
@@ -247,11 +238,11 @@ Emits common and role-brief paths. On non-zero, fix the diagnostic before
 dispatch. Validates composition inputs and review evidence before writing.
 Use a fresh absolute report path per role and attempt.
 
-Follow `skills/herdr-teamlead/references/round-setup.md` Step 7 for shared and role-specific values,
+Follow `skills/herdr-teamlead/references/round-setup.md` Step 5 for shared and role-specific values,
 authority, review evidence and brief completeness.
-Proceed immediately to Step 8.
+Proceed immediately to Step 6.
 
-## Step 8 — Provision the Worktrees
+## Step 6 — Provision the Worktrees
 
 Prune first, every round:
 
@@ -277,9 +268,9 @@ bash "$CP/skills/herdr-teamlead/provision-worktree.sh" \
 Emits path, branch, base, and `created|attached|already-provisioned`. On any
 non-zero exit, fix the diagnostic and retry. Never dispatch a missing
 worktree. Read-only consultations need none. Clean up after merge per
-`rules/agent-worktree-isolation.md`. Proceed immediately to Step 9.
+`rules/agent-worktree-isolation.md`. Proceed immediately to Step 7.
 
-## Step 9 — Label the Layout
+## Step 7 — Label the Layout
 
 Optional, once per team; skip an already named sidebar.
 
@@ -290,9 +281,9 @@ bash "$CP/skills/herdr-teamlead/label-workspaces.sh" \
 ```
 
 Emits per-target `renamed|unchanged|failed`; exit 3 names partial failures.
-Report label failures and continue. Proceed immediately to Step 10.
+Report label failures and continue. Proceed immediately to Step 8.
 
-## Step 10 — Dispatch the Briefs
+## Step 8 — Dispatch the Briefs
 
 Complete the retrospective reference's cadence and transition checks before live
 dispatch. Apply rechecks coverage before worker input. Dry runs prove no coverage.
@@ -312,7 +303,7 @@ Emits dispatch JSON under `state-schema.md`. Supply each role's fresh absolute
 report path from its brief. Apply enrolls before input; unknown sends remain
 observation obligations. Apply refuses while an open decision or blocker on the
 task is unanswered; see the attention reference's Dispatch gate.
-Classify every brief against Step 3's authorization before sending it.
+Classify every brief against Step 2's authorization before sending it.
 Append the dispatch outcome to the task ledger; `applied` proves dispatch only.
 
 Apply the recovery reference's Dispatch context requirements before sending.
@@ -331,9 +322,9 @@ skills/herdr-teamlead/references/dispatch-recovery.md
 skills/herdr-teamlead/references/model-tiers.md
 ```
 
-Proceed to Step 11.
+Proceed to Step 9.
 
-## Step 11 — Observe the Fleet
+## Step 9 — Observe the Fleet
 
 Run the bounded foreground watcher for all enrolled assignments:
 
@@ -378,10 +369,10 @@ schedule pending rechecks. Resolve enrollment only after recording its assessed
 outcome, separately from assignment acceptance and task completion. Complete due
 retrospectives between checkpoints without interrupting workers. Resume the fleet
 watch while any observation obligation remains; one blocked worker never hides
-another worker's report. Proceed to Step 12 when the required reports are delivered
+another worker's report. Proceed to Step 10 when the required reports are delivered
 or their unavailability and recovery are recorded.
 
-## Step 12 — Gate the Round
+## Step 10 — Gate the Round
 
 Read every report file in full, including a report whose worker exited cleanly.
 A `## BLOCKED` section can sit under a report that otherwise reads as finished.
@@ -393,21 +384,21 @@ Assess correction scope and bug evidence under `skills/herdr-teamlead/references
 Persist user-facing obligations under `skills/herdr-teamlead/references/attention.md` before presenting
 them; record an actual answer or resolution separately from showing the item.
 
-After accepting a consultation, return to Step 4 for the next needed
+After accepting a consultation, return to Step 2 for the next needed
 responsibility. For an investigation-only task, use the knowledge gate below.
 
 For an investigation-only task, assess every assigned report against the requested
 knowledge deliverable. Resolve blocking findings through the same bounded and
 judge paths below. Once its criteria hold, present the findings and preserve open
-user decisions; proceed to Step 21 if a task worktree needs cleanup, otherwise
-Step 22. No implementation or release is inferred from the diagnostic result.
+user decisions; proceed to Step 19 if a task worktree needs cleanup, otherwise
+Step 20. No implementation or release is inferred from the diagnostic result.
 
 - **Any blocking finding** — apply the round-flow reference's Blocking Gate
-  contract and `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Return to Step 4 for
-  an authorized correction or Step 13 for a required judge ruling. At an
+  contract and `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Return to Step 2 for
+  an authorized correction or Step 11 for a required judge ruling. At an
   exhausted allowance, record the checkpoint through
   `skills/herdr-teamlead/references/dispatch-recovery.md`, consult the investigator under
-  `skills/herdr-teamlead/references/specialists.md`, and take its assessed report to Step 13 for the
+  `skills/herdr-teamlead/references/specialists.md`, and take its assessed report to Step 11 for the
   diagnosis; no operator decision is awaited.
 - **Advisory findings only** — record them in the round log and fold them into
   the next round that is already happening. Never spend a round on a lone
@@ -420,37 +411,45 @@ tester passes against the current pushed tip before release:
 skills/herdr-teamlead/references/round-flow.md
 ```
 
-With its release criteria met, proceed immediately to Step 13.
+With its release criteria met, proceed immediately to Step 11.
 
-## Step 13 — Compose the Judge Brief
+## Step 11 — Compose the Judge Brief
 
 Optional. Modes, triggers and both report contracts are in
 `skills/herdr-teamlead/references/round-flow.md` "The Judge" (a bot
-disagreement inside Step 20 returns here first). No trigger — proceed to
-Step 20.
+disagreement inside Step 18 returns here first). No trigger — proceed to
+Step 18.
 
-For a dispute, compose from `skills/herdr-teamlead/templates/brief-judge.md` through Step 7: the
+For a dispute, compose from `skills/herdr-teamlead/templates/brief-judge.md` through Step 5: the
 dispute, both positions with report paths, the governing rule, the tree.
 
 For an exhausted allowance, compose from `skills/herdr-teamlead/templates/brief-judge-diagnosis.md`
-through Step 7 under the role key `judge-diagnosis`, which writes
+through Step 5 under the role key `judge-diagnosis`, which writes
 `brief-judge-diagnosis.md`: the assessed investigator report, the task, rounds
 spent, remaining blocking work, the per-round history, the tree, and any prior
 remedy with what it changed.
 The pinned seat is still `judge`, so plan and dispatch that role and pass this
 file as its brief: `--brief judge=<outdir>/brief-judge-diagnosis.md`.
 
-Skip Step 8 for the read-only judge. Proceed immediately to Step 14.
+Skip Step 6 for the read-only judge. Proceed immediately to Step 12.
 
-## Step 14 — Re-measure the Shared Window
+## Step 12 — Re-measure the Shared Window
 
-Re-run Step 4's `measure` under its outcome contract. Resolve any unreadable
-judge window before planning. Pass the fresh snapshot to Step 15; never reuse
-the earlier reading as affordability proof. Proceed immediately to Step 15.
+Run `measure` alone, not the preflight:
 
-## Step 15 — Plan the Judge Seat
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" measure
+```
 
-Plan the pinned judge against Step 14's fresh snapshot:
+Emits and saves the snapshot under Step 2's headroom contract; exit 1 names
+`failed_agents`. Resolve any unreadable judge window before planning. Pass the
+fresh snapshot to Step 13; never reuse the earlier reading as affordability
+proof. Proceed immediately to Step 13.
+
+## Step 13 — Plan the Judge Seat
+
+Plan the pinned judge against Step 12's fresh snapshot:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -460,16 +459,16 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
 ```
 
 `adjudication` for a dispute, `diagnosis` for an exhausted allowance — the same
-choice Step 13 made when it composed the brief. Use the recorded mode in Steps
-16 and 17. An undeclared mode is refused.
+choice Step 11 made when it composed the brief. Use the recorded mode in Steps
+14 and 15. An undeclared mode is refused.
 
-Exit 0 names the judge worker; proceed immediately to Step 16. On non-zero,
+Exit 0 names the judge worker; proceed immediately to Step 14. On non-zero,
 report the diagnostic and finish here. Never substitute a judge, lower its tier,
 or hand-write an assignment to bypass the refusal.
 
-## Step 16 — Start the Judge Worker on Its Pinned Tier
+## Step 14 — Start the Judge Worker on Its Pinned Tier
 
-For an existing judge worker, proceed to Step 17 with a clearing dispatch.
+For an existing judge worker, proceed to Step 15 with a clearing dispatch.
 For an empty shell pane, complete retrospective checks for the start and run:
 
 ```bash
@@ -478,16 +477,16 @@ bash "$CP/skills/herdr-teamlead/start-judge-worker.sh" \
   <step-15-plan-file> <pane> [claude|codex|grok] --task <task-id> [--state <state-file>]
 ```
 
-Starts the pinned judge and verifies launch argv, on the mode Step 15 recorded
+Starts the pinned judge and verifies launch argv, on the mode Step 13 recorded
 in the plan. The header owns the contract.
 
-- **Exit 0** — proceed immediately to Step 17 with `--no-clear`.
+- **Exit 0** — proceed immediately to Step 15 with `--no-clear`.
 - **Any non-zero** — report the diagnostic and finish here without briefing
   the worker or overriding its tier.
 
-## Step 17 — Dispatch the Judge
+## Step 15 — Dispatch the Judge
 
-Use Step 15's plan under Step 10's dispatch contract:
+Use Step 13's plan under Step 8's dispatch contract:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -498,46 +497,46 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" apply \
   --task <task-id> [--no-clear]
 ```
 
-Pass the same `--judge-mode` Step 15 planned. Step 10's outcomes govern. Use
+Pass the same `--judge-mode` Step 13 planned. Step 8's outcomes govern. Use
 `--no-clear` only for the worker just started in
-Step 16; an existing judge receives the default cleared relaunch with retrospective
-coverage. Apply verifies the live tier before input. Proceed immediately to Step 18.
+Step 14; an existing judge receives the default cleared relaunch with retrospective
+coverage. Apply verifies the live tier before input. Proceed immediately to Step 16.
 
-## Step 18 — Wait for the Ruling
+## Step 16 — Wait for the Ruling
 
-Run Step 11's fleet observation loop, including the judge named by Step 15.
-Proceed immediately to Step 19 once its report lands; keep other enrollments
+Run Step 9's fleet observation loop, including the judge named by Step 13.
+Proceed immediately to Step 17 once its report lands; keep other enrollments
 under observation.
 
-## Step 19 — Act on the Ruling or Remedy
+## Step 17 — Act on the Ruling or Remedy
 
 Apply the Ruling Outcomes contract in `skills/herdr-teamlead/references/round-flow.md`. Investigation
-rulings return to Step 12's knowledge gate. Implementation rulings route
+rulings return to Step 10's knowledge gate. Implementation rulings route
 unchanged-branch rulings to verified release or renewed verification,
 branch-changing rulings to the counted correction path, and a blocked ruling
 to its saved operator question. Only the operator overrides a ruling.
 Continue immediately to the step named by that outcome.
 
-## Step 20 — Release the Pull Request
+## Step 18 — Release the Pull Request
 
 The release is one more assignment, never a prompt into the developer's
-existing context. Return to Step 7 with the role `release` for
+existing context. Return to Step 5 with the role `release` for
 the developer's agent (template `skills/herdr-teamlead/templates/brief-release.md`, the same
-`WORKTREE` and `BRANCH`, a fresh `REPORT`), run Step 8 (it reports
-`already-provisioned`), dispatch through Step 10 so the context is cleared and
-the brief is fresh, and wait on the report in Step 11. A source-changing
-release finding returns to Step 12 for the next counted developer assignment.
-The worker merges after all gates pass. Proceed immediately to Step 21 only
+`WORKTREE` and `BRANCH`, a fresh `REPORT`), run Step 6 (it reports
+`already-provisioned`), dispatch through Step 8 so the context is cleared and
+the brief is fresh, and wait on the report in Step 9. A source-changing
+release finding returns to Step 10 for the next counted developer assignment.
+The worker merges after all gates pass. Proceed immediately to Step 19 only
 after verifying its reported release against the live VCS and release gates.
 Record that evidence in the task ledger.
 
-## Step 21 — Clean Up the Worktree
+## Step 19 — Clean Up the Worktree
 
 Fast-forward the shared checkout, remove the worktree, and delete the branch
-per `rules/agent-worktree-isolation.md`, then run Step 8's prune script again
-for the round's other worktrees. Proceed immediately to Step 22.
+per `rules/agent-worktree-isolation.md`, then run Step 6's prune script again
+for the round's other worktrees. Proceed immediately to Step 20.
 
-## Step 22 — Log the Round
+## Step 20 — Log the Round
 
 Finalize the task ledger with the round outcome and remaining obligations.
 Mark the task completed only after its acceptance criteria and required

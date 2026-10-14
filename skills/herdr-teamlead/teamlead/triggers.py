@@ -213,7 +213,7 @@ def load_requirements(path, roles=None):
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise UsageError("Cannot read requirements at {} ({}); pass the same file Step 6 gives `plan`.".format(path, exc.strerror), {}) from None
+        raise UsageError("Cannot read requirements at {} ({}); pass the same file Step 3 gives `plan`.".format(path, exc.strerror), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:

@@ -8,7 +8,7 @@ authorized. An `applied` row there says nothing about whether the work passed.
 
 ## Start or Resume
 
-At Step 3, establish the stable task identity, original base, and absolute ledger
+At Step 2, establish the stable task identity, original base, and absolute ledger
 path. Save that path beside the task's authorization context and include it in
 every lead handoff. Create the document on a first run, or read the existing
 document in full before planning more work. Do not create a new ledger per fix.
@@ -28,7 +28,7 @@ accept work. A conflicting observation requires reconciliation, not a resend.
 Append an event after each dispatch outcome, wait outcome, and evidence-based
 assessment. Record missing reports and unknown send outcomes before continuing
 another worker. Append blocker, judge, release, cleanup, and handoff decisions
-when they happen; Step 22 finalizes the log rather than creating it from memory.
+when they happen; Step 20 finalizes the log rather than creating it from memory.
 
 Use these separate vocabularies:
 
@@ -45,7 +45,7 @@ Use these separate vocabularies:
 | task | `awaiting_diagnosis` | An exhausted allowance awaits the judge's remedy |
 | task | `diagnosed_stop` | A `stop` remedy ships what is clean and tracks the remainder |
 | task | `waiting_for_operator` | A named required operator decision remains outstanding |
-| task | `ready_for_release` | Step 12's current-tip verification gate holds; release remains outstanding |
+| task | `ready_for_release` | Step 10's current-tip verification gate holds; release remains outstanding |
 | task | `completed` | All task acceptance criteria and required release/cleanup obligations are verified |
 
 Record Herdr's label under `observed`, with its source. Record worker claims as
@@ -58,7 +58,7 @@ Bind every acceptance to the specific report content and artifact inspected.
 Record the full SHA for repository work and link test/review evidence for that
 SHA. Preserve evidence files for resume. A new push makes older verification
 insufficient for release: append that invalidation, put the task back in progress,
-and obtain Step 12's current-tip verification. Keep the old report and decision.
+and obtain Step 10's current-tip verification. Keep the old report and decision.
 
 Verify release claims against the live PR, merge, and any required publication
 checks under `rules/ci-safety.md`. An accepted release report is not a substitute

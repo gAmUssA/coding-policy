@@ -88,7 +88,7 @@ The optional `role_costs` key is the second:
 `{"<role>": <number>}`, what one round in that seat is expected to
 burn out of a worker's remaining headroom percentage. It overrides the
 planner's own weights one role at a time, and a role it omits keeps the
-default (see `skills/herdr-teamlead/references/round-setup.md`, Step 5).
+default (see `skills/herdr-teamlead/references/round-setup.md`, Step 3).
 A missing map means no overrides; a value that is not a non-negative finite
 number is refused, naming the file and the role. `plan` is the only reader.
 
@@ -476,7 +476,8 @@ informational plan name and never feeds headroom.
 
 ## Writer / Reader Contract
 
-- **Writer** — `measure` appends a snapshot; labelled `apply` reserves before
+- **Writer** — `measure` appends a snapshot, as does `preflight` through the
+  same `measure` call when its roster is usable; labelled `apply` reserves before
   clear/relaunch, persists sending before terminal input, and appends the
   confirmed or unconfirmed outcome before cosmetic labels. Owner commands
   manage task/approval/recovery records; all mutations preserve audit events.
@@ -485,7 +486,7 @@ informational plan name and never feeds headroom.
 - **Readers** — `plan` reads the newest snapshot plus the ledger (role history
   breaks a headroom tie), and the config's `role_costs` for its seat weights;
   `state` prints the document. Neither appends records; their shared loader performs owner migrations. Live `apply` reads the most
-  recent assignment for the named worker before retaining context; Step 10
+  recent assignment for the named worker before retaining context; Step 8
   documents the retained-dispatch contract. `status` derives budgets and paused
   implementation separately from active audit work. `apply --dry-run` reads
   current recovery bounds without writes; an older ledger requires an owner

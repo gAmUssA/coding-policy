@@ -21,7 +21,7 @@ Compatible expertise may share a responsibility. Consultations with the same
 canonical responsibility use separate dispatches, each with its own engagement.
 
 The owner planner applies capability and contribution eligibility before
-affordable task familiarity and measured headroom. Step 5 in the skill names
+affordable task familiarity and measured headroom. Step 3 in the skill names
 the executable contract. Use measured costs to improve calibration; preserve
 the pinned judge and the developer's early-fix reservation.
 
@@ -33,7 +33,7 @@ tester passes.
 ## Two Phases
 
 An implementation task runs through the round twice, and only the second pass
-gates release. Investigation-only tasks use Step 12's knowledge-deliverable
+gates release. Investigation-only tasks use Step 10's knowledge-deliverable
 gate; they do not require a pushed branch or release reports.
 
 **Phase 1 — pre-development.** An architect or advisor supplies the
@@ -48,7 +48,7 @@ branch, and stops without opening a PR.
 
 Work that trips a Team Composition trigger gates here: its deliverable lands
 before implementation, or the lead records the staffing decision and its
-reason. Step 5's `detect-triggers` run decides which of the four fired, and
+reason. Step 3's `detect-triggers` run decides which of the four fired, and
 reads that recorded decision; the lead's own reading of the diff does not. The cheap gate is the one worth making mandatory; a reviewer catching
 the same thing one finding per round is the expensive one.
 
@@ -75,39 +75,37 @@ Consultations can enter later when a new question could change implementation
 or verification. Scope any resulting correction through the accepted behavior
 and existing correction allowance; a specialist recommendation grants no new
 implementation authority. A completed consultation returns to the next needed
-assignment, or closes an investigation-only knowledge deliverable through Step 12.
+assignment, or closes an investigation-only knowledge deliverable through Step 10.
 
 ## One Round, End to End
 
-1. **Roster** — `roster.sh` names the live workers. An unnamed pane has no
-   dispatch handle; name it first.
-2. **Authority** — `verify-authority.sh <owner/repo>` answers whether the
-   operator owns the repo. Ownership is the namespace, never write permission,
-   and the answer becomes the authority line in every brief.
-3. **Measure** — `teamlead.sh measure` reads each worker's own usage numbers.
-   A worker that is `working` or `blocked` is skipped with null windows rather
-   than interrupted.
-4. **Plan** — `teamlead.sh plan` assigns the requested responsibilities with
+1. **Preflight** — `teamlead.sh preflight` gathers the roster, repo authority,
+   retrospective cadence, headroom and fired triggers in one JSON. An unnamed
+   pane has no dispatch handle; name it first. Ownership is the namespace,
+   never write permission, and the answer becomes the authority line in every
+   brief. Headroom is a real `measure`: a `working` or `blocked` worker is
+   skipped with null windows rather than interrupted.
+2. **Plan** — `teamlead.sh plan` assigns the requested responsibilities with
    specialty requirements and explicit contribution exclusions where needed.
    It contacts nobody; owner state migration may save an older ledger.
-5. **Package** — Step 6 builds a range-specific VCS artifact for reviewer and
+3. **Package** — Step 4 builds a range-specific VCS artifact for reviewer and
    tester briefs. Keep the original task base for full reviews and the prior
    reviewed tip for scoped re-checks; a new tip gets a new package.
-6. **Compose** — `compose-briefs.sh` renders the templates from one values
+4. **Compose** — `compose-briefs.sh` renders the templates from one values
    file, refusing to write anything when a placeholder is unfilled or a
    supplied key matches no template. The lead decides the values; the script
    decides nothing.
-7. **Provision** — `provision-worktree.sh` creates every worktree the briefs
+5. **Provision** — `provision-worktree.sh` creates every worktree the briefs
    name, from the shared checkout. A worker never runs `git` there, so its
    checkout has to exist before the brief arrives.
-8. **Dispatch** — `teamlead.sh apply` uses Step 10's explicit context mode,
+6. **Dispatch** — `teamlead.sh apply` uses Step 8's explicit context mode,
    then sends the assignment prompt. The recovery reference governs developer
    fix retention and the separate assessed specialist continuation path.
    It re-reads live status and refuses to type into a busy worker.
-9. **Observe** — `supervision-watch` observes every enrolled worker. Verify
+7. **Observe** — `supervision-watch` observes every enrolled worker. Verify
    candidates with `wait-report.sh --once`, ledger outcomes, and acknowledge
    handled events under `skills/herdr-teamlead/references/supervision.md`.
-10. **Gate** — the lead reads every report in full and decides: another round,
+8. **Gate** — the lead reads every report in full and decides: another round,
    or the release hand-off.
 
 Before relying on consultation output, save the report delivery receipt and run
@@ -126,7 +124,7 @@ All references to the round log here mean that ledger.
 A report is the worker's only channel to the lead. Read all of it, every time —
 a `## BLOCKED` section can sit under a report that otherwise reads as finished.
 
-- **Blocking findings present** — take Step 12's bounded fix path under
+- **Blocking findings present** — take Step 10's bounded fix path under
   `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Keep a stable task identifier and
   advance its fix counter; changing worker or scope never restarts it.
   Name the findings and prior report in each brief. Re-check the findings
@@ -157,7 +155,7 @@ a `## BLOCKED` section can sit under a report that otherwise reads as finished.
 
 ## Release Gate
 
-For an authorized implementation release, Step 12 requires all four:
+For an authorized implementation release, Step 10 requires all four:
 
 1. The developer's report names the branch and the commit SHA it pushed.
 2. A broad reviewer **Mode B** report reviews that same SHA and carries no
@@ -221,24 +219,24 @@ tool's own documentation — not to this reference or a brief.
 
 ## Blocking Gate
 
-At Step 12, apply `skills/herdr-teamlead/references/assignment-reasoning.md` to
+At Step 10, apply `skills/herdr-teamlead/references/assignment-reasoning.md` to
 the findings and their proposed corrections. Preserve required judge rulings
 and operator decisions; scope classification never waives a blocking finding.
 Read this task's confirmed fix history, name the next fix number,
-and return to Step 4 with self-contained briefs carrying the findings and prior
+and return to Step 2 with self-contained briefs carrying the findings and prior
 reports. Preserve the developer for retained fixes; use a fresh context for the
 fresh-worker stage. Never reset the counter during re-planning. At a contested
-verdict or a lead override, go to Step 13 first. At an exhausted allowance,
+verdict or a lead override, go to Step 11 first. At an exhausted allowance,
 record the checkpoint through the owner commands in
 `skills/herdr-teamlead/references/dispatch-recovery.md`, report implementation
-as `awaiting_diagnosis`, consult the investigator, and go to Step 13 with its
+as `awaiting_diagnosis`, consult the investigator, and go to Step 11 with its
 assessed report. Use the plan its
 remedy records for the bounded extra attempts; collect each preceding attempt's
 actual blocking review before continuing.
 
 ## Branch-Changing Ruling
 
-At Step 19, the lead never edits the branch itself. At an exhausted allowance,
+At Step 17, the lead never edits the branch itself. At an exhausted allowance,
 record the checkpoint through the owner commands in
 `skills/herdr-teamlead/references/dispatch-recovery.md` and take the diagnosis;
 the boundary is a diagnostic question, not a budget prompt. The plan its remedy
@@ -246,7 +244,7 @@ records covers multiple attempts within those bounds; fresh release handoffs do
 not ask for context-change permission. Report implementation as
 `awaiting_diagnosis` while the diagnosis is pending. Record the remedy once and
 continue within it.
-Otherwise return to Step 12 carrying `ACTION:` verbatim as required work. Count
+Otherwise return to Step 10 carrying `ACTION:` verbatim as required work. Count
 that implementation as the next fix, under the same task identifier, and gate the
 resulting tip again before release.
 
@@ -291,7 +289,7 @@ whatever GitHub's merge box says.
 A reserved seat outside ordinary staffing, on the most capable model
 available. It holds no other responsibility. `skills/herdr-teamlead/references/team-operation.md`
 Judge Seat is the contract; this section is the operational detail for
-Steps 13–19 of `skills/herdr-teamlead/SKILL.md`.
+Steps 11–17 of `skills/herdr-teamlead/SKILL.md`.
 
 It runs in two modes. Adjudication settles a dispute; diagnosis asks why a fix
 loop is not converging. Dispatch adjudication on exactly one of three triggers:
@@ -400,7 +398,8 @@ and no degraded ruling.
 - Answer a question by typing into a working worker. Wait for the report.
 - Answer a blocked worker's approval dialog. Relay it to the operator and stop.
 - Create a worktree for a worker after dispatch. Provision before briefing.
-- Write an authority line by hand. It comes from `verify-authority.sh`.
+- Write an authority line by hand. It comes from the preflight's `authority`
+  fact, which runs `verify-authority.sh`.
 - Brief a write action on a repo the operator does not own without their
   explicit per-repo, per-action permission recorded in the brief.
 - Release on a Phase 1 report. A plan is not a verification.
@@ -411,14 +410,14 @@ and no degraded ruling.
 
 ## Dispatch Results
 
-Step 10 of `skills/herdr-teamlead/SKILL.md` follows these outcomes. Before a
+Step 8 of `skills/herdr-teamlead/SKILL.md` follows these outcomes. Before a
 finish, apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/references/supervision.md`.
 
-- **Exit 0** — proceed to Step 11.
+- **Exit 0** — proceed to Step 9.
 - **Busy target** — no dispatch occurred. Wait for readiness or replan; stay
   at this step.
 - **Sent but not started** — inspect the pane; never re-dispatch on top of the
-  message. Proceed to Step 11 for the roles that started.
+  message. Proceed to Step 9 for the roles that started.
 - **Retrospective, clear, composer, tier, qualification, or continuity refusal** — follow the
   diagnostic and recorded dispatch outcome. Reconcile uncertainty before retrying;
   wait for roles whose records confirm dispatch.
@@ -430,46 +429,46 @@ finish, apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/r
 
 ## Ruling Outcomes
 
-Step 19 follows these branches. Before a finish, preserve any user question and
+Step 17 follows these branches. Before a finish, preserve any user question and
 apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/references/supervision.md`.
 
 The `RULING:` line binds the round. Only the operator overrides it.
 
-For an investigation-only task, a non-blocked ruling returns to Step 12's
+For an investigation-only task, a non-blocked ruling returns to Step 10's
 knowledge-deliverable gate with the ruling and any required authorized research.
 Apply the existing correction allowance and judge rules to remaining findings.
-Do not enter implementation Phase 2 or Step 20 without implementation/release
+Do not enter implementation Phase 2 or Step 18 without implementation/release
 authorization. A blocked ruling follows the operator-question path below.
 
 - **`uphold A` / `uphold B` / `amend`, `ACTION:` changing no branch content**
-  — record the ruling. Proceed to Step 20 only with Step 12's broad reports
+  — record the ruling. Proceed to Step 18 only with Step 10's broad reports
   against the current tip. Otherwise re-run Phase 2 with full briefs carrying
   the ruling. Do not re-dispatch the judge for the same settled dispute.
 - **`uphold A` / `uphold B` / `amend`, `ACTION:` changing the branch** — apply
   the round-flow reference's Branch-Changing Ruling contract. Finish here while
-  its required operator decision is pending; otherwise return to Step 12 with
+  its required operator decision is pending; otherwise return to Step 10 with
   `ACTION:` as the next counted fix.
 - **`blocked`** — the judge declined to rule. Stop the round and put its
   named question to the operator. Do not dispatch a second judge and do not
   rule in its place. Finish here.
-- **`REMEDY: continue`** — record the diagnosis, then return to Step 12 and
+- **`REMEDY: continue`** — record the diagnosis, then return to Step 10 and
   spend the bounded rounds with the approach unchanged.
 - **`REMEDY: restructure`** — record the diagnosis, apply the named structural
-  change to the shape of the work, then return to Step 12 within its bound.
+  change to the shape of the work, then return to Step 10 within its bound.
   The change is the judge's to name and the lead's to carry out.
 - **`REMEDY: stop`** — file the remainder the remedy names as an issue, under
   the round's verified repo authority (`rules/external-repo-contributions.md`).
   Record the diagnosis with that issue as `defect_issue` (`owner/repo#number`);
   `diagnose` refuses a `stop` without one. Release what is clean, with the
   remainder as the tracked accepted defect that issue holds. The remedy
-  carries that authority; do not re-escalate it. Proceed to Step 20 for what
+  carries that authority; do not re-escalate it. Proceed to Step 18 for what
   ships. A version-2 `stop` record predates the reference and does not satisfy
   `rules/review-severity.md` Judge-Accepted Defect Carve-Out precondition 2;
   shipping its remainder needs the operator's plan over that remedy or a fix.
 - A remedy's bound exhausting with blocking work remaining returns to Step
-  12's exhaustion workflow: record a new checkpoint, consult the investigator
+  10's exhaustion workflow: record a new checkpoint, consult the investigator
   again so an assessed consultation follows the latest developer attempt, then
-  take that assessment to Step 13 for the next diagnosis, one rung down the
+  take that assessment to Step 11 for the next diagnosis, one rung down the
   ladder — or at the same rung once, when the spent remedy made progress the
   new diagnosis records in `PROGRESS`. The previous assessment never satisfies
   the new diagnosis. Never re-enter above the last rung, and never repeat a
