@@ -163,8 +163,10 @@ main() {
   # 11b. a manifest name built to break out of a shell string is refused before
   #      any registry call, and nothing it carries runs
   tree "$TMP/11b"; frag "$TMP/11b" fix.md patch $'### Fixed\n\n- x\n'
-  jq --arg n "gamussa/x'; touch $TMP/PWNED; echo '" '.name = $n' "$TMP/11b/.tessl-plugin/plugin.json" > "$TMP/11b.json" \
-    && mv "$TMP/11b.json" "$TMP/11b/.tessl-plugin/plugin.json" || { echo "fatal: name fixture" >&2; exit 2; }
+  if ! jq --arg n "gamussa/x'; touch $TMP/PWNED; echo '" '.name = $n' "$TMP/11b/.tessl-plugin/plugin.json" > "$TMP/11b.json" \
+    || ! mv "$TMP/11b.json" "$TMP/11b/.tessl-plugin/plugin.json"; then
+    echo "fatal: name fixture" >&2; exit 2
+  fi
   before=$(snapshot "$TMP/11b")
   OUT="$(bash "$SCRIPT" --root "$TMP/11b" --date 2026-10-15 2>"$TMP/11b.err")"; RC=$?; ERR="$(cat "$TMP/11b.err")"
   after=$(snapshot "$TMP/11b")
