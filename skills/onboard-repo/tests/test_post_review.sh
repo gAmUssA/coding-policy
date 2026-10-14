@@ -184,5 +184,6 @@ t_mixed
 t_missing_severity_blocks
 t_missing_file
 t_invalid_json
+echo "test-summary: passed=${pass} failed=${fail}"
 echo "== summary: ${pass} passed, ${fail} failed =="
 [[ "$fail" -eq 0 ]]

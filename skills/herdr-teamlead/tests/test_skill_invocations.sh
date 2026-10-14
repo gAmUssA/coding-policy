@@ -284,6 +284,7 @@ main() {
   check_mode_gate "$MODE_GATE_SKILL" "$skill"
 
   echo
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "results: ${PASS} pass, ${FAIL} fail"
   (( FAIL == 0 ))
 }

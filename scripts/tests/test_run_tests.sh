@@ -27,7 +27,21 @@ add_suite() {
   local base="$1" name="$2" exit_code="$3"
   local dir="$base/skills/$name/tests"
   mkdir -p "$dir"
-  printf '#!/usr/bin/env bash\nexit %s\n' "$exit_code" > "$dir/test_$name.sh"
+  # A passing harness reports its pass count (the runner's summary contract,
+  # #26); a failing one exits before it gets that far.
+  if [[ "$exit_code" == 0 ]]; then
+    printf '#!/usr/bin/env bash\necho "test-summary: passed=1 failed=0"\nexit 0\n' > "$dir/test_$name.sh"
+  else
+    printf '#!/usr/bin/env bash\nexit %s\n' "$exit_code" > "$dir/test_$name.sh"
+  fi
+}
+
+# A shell suite with an arbitrary body, for the summary-line cases.
+add_sh_body() {
+  local base="$1" name="$2" body="$3"
+  local dir="$base/skills/$name/tests"
+  mkdir -p "$dir"
+  printf '#!/usr/bin/env bash\n%s\n' "$body" > "$dir/test_$name.sh"
 }
 
 # A Python suite, shaped like the real ones: self-driving via the
@@ -253,6 +267,67 @@ else
 fi
 rm -rf "$base"
 
+# --- a shell suite that exits 0 having run zero cases fails the run (#26) ---
+# Each harness counts its own failures and exits on that count alone, so a
+# harness whose cases were all removed, or never reached, exited 0 and read
+# as green.
+base="$(make_base)"; add_suite "$base" alpha 0
+add_sh_body "$base" empty 'echo "test-summary: passed=0 failed=0"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
+  && jq -e '.failures | any(test("test_empty.sh$"))' <<<"$OUT" >/dev/null \
+  && [[ "$ERR" == *"ran zero cases"* ]]; then
+  pass "zero-pass shell suite exiting 0 -> counted as a failure"
+else
+  fail "zero-pass suite: code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+
+# --- a shell suite that exits 0 with no summary line fails the run ---
+base="$(make_base)"; add_sh_body "$base" silent 'echo "all good"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
+  && [[ "$ERR" == *"no test-summary line"* ]]; then
+  pass "shell suite without a summary line -> counted as a failure"
+else
+  fail "missing summary: code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+
+# --- a shell suite that exits 0 while reporting failures fails the run ---
+base="$(make_base)"; add_sh_body "$base" liar 'echo "test-summary: passed=3 failed=2"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 1 ]] && [[ "$(jq -r .failed <<<"$OUT")" == 1 ]] \
+  && [[ "$ERR" == *"reported 2 failed"* ]]; then
+  pass "shell suite reporting failures but exiting 0 -> counted as a failure"
+else
+  fail "failures with exit 0: code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+
+# --- the suite's own (last) summary line wins over a nested run's ---
+# A harness that runs another harness echoes the nested summary first; only
+# the final line is this suite's verdict. Both orders are pinned.
+base="$(make_base)"
+add_sh_body "$base" outer 'echo "test-summary: passed=0 failed=0"; echo "test-summary: passed=4 failed=0"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 0 ]] && [[ "$(jq -r .passed <<<"$OUT")" == 1 ]]; then
+  pass "last summary line is the verdict (nested zero ignored)"
+else
+  fail "last summary wins: code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+base="$(make_base)"
+add_sh_body "$base" outer 'echo "test-summary: passed=4 failed=0"; echo "test-summary: passed=0 failed=0"; exit 0'
+invoke "$base"
+if [[ "$CODE" == 1 ]]; then
+  pass "last summary line is the verdict (own zero not masked by nested)"
+else
+  fail "last summary wins (reverse): code=$CODE out=$OUT err=$ERR"
+fi
+rm -rf "$base"
+
 echo ""
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "run-tests.sh: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 [[ $FAIL_COUNT -eq 0 ]] || exit 1

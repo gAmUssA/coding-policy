@@ -598,6 +598,7 @@ SHIM
   if (( RC == 1 )) && [[ -z "$OUT" ]]; then pass; else fail "rc=$RC out=$OUT err=$ERRTEXT"; fi
 
   echo
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "passed=$PASS failed=$FAIL"
   (( FAIL == 0 ))
 }

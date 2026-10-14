@@ -891,6 +891,7 @@ ${base}"
   if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "worktree" "$TMP/stall-usage"; then
     pass; else fail "--worktree without a value must be a usage error: RC=$RC"; fi
 
+  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2

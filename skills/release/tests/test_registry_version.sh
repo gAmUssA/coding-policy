@@ -152,5 +152,6 @@ else
 fi
 
 echo ""
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 [[ $FAIL_COUNT -eq 0 ]]

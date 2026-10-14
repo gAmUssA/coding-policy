@@ -184,5 +184,6 @@ run "missing base dir -> exit 2"                         t_missing_base_exits_tw
 run "no shell scripts found -> exit 2"                   t_no_scripts_exits_two
 run "engine not installed -> exit 2"                     t_missing_engine_exits_two
 
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 [[ "$FAIL_COUNT" -eq 0 ]]
