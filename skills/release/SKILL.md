@@ -124,13 +124,6 @@ Only proceed when Step 5 returned `ready`, every non-empty review body has been 
 skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>
 ```
 
-**Assign-on-merge repos: decide whether the merge publishes.** It publishes nothing when both hold:
-
-- `.fragments` of `bash scripts/check-changelog-fragment.sh origin/main` is empty
-- `git ls-tree --name-only origin/main changelog.d/` lists only `changelog.d/README.md`
-
-Then skip the baseline and the registry checks below, watch the publish run to `success`, and report "no publication". Otherwise the Tessl publication checks below apply.
-
 **Tessl publication: capture the registry baseline before merging** so the post-merge check has something to compare against. A GitHub tag/asset publication skips this:
 
 ```bash
@@ -167,6 +160,19 @@ git remote prune origin
 merge_sha=$(gh pr view <N> --json mergeCommit --jq '.mergeCommit.oid')
 tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin" | jq -r '.database_id')
 gh run watch "$tessl_run_id"
+```
+
+Assign-on-merge repos: read whether that run published, from its `Publish` step:
+
+```bash
+gh run view "$tessl_run_id" --json jobs --jq '.jobs[].steps[] | select(.name == "Publish") | .conclusion'
+```
+
+- `skipped` — the merge published nothing: no pending fragment, and the manifest is not ahead of the registry. Report "no publication" and skip the two checks below
+- `success` — run the two checks below
+- anything else — the publication failed; report it with the run URL
+
+```bash
 landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$tessl_run_id") \
   || { echo "Publish not confirmed — $(jq -r '.reason // "see stderr"' <<<"$landed")" >&2; exit 1; }
 CURRENT=$(jq -r '.current' <<<"$landed")

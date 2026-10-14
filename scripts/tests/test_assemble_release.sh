@@ -177,4 +177,6 @@ main() {
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

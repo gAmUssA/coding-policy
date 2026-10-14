@@ -64,6 +64,12 @@ When you add, remove, or rename a rule, skill, or hook, update **all** of these:
 - `.github/workflows/publish.yml` assigns the version on push to `main`: `scripts/assemble-release.sh` bumps both manifests by the highest pending `bump`, writes the `## <version> — <date>` heading with the merged fragments, and deletes them
 - The workflow commits that result to `main` as `chore(release): <version>` and publishes it
 - A merge with no pending fragment publishes nothing
+- Narrow exception for a plugin repo with no assembling publish workflow.
+- Preconditions (all required):
+  1. The repo carries no `changelog.d/` directory
+  2. Its publish workflow publishes the manifest version as-is
+- Such a PR bumps the manifest `version` by hand and writes the `## <version> — <date>` heading itself (`skills/release/SKILL.md` Step 3 Hand bump)
+- Every other plugin repo versions through fragments
 - No `Unreleased` section — the heading is forbidden
 - Consolidate: a PR reworking an entry that is still a pending fragment edits that fragment instead of adding a second one
 - Audit the top released section for duplication when editing CHANGELOG history
