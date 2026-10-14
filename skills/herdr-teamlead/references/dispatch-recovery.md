@@ -13,7 +13,7 @@ the original record and counter. Tiered dispatch requires current qualification.
 After a recorded release clear, dispatch the next developer correction fresh
 within the same task and allowance. No context-change permission is required.
 Carry the release report, findings, original base, and cumulative count into
-the brief. Step 12's full verification remains required before release.
+the brief. Step 10's full verification remains required before release.
 
 After another role clears the developer, use `recover-role-clear` under the
 owner-managed recovery contract below. Pass its same `--work` to plan and fresh apply.
@@ -34,7 +34,7 @@ Plan that one responsibility with the same task, normalized requirements and
 worker. Compose a new self-contained brief with the follow-up question, the
 previous report and a fresh report destination. Then use the saved plan:
 
-Use the installed invocation in SKILL.md Step 10 with this argument synopsis:
+Use the installed invocation in SKILL.md Step 8 with this argument synopsis:
 
 ```text
 apply \
@@ -45,7 +45,7 @@ apply \
 
 `skills/herdr-teamlead/teamlead/engagement.py` owns assessment-source and retired-enrollment validation;
 `skills/herdr-teamlead/teamlead/assign.py` owns retained responsibility, engagement, session and exact
-tier proof. Staffing follows `skills/herdr-teamlead/references/round-setup.md` Step 5.
+tier proof. Staffing follows `skills/herdr-teamlead/references/round-setup.md` Step 3.
 Follow the owner diagnostics before retrying.
 This mode carries no developer correction parameters and cannot replace the
 developer's retained-fix path. A dry run checks recorded prerequisites but proves
@@ -66,19 +66,19 @@ any follow-up or fresh resend.
 ## Dispatch outcomes
 
 Each outcome names where the round goes next. Only a dispatched worker can
-produce a report, so Step 11 waits on exactly the roles that landed here.
+produce a report, so Step 9 waits on exactly the roles that landed here.
 
-- **Exit 0** — every role was dispatched. Proceed to Step 11.
+- **Exit 0** — every role was dispatched. Proceed to Step 9.
 - **Non-zero with a busy target** — the whole round was refused before any
   keystroke went out. Nothing was dispatched, so there is nothing to wait for:
   wait for that worker to reach idle and re-run this step, or re-run it with a
-  plan that omits the busy worker. Do not go to Step 11.
+  plan that omits the busy worker. Do not go to Step 9.
 - **Non-zero with `"status": "sent_but_not_started"`** — the message was sent
   and no turn began for that role. Read that worker's pane; do not re-dispatch
-  on top of it. Go to Step 11 for the roles whose records say `started`, and
+  on top of it. Go to Step 9 for the roles whose records say `started`, and
   treat this role as producing no report this round.
 - **A worker failed on its clear command** — its assignment was never sent, and
-  the round is short that role. Go to Step 11 for the rest; re-dispatch this one
+  the round is short that role. Go to Step 9 for the rest; re-dispatch this one
   by re-running this step for that role alone once its pane is clear.
 - **A refusal saying the screen did not change** — the clear was unconfirmed;
   no brief was sent to that worker. Read the pane and clear it by hand.
@@ -114,7 +114,7 @@ skills/herdr-teamlead/references/herdr.md
 The prompt text, the refusal predicate, and every constant are the utility's
 own contract; see `skills/herdr-teamlead/teamlead/assign.py`.
 
-Proceed to Step 11 with the roles that were dispatched.
+Proceed to Step 9 with the roles that were dispatched.
 
 ## Owner-managed recovery
 
@@ -500,11 +500,11 @@ lock file can remain after exit; do not delete it to bypass an active lock.
 
 ## Wait outcomes
 
-- **Exit 0** — the report is there. Continue to the next worker, then Step 12.
+- **Exit 0** — the report is there. Continue to the next worker, then Step 10.
 - **Exit 1** — the budget ran out. Read the pane with
   `herdr agent read <name> --source visible`. If the worker is still working,
   re-run this step for it: the script's own budget applies again, never a
-  number chosen here. Otherwise go to Step 12 recording that it produced no
+  number chosen here. Otherwise go to Step 10 recording that it produced no
   report.
 - **Exit 2** — a tool failure. Report the message verbatim and finish here; the
   round has no reliable view of any worker.
@@ -523,7 +523,7 @@ lock file can remain after exit; do not delete it to bypass an active lock.
     report recovery below. Otherwise record no report and continue to the next
     worker. Never re-dispatch on top of it. The
     marker may be wrapped, quoted, absent, or identify another attempt. Do
-    not join rows or use a matching filename as proof. Step 7 requires a fresh
+    not join rows or use a matching filename as proof. Step 5 requires a fresh
     report destination and bounds its length; narrow panes can still wrap it.
 - **Exit 3** — the worker is blocked at an approval or question dialog,
   confirmed across two reads and the pane. Read the dialog with
@@ -566,7 +566,7 @@ outcome; the watcher uses its documented pane/state surfaces. Synthetic
 fixtures verify decisions, not live provider behavior or production elapsed
 time.
 
-Proceed to Step 12 once every dispatched worker has been waited on, or once you
+Proceed to Step 10 once every dispatched worker has been waited on, or once you
 have recorded which of them produced no report.
 
 ## Completed native report recovery

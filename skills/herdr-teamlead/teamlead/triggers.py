@@ -29,6 +29,10 @@ Contract:
   callable taking a git argument list and returning its stdout.
 * The payload lists every trigger with its evidence; the failure object names
   the fired triggers that are neither staffed nor decided.
+* `DeclarationError` and `UnclassifiedRoundError` are `UsageError` subclasses
+  carrying the same `usage_error` code, so `detect-triggers` output is
+  unchanged; `teamlead preflight` catches them by type to report a refused
+  declaration or an unclassified round as a stop rather than a tool failure.
 """
 
 import fnmatch
@@ -66,6 +70,14 @@ DECLARATION_FIELDS = frozenset({"schema_version", "package_change_lines",
                                 "cli_surface_markers", *GLOB_FIELDS})
 
 
+class DeclarationError(UsageError):
+    """The repo's trigger declaration is absent, unreadable or incomplete."""
+
+
+class UnclassifiedRoundError(UsageError):
+    """The round has neither a diff nor a planned surface to classify."""
+
+
 def _globs(value, label):
     if not isinstance(value, list) or len(value) > 200:
         raise UsageError("Trigger declaration {} must be a list of at most 200 path globs; state [] when the surface does not exist in this repo.".format(label), {})
@@ -88,30 +100,35 @@ def load_declaration(repo):
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise UsageError("No trigger declaration at {} ({}); state this repo's package roots and size, trust-boundary paths, CLI spec surface and user-facing docs paths there before composing a round.".format(path, exc.strerror), {}) from None
+        raise DeclarationError("No trigger declaration at {} ({}); state this repo's package roots and size, trust-boundary paths, CLI spec surface and user-facing docs paths there before composing a round.".format(path, exc.strerror), {}) from None
+    except UnicodeDecodeError:
+        raise DeclarationError("Trigger declaration {} is not UTF-8 text; rewrite it as UTF-8 JSON before composing a round.".format(path), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise UsageError("Trigger declaration {} is invalid JSON ({}); repair it before composing a round.".format(path, exc.msg), {}) from None
+        raise DeclarationError("Trigger declaration {} is invalid JSON ({}); repair it before composing a round.".format(path, exc.msg), {}) from None
     if not isinstance(payload, dict) or set(payload) != DECLARATION_FIELDS:
-        raise UsageError("Trigger declaration {} requires exactly {}; state every surface, using [] for one this repo does not have.".format(
+        raise DeclarationError("Trigger declaration {} requires exactly {}; state every surface, using [] for one this repo does not have.".format(
             path, ", ".join(sorted(DECLARATION_FIELDS))), {})
     if payload["schema_version"] != DECLARATION_SCHEMA_VERSION:
-        raise UsageError("Trigger declaration {} is schema_version {}; this owner reads version {}.".format(
+        raise DeclarationError("Trigger declaration {} is schema_version {}; this owner reads version {}.".format(
             path, payload["schema_version"], DECLARATION_SCHEMA_VERSION), {})
     size = payload["package_change_lines"]
     if type(size) is not int or size < 1:
-        raise UsageError("Trigger declaration {} needs a positive package_change_lines: the architect trigger fires above the size this repo states, and an unstated size fires never or always depending on the reader.".format(path), {})
+        raise DeclarationError("Trigger declaration {} needs a positive package_change_lines: the architect trigger fires above the size this repo states, and an unstated size fires never or always depending on the reader.".format(path), {})
     markers = payload["cli_surface_markers"]
     if not isinstance(markers, list) or len(markers) > 50:
-        raise UsageError("Trigger declaration {} cli_surface_markers must list at most 50 literal substrings; state [] when this repo declares no CLI spec surface.".format(path), {})
+        raise DeclarationError("Trigger declaration {} cli_surface_markers must list at most 50 literal substrings; state [] when this repo declares no CLI spec surface.".format(path), {})
     for marker in markers:
         if not isinstance(marker, str) or not marker.strip() or any(ord(char) < 32 for char in marker):
-            raise UsageError("Trigger declaration {} holds an empty or control-character CLI surface marker; each marker is a literal substring an added line carries.".format(path), {})
+            raise DeclarationError("Trigger declaration {} holds an empty or control-character CLI surface marker; each marker is a literal substring an added line carries.".format(path), {})
     declaration = {"schema_version": DECLARATION_SCHEMA_VERSION, "package_change_lines": size,
                    "cli_surface_markers": list(markers)}
     for field in GLOB_FIELDS:
-        declaration[field] = _globs(payload[field], field)
+        try:
+            declaration[field] = _globs(payload[field], field)
+        except UsageError as exc:
+            raise DeclarationError(exc.message, exc.details) from None
     declaration["path"] = str(path)
     return declaration
 
@@ -161,6 +178,8 @@ def load_plan(path):
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise UsageError("Cannot read planned surfaces at {} ({}); write the plan or omit --planned.".format(path, exc.strerror), {}) from None
+    except UnicodeDecodeError:
+        raise UsageError("Planned surfaces at {} are not UTF-8 text; rewrite the plan as UTF-8 JSON or omit --planned.".format(path), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -198,7 +217,7 @@ def load_requirements(path, roles=None):
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
-        raise UsageError("Cannot read requirements at {} ({}); pass the same file Step 6 gives `plan`.".format(path, exc.strerror), {}) from None
+        raise UsageError("Cannot read requirements at {} ({}); pass the same file Step 3 gives `plan`.".format(path, exc.strerror), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -490,7 +509,7 @@ def run_command(args, runner=None):
     # reads the combined inputs rather than the plan's presence: a vacuous
     # success here is the silence the triggers exist to end (#415).
     if not changes and not planned_lines and not (plan is not None and plan["cli_surface"]):
-        raise UsageError("This round classifies nothing: its diff is empty and no planned surface is declared. Name the paths, package sizes or CLI surfaces the work will touch in --planned before the developer is dispatched.", {})
+        raise UnclassifiedRoundError("This round classifies nothing: its diff is empty and no planned surface is declared. Name the paths, package sizes or CLI surfaces the work will touch in --planned before the developer is dispatched.", {})
     # A package declared only by its planned size has no path in `changes`, and
     # a candidate missing here reads as one the base already held -- so a
     # planned new package would fire nothing (#415).

@@ -160,7 +160,7 @@ JSON
   if [[ $RC -eq 2 ]] && [[ ! -e "$o6/brief-developer.md" ]] && [[ ! -e "$o6/COMMON.md" ]]; then
     pass; else fail "atomicity: a failed round left files behind (RC=$RC)"; fi
 
-  # 6b. The PACKAGED templates compose from the values Step 7 documents — for
+  # 6b. The PACKAGED templates compose from the values Step 5 documents — for
   #     every shipped role, the release brief included. A template that grows
   #     a placeholder nobody documented fails here before it fails a worker.
   local v6b="$TMP/v6b.json" o6b="$TMP/out6b" PKG

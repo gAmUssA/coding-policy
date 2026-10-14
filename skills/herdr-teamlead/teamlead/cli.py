@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from . import __version__
 from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
-from . import attention, composition, engagement, historical, memory, partition, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
+from . import attention, composition, engagement, historical, memory, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
 from .errors import PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
@@ -66,6 +66,52 @@ EPILOG = (
 def now_iso():
     """The wall clock, read here and nowhere else in the package."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def add_measure_tuning(parser):
+    """The measure flags `measure` and `preflight` share, so both read alike."""
+    parser.add_argument(
+        "--marker-timeout",
+        type=int,
+        default=DEFAULT_MARKER_TIMEOUT_MS,
+        metavar="MS",
+        help="How long to wait for a usage report to appear (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--lines",
+        type=int,
+        default=DEFAULT_READ_LINES,
+        metavar="N",
+        help="Pane lines to read for a usage report (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--marker-poll-attempts",
+        type=int,
+        default=DEFAULT_MARKER_POLL_ATTEMPTS,
+        metavar="N",
+        help="Re-reads of the pane after `pane wait-output` fails to deliver "
+        "the marker (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--allow-recovery",
+        action="store_true",
+        help="Let teamlead clear a composer holding text it did not type. Off by default: the recovery key is ctrl+c on some runtimes, and ctrl+c on an idle Codex exits the process.",
+    )
+    parser.add_argument(
+        "--composer-settle",
+        type=float,
+        default=COMPOSER_SETTLE_SEC,
+        metavar="SECONDS",
+        help="Seconds to let a TUI repaint before re-reading its composer "
+        "(default: %(default)s).",
+    )
+    parser.add_argument(
+        "--marker-poll-interval",
+        type=float,
+        default=DEFAULT_MARKER_POLL_INTERVAL_SEC,
+        metavar="SECONDS",
+        help="Seconds between those re-reads (default: %(default)s).",
+    )
 
 
 def build_parser():
@@ -159,48 +205,8 @@ def build_parser():
         metavar="ISO8601",
         help="Timestamp to stamp the snapshot with (default: the current UTC time).",
     )
-    measure_parser.add_argument(
-        "--marker-timeout",
-        type=int,
-        default=DEFAULT_MARKER_TIMEOUT_MS,
-        metavar="MS",
-        help="How long to wait for a usage report to appear (default: %(default)s).",
-    )
-    measure_parser.add_argument(
-        "--lines",
-        type=int,
-        default=DEFAULT_READ_LINES,
-        metavar="N",
-        help="Pane lines to read for a usage report (default: %(default)s).",
-    )
-    measure_parser.add_argument(
-        "--marker-poll-attempts",
-        type=int,
-        default=DEFAULT_MARKER_POLL_ATTEMPTS,
-        metavar="N",
-        help="Re-reads of the pane after `pane wait-output` fails to deliver "
-        "the marker (default: %(default)s).",
-    )
-    measure_parser.add_argument(
-        "--allow-recovery",
-        action="store_true",
-        help="Let teamlead clear a composer holding text it did not type. Off by default: the recovery key is ctrl+c on some runtimes, and ctrl+c on an idle Codex exits the process.",
-    )
-    measure_parser.add_argument(
-        "--composer-settle",
-        type=float,
-        default=COMPOSER_SETTLE_SEC,
-        metavar="SECONDS",
-        help="Seconds to let a TUI repaint before re-reading its composer "
-        "(default: %(default)s).",
-    )
-    measure_parser.add_argument(
-        "--marker-poll-interval",
-        type=float,
-        default=DEFAULT_MARKER_POLL_INTERVAL_SEC,
-        metavar="SECONDS",
-        help="Seconds between those re-reads (default: %(default)s).",
-    )
+    add_measure_tuning(measure_parser)
+    preflight.register_command(sub, common, add_measure_tuning)
 
     plan_parser = sub.add_parser(
         "plan",
@@ -1311,6 +1317,19 @@ def cmd_retrospective(args, client=None, warn=None, trace=None):
     return retrospective.record(path, data, result["coverage"], at), None
 
 
+def cmd_preflight(args, client=None, warn=None, trace=None):
+    """Gather every pre-planning fact; a stop verdict still exits 0."""
+    preflight.validate(args)
+    load_config(_config_path(args))
+    at = args.now or now_iso()
+    measure_args = SimpleNamespace(**vars(args))
+    measure_args.agents = None
+    measure_args.now = at
+    payload = preflight.run(args, at, lambda: cmd_measure(measure_args, client=client, warn=warn, trace=trace),
+                            _state_path(args), herdr_bin=getattr(args, "herdr_bin", None))
+    return payload, None
+
+
 def cmd_detect_triggers(args, client=None, warn=None, trace=None):
     return triggers.run_command(args)
 
@@ -1355,6 +1374,7 @@ COMMANDS = {
     "status": cmd_status,
     **{command: cmd_recovery for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist")},
     "detect-triggers": cmd_detect_triggers,
+    "preflight": cmd_preflight,
     "validate-partition": cmd_validate_partition,
     "start-judge": cmd_start_judge,
     "probe-report": cmd_probe_report,

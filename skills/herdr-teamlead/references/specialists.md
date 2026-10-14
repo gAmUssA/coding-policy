@@ -90,7 +90,7 @@ an omitted field is not. Classification rules are in
 
 Run it before `plan`, with the roles and requirements that round intends,
 through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
-Step 5. The argument contract:
+Step 3. The argument contract:
 
 ```text
 detect-triggers --repo <dir> --base <ref> [--head <ref>] \
@@ -335,7 +335,7 @@ history retains unknown scope, and architecture work remains a possible
 contribution until assessed against actual output. The owner never infers
 independence from a newer schema stamp. External authors and work without usable
 task provenance still need the lead's explicit exclusions. Follow the planning
-contract in `skills/herdr-teamlead/references/round-setup.md` Step 5 rather than reclassifying history
+contract in `skills/herdr-teamlead/references/round-setup.md` Step 3 rather than reclassifying history
 from a worker's current label.
 
 Keep a useful worker idle after its report when follow-up is likely and capacity
