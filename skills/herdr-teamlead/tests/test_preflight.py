@@ -245,6 +245,12 @@ class SingleStopTest(PreflightCase):
         self.assertIsNone(payload["triggers"])
         self.assertIn("No trigger declaration", payload["stops"][0]["message"])
 
+    def test_a_non_utf8_trigger_declaration_stops(self):
+        (self.repo / ".herdr" / "triggers.json").write_bytes(b"{\"schema_version\": \xff}")
+        code, out, _err = self.run_preflight(self.argv())
+        payload = self.assert_single_stop(code, out, "trigger_declaration", "skills/herdr-teamlead/references/specialists.md")
+        self.assertIn("not UTF-8", payload["stops"][0]["message"])
+
     def test_a_round_that_classifies_nothing_stops(self):
         code, out, _err = self.run_preflight(self.argv(base=False) + ["--base", self.head, "--head", self.head])
         self.assert_single_stop(code, out, "triggers_unclassified", "skills/herdr-teamlead/references/specialists.md")
@@ -309,6 +315,11 @@ class BadArgumentsTest(PreflightCase):
         argv[argv.index("viewer/project")] = "not-a-slug"
         self.assert_refused(argv, "<owner>/<repo>")
 
+    def test_a_slug_with_a_trailing_newline_is_refused_before_any_contact(self):
+        argv = self.argv()
+        argv[argv.index("viewer/project")] = "viewer/project\n"
+        self.assert_refused(argv, "<owner>/<repo>")
+
     def test_head_without_base_is_refused(self):
         self.assert_refused(self.argv(base=False) + ["--head", self.head], "--base")
 
@@ -323,6 +334,11 @@ class BadArgumentsTest(PreflightCase):
     def test_an_unreadable_planned_file_is_refused(self):
         self.assert_refused(self.argv(base=False) + ["--base", self.base, "--planned", str(self.tmp / "absent.json")],
                             "--planned")
+
+    def test_a_non_utf8_planned_file_is_refused(self):
+        planned = self.tmp / "planned.json"
+        planned.write_bytes(b"{\"paths\": [\"\xff\"]}")
+        self.assert_refused(self.argv(base=False) + ["--base", self.base, "--planned", str(planned)], "not UTF-8")
 
     def test_an_unreadable_config_is_refused(self):
         self.config.write_text("{broken", encoding="utf-8")

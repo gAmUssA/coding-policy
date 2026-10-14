@@ -84,7 +84,7 @@ def _json_object(text):
 
 def validate(args):
     """Refuse arguments preflight cannot act on, before any worker contact."""
-    if not SLUG_PATTERN.match(args.slug):
+    if not SLUG_PATTERN.fullmatch(args.slug):
         raise UsageError("--slug {!r} is not an <owner>/<repo> slug; pass the full slug, e.g. gamussa/coding-policy.".format(args.slug), {})
     if not Path(args.repo).is_dir():
         raise UsageError("--repo {} is not a directory; pass the repository checkout holding .herdr/triggers.json.".format(args.repo), {})

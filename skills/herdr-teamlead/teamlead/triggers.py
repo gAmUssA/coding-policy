@@ -101,6 +101,8 @@ def load_declaration(repo):
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise DeclarationError("No trigger declaration at {} ({}); state this repo's package roots and size, trust-boundary paths, CLI spec surface and user-facing docs paths there before composing a round.".format(path, exc.strerror), {}) from None
+    except UnicodeDecodeError:
+        raise DeclarationError("Trigger declaration {} is not UTF-8 text; rewrite it as UTF-8 JSON before composing a round.".format(path), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -176,6 +178,8 @@ def load_plan(path):
         raw = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         raise UsageError("Cannot read planned surfaces at {} ({}); write the plan or omit --planned.".format(path, exc.strerror), {}) from None
+    except UnicodeDecodeError:
+        raise UsageError("Planned surfaces at {} are not UTF-8 text; rewrite the plan as UTF-8 JSON or omit --planned.".format(path), {}) from None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
