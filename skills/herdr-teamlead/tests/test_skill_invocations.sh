@@ -136,6 +136,12 @@ check_invocations() { # <skill-name> <skill-file>
         print FNR ": inline evaluation is forbidden: " $0
       if (row > 1) {
         rest = $0
+        # A backslash escape can hide an operator from the quote stripping
+        # below (`\" | cmd \"` is a pipeline to bash). Only the trailing
+        # line continuation is documentation syntax.
+        sub(/[[:space:]]*\\$/, "", rest)
+        if (index(rest, "\\"))
+          print FNR ": backslash escape after the script path: " $0
         gsub(/"[^"]*"/, "", rest)
         gsub(/\047[^\047]*\047/, "", rest)
         do { prev = rest; gsub(/<[^<>[:space:]]+>/, "", rest) } while (rest != prev)
@@ -258,6 +264,8 @@ check_install_shapes() { # <skill-file>
     "$original_resolver"$'\n'"$invocation"' &' \
     "$original_resolver"$'\n'"$invocation"' ; other-command' \
     "$original_resolver"$'\n'"$invocation"' "quoted arg" | other-command' \
+    "$original_resolver"$'\n'"$invocation"' \" | other-command \"' \
+    "$original_resolver"$'\n'"$invocation"" \\' | other-command \\'" \
     "$original_resolver"$'\n'"$invocation"$' \\\n  --flag value | other-command' \
     "$original_resolver"$'\n'"$invocation"$' \\\n  [--state <state-file>] > out.txt' \
     "$original_resolver"$'\n'"$invocation"$' \\\n  [--state <state-file> > out.txt]'; do
