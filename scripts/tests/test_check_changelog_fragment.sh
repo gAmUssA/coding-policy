@@ -141,6 +141,12 @@ main() {
   if [[ $RC -eq 1 ]] && grep -q "adds version heading '## 0.8.6 — 2026-10-15'" <<<"$ERR"; then pass
   else fail "changelog heading: RC=$RC ERR=$ERR"; fi
 
+  # 8b. .tesslignore-only change -> fail without a fragment: it changes the artifact
+  repo "$TMP/8b"; printf 'docs/\n' >> "$TMP/8b/.tesslignore"; commit "$TMP/8b"
+  run "$TMP/8b"
+  if [[ $RC -eq 1 ]] && grep -q 'shipped content changed (.tesslignore)' <<<"$ERR"; then pass
+  else fail "tesslignore change: RC=$RC ERR=$ERR"; fi
+
   # 9. docs/ + scripts/ only -> ok without a fragment
   repo "$TMP/9"; printf 'more\n' >> "$TMP/9/docs/a.md"; printf 'echo bye\n' >> "$TMP/9/scripts/a.sh"; commit "$TMP/9"
   run "$TMP/9"

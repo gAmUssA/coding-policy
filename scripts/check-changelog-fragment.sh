@@ -44,9 +44,9 @@
 set -euo pipefail
 
 # Paths whose change alters the published plugin (rules/context-artifacts.md
-# Versioning and CHANGELOG). Prefix match. .tesslignore keeps the rest out of
-# the published artifact.
-SHIPPED_PREFIXES=(rules/ skills/ hooks/ .tessl-plugin/ .codex-plugin/)
+# Versioning and CHANGELOG). Prefix match. .tesslignore decides what the
+# published artifact holds, so a change to it ships too.
+SHIPPED_PREFIXES=(rules/ skills/ hooks/ .tessl-plugin/ .codex-plugin/ .tesslignore)
 # .tesslignore patterns inside shipped trees that are still not published.
 UNSHIPPED_SUFFIXES=(.bak .tmp)
 MANIFESTS=(.tessl-plugin/plugin.json .codex-plugin/plugin.json)

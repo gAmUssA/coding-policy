@@ -56,7 +56,7 @@ When you add, remove, or rename a rule, skill, or hook, update **all** of these:
 
 ## Versioning and CHANGELOG
 
-- Every PR that changes shipped content (`rules/`, `skills/`, `hooks/`, `.tessl-plugin/`, `.codex-plugin/`) adds a fragment `changelog.d/<name>.md`
+- Every PR that changes shipped content (`rules/`, `skills/`, `hooks/`, `.tessl-plugin/`, `.codex-plugin/`, `.tesslignore`) adds a fragment `changelog.d/<name>.md`
 - A fragment's front matter holds only `bump`: `patch` by default, `minor` for a new rule/skill/hook or a process change, `major` for a removed or renamed one
 - A fragment's body is one or more `### <Section>` headings, each with `- ` bullets; the format is `changelog.d/README.md`
 - A PR never edits a manifest `version` and never adds a `## <version>` heading to `CHANGELOG.md`

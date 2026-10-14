@@ -37,6 +37,10 @@ main() {
   command -v jq >/dev/null 2>&1 \
     || { echo "error: jq is not installed; install with 'brew install jq' (macOS) or 'apt install jq' (Debian/Ubuntu) and re-run" >&2; return 2; }
 
+  # Clear the index first: a path staged before this script ran must not ride
+  # into the release commit. Working-tree edits are kept.
+  git reset -q \
+    || { echo "error: git reset of the index failed" >&2; return 2; }
   git add -A -- "${RELEASE_PATHS[@]}" \
     || { echo "error: git add of the release files failed" >&2; return 2; }
   if git diff --cached --quiet; then

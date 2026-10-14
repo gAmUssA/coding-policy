@@ -188,6 +188,11 @@ main() {
   # Collect and validate fragments before any read of the registry or write.
   local frags=() entry base_name
   if [[ -d "$FRAGMENT_DIR" ]]; then
+    # A checked substitution, not a process substitution: a failed scan must
+    # stop the release, never read as "no fragments".
+    local listing
+    listing=$(find "$FRAGMENT_DIR" -mindepth 1 -maxdepth 1 | LC_ALL=C sort) \
+      || { echo "error: cannot list ${FRAGMENT_DIR}/ — check the checkout's permissions and re-run the publish workflow; nothing was written" >&2; return 2; }
     while IFS= read -r entry; do
       [[ -n "$entry" ]] || continue
       base_name="${entry#"$FRAGMENT_DIR"/}"
@@ -197,7 +202,7 @@ main() {
         return 1
       fi
       frags+=("$entry")
-    done < <(find "$FRAGMENT_DIR" -mindepth 1 -maxdepth 1 | LC_ALL=C sort)
+    done <<< "$listing"
   fi
 
   local top=0 bump="" rank
@@ -210,13 +215,17 @@ main() {
     if (( rank > top )); then top=$rank; bump="$FRAGMENT_BUMP"; fi
   done
 
-  if [[ -z "$registry_cmd" ]]; then
-    [[ "$name" == */* ]] \
-      || { echo "error: manifest name '${name}' is not <workspace>/<plugin>; pass --registry-cmd or fix the name" >&2; return 2; }
-    registry_cmd="bash '${REPO_ROOT}/skills/release/registry-version.sh' '${name%%/*}' '${name#*/}'"
-  fi
   local rjson rc=0 rversion
-  rjson=$(bash -c "$registry_cmd") || rc=$?
+  if [[ -n "$registry_cmd" ]]; then
+    # Test-only override; the publish workflow never passes it.
+    rjson=$(bash -c "$registry_cmd") || rc=$?
+  else
+    # The name comes from a PR-editable manifest: hold it to the registry's
+    # name grammar and pass it as argv, never through a shell string.
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+      || { echo "error: manifest name '${name}' is not <workspace>/<plugin> (letters, digits, '.', '_', '-'); fix .tessl-plugin/plugin.json 'name'" >&2; return 2; }
+    rjson=$(bash "${REPO_ROOT}/skills/release/registry-version.sh" "${name%%/*}" "${name#*/}") || rc=$?
+  fi
   if (( rc != 0 )) || [[ -z "$rjson" ]]; then
     echo "error: registry lookup failed (exit ${rc}) — check 'tessl' auth/connectivity and re-run" >&2
     return 2

@@ -83,6 +83,14 @@ main() {
     && jq -e --arg c "$(git -C "$TMP/1/origin.git" rev-parse main)" '.pushed and .retried == false and .commit == $c' <<<"$OUT" >/dev/null 2>&1; then pass
   else fail "clean push: RC=$RC OUT=$OUT ERR=$ERR files=$files"; fi
 
+  # 1b. a stray path staged before the run stays out of the release commit
+  setup "$TMP/1b"; assemble "$TMP/1b/work"
+  printf 'staged stray\n' > "$TMP/1b/work/STRAY.md"; git -C "$TMP/1b/work" add STRAY.md || { echo "fatal: stage stray" >&2; exit 2; }
+  run "$TMP/1b" 0.8.6
+  files=$(git -C "$TMP/1b/origin.git" show --name-only --format= main | LC_ALL=C sort | tr '\n' ' ')
+  if [[ $RC -eq 0 && "$files" == ".codex-plugin/plugin.json .tessl-plugin/plugin.json CHANGELOG.md changelog.d/a.md " && -f "$TMP/1b/work/STRAY.md" ]]; then pass
+  else fail "pre-staged stray: RC=$RC files=$files ERR=$ERR"; fi
+
   # 2. non-fast-forward -> rebase once, push
   setup "$TMP/2"; other_merge "$TMP/2" changelog.d/b.md $'---\nbump: minor\n---\n### Added\n\n- b\n'; assemble "$TMP/2/work"
   run "$TMP/2" 0.8.6

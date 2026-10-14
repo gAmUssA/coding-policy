@@ -160,6 +160,29 @@ main() {
   if [[ $RC -eq 2 && -z "$OUT" && "$before" == "$after" ]]; then pass
   else fail "registry fail: RC=$RC OUT=$OUT"; fi
 
+  # 11b. a manifest name built to break out of a shell string is refused before
+  #      any registry call, and nothing it carries runs
+  tree "$TMP/11b"; frag "$TMP/11b" fix.md patch $'### Fixed\n\n- x\n'
+  jq --arg n "gamussa/x'; touch $TMP/PWNED; echo '" '.name = $n' "$TMP/11b/.tessl-plugin/plugin.json" > "$TMP/11b.json" \
+    && mv "$TMP/11b.json" "$TMP/11b/.tessl-plugin/plugin.json" || { echo "fatal: name fixture" >&2; exit 2; }
+  before=$(snapshot "$TMP/11b")
+  OUT="$(bash "$SCRIPT" --root "$TMP/11b" --date 2026-10-15 2>"$TMP/11b.err")"; RC=$?; ERR="$(cat "$TMP/11b.err")"
+  after=$(snapshot "$TMP/11b")
+  if [[ $RC -eq 2 && -z "$OUT" && ! -e "$TMP/PWNED" && "$before" == "$after" ]] && grep -q "is not <workspace>/<plugin>" <<<"$ERR"; then pass
+  else fail "name injection: RC=$RC OUT=$OUT ERR=$ERR pwned=$([[ -e $TMP/PWNED ]] && echo yes || echo no)"; fi
+
+  # 11c. an unreadable changelog.d stops the release instead of reading as empty
+  if (( EUID != 0 )); then
+    tree "$TMP/11c"; frag "$TMP/11c" fix.md patch $'### Fixed\n\n- x\n'
+    chmod 000 "$TMP/11c/changelog.d" || { echo "fatal: chmod" >&2; exit 2; }
+    run "$TMP/11c" 0.8.5
+    chmod 755 "$TMP/11c/changelog.d" || { echo "fatal: chmod back" >&2; exit 2; }
+    if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "cannot list changelog.d/" <<<"$ERR" && [[ "$(versions "$TMP/11c")" == "0.8.5 0.8.5" ]]; then pass
+    else fail "unreadable fragments: RC=$RC OUT=$OUT ERR=$ERR"; fi
+  else
+    pass  # root reads a mode-000 directory; the permission case cannot arise
+  fi
+
   # 12. CHANGELOG with no `## ` heading -> appended after the preamble
   tree "$TMP/12"; printf '# Changelog\n\nPreamble line.\n' > "$TMP/12/CHANGELOG.md"; frag "$TMP/12" a.md patch $'### Fixed\n\n- a\n'
   run "$TMP/12" null
