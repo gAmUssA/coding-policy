@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.1 — 2026-10-14
+
+### Changed
+
+- **Documented Python test commands run through uv, and the Herdr invocation guard rejects shell operators** (#16). The release skill and the Codex setup guide now run the suites through the documented `uv run --no-project --no-python-downloads --python '>=3.11'` command instead of ambient Python. The invocation validator in `skills/herdr-teamlead/tests/test_skill_invocations.sh` now rejects a pipe, a redirection, a background `&` or a `;` after an accepted script path. Quoted arguments, `<placeholder>` tokens and `[a | b]` alternatives are still accepted. Fifteen reject and five accept fixture cases cover both directions without running their payloads, and with the old guard 26 of them fail. README now records the remaining migration order. The CI workflows move to uv first, in a CI-scoped PR that installs a pinned uv. `teamlead.sh` and `prune-worktrees.sh` follow, because the unit suites call both scripts and CI does not install uv yet. ADR 0001's status is normalized to the literal `accepted`.
+
 ## 0.8.0 — 2026-10-14
 
 ### Changed

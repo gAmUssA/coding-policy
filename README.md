@@ -101,6 +101,9 @@ tessl plugin lint                 # manifest and structure
 
 The direct-Python exception covers `hooks/hooks.json` invoking `hooks/codex-session-start.py` and `hooks/herdr-supervision-stop.sh` invoking `teamlead.supervision_hook`. These standard-library-only runtime hooks run in consumer sessions before developer tooling is available. They use an existing Python 3.11+ interpreter; hook execution must not install tools or download Python.
 
-Remaining entry-point migration: `.github/workflows/tests.yml`, `.github/workflows/publish.yml`, `skills/herdr-teamlead/teamlead.sh`, and `skills/herdr-teamlead/prune-worktrees.sh`. Migrate each when its execution path is next changed, under `rules/dependency-management.md` Python Execution.
+Remaining entry-point migration, under `rules/dependency-management.md` Python Execution:
+
+- `.github/workflows/tests.yml` and `.github/workflows/publish.yml` run `bash scripts/run-tests.sh` without installing `uv`; migrate them first, in a CI-scoped PR that installs a pinned `uv` and runs the documented `uv run` command
+- `skills/herdr-teamlead/teamlead.sh` and `skills/herdr-teamlead/prune-worktrees.sh` launch `python3` directly; migrate them after the workflow migration lands
 
 Every PR that changes shipped content bumps `version` in `.tessl-plugin/plugin.json` and adds a `## <version> — <date>` heading to `CHANGELOG.md`; `scripts/check-version-bump.sh` enforces it in CI. Merging to `main` publishes that version.

@@ -18,7 +18,7 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 ## Step 1 — Verify Readiness
 
 - Confirm you are on a feature branch (not `main`/`master`)
-- Run the test suite — all tests must pass (`bash scripts/run-tests.sh` in this plugin repo; the project's own runner elsewhere)
+- Run the test suite — all tests must pass (`uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh` in this plugin repo; the project's own runner elsewhere)
 - Run the linter and the language-diagnostics gate — zero findings (`bash scripts/run-diagnostics.sh` here; the project's `tsc --noEmit` / `./gradlew check` / `swiftlint` / `ruff` + `pyright` elsewhere, per `rules/language-diagnostics.md`)
 - Self-audit the diff against every rule whose domain covers the touched paths — the policy reviewer is a backstop, not the first read
 - `bash -n <script>` must exit 0 on every changed shell script, and its own test suite must pass

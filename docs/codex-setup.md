@@ -35,9 +35,9 @@ Start a new thread after reinstalling. Review changed hook definitions with `/ho
 Run from the repository root:
 
 ```sh
-python3 hooks/tests/test_codex_session_start.py
+uv run --no-project --no-python-downloads --python '>=3.11' python hooks/tests/test_codex_session_start.py
 bash scripts/run-diagnostics.sh
-bash scripts/run-tests.sh
+uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 codex plugin list --marketplace personal --json
 ```
 

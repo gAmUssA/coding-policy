@@ -14,6 +14,10 @@
 #    plugin root differs between a project-local and a global install, so each
 #    block carries its own resolver — an agent's shell state does not survive
 #    between tool calls.
+#    After the script path, a pipe, redirection, background `&`, or `;` is
+#    rejected. Quoted strings, `<word>` placeholders with no whitespace, and
+#    `[a | b]` bracketed alternatives are documentation syntax and are
+#    stripped before the operator scan.
 #
 # Mode-gate conventions, checked against MODE_GATE_SKILL only:
 # 4. The first step gates on HERDR_ENV before any script, and the gate turns a
@@ -130,6 +134,17 @@ check_invocations() { # <skill-name> <skill-file>
         print FNR ": expected script arguments only: " $0
       if (row > 1 && (index($0, "$(") || index($0, "`") || index($0, ";") || index($0, "&&") || index($0, "||")))
         print FNR ": inline evaluation is forbidden: " $0
+      if (row > 1) {
+        rest = $0
+        gsub(/"[^"]*"/, "", rest)
+        gsub(/\047[^\047]*\047/, "", rest)
+        do { prev = rest; gsub(/<[^<>[:space:]]+>/, "", rest) } while (rest != prev)
+        if (rest ~ /[&;<>]/)
+          print FNR ": redirection or background operator after the script path: " $0
+        do { prev = rest; gsub(/\[[^][]*\]/, "", rest) } while (rest != prev)
+        if (index(rest, "|"))
+          print FNR ": pipe after the script path: " $0
+      }
     }
   ' "$skill")" || rc=$?
   if (( rc != 0 )); then
@@ -230,14 +245,48 @@ check_install_shapes() { # <skill-file>
     "$original_resolver"$'\npython3 "$CP/skills/herdr-standup/standup-render.py"' \
     "$original_resolver"$'\nuv run --no-project --python ">=3.11" python "$CP/skills/herdr-standup/standup-render.py"' \
     "$original_resolver"$'\nuv run --no-project --no-python-downloads --python ">=3.11" python $CP/skills/herdr-standup/standup-render.py' \
-    "$original_resolver"$'\n'"$invocation"$'\n  eval unsafe'; do
+    "$original_resolver"$'\n'"$invocation"$'\n  eval unsafe' \
+    "$original_resolver"$'\n'"$invocation"' | other-command' \
+    "$original_resolver"$'\n'"$invocation"'|other-command' \
+    "$original_resolver"$'\nuv run --no-project --no-python-downloads --python ">=3.11" python "$CP/skills/herdr-standup/standup-render.py" | other-command' \
+    "$original_resolver"$'\n'"$invocation"' > out.txt' \
+    "$original_resolver"$'\n'"$invocation"' >out.txt' \
+    "$original_resolver"$'\n'"$invocation"' >> out.txt' \
+    "$original_resolver"$'\n'"$invocation"' < in.txt' \
+    "$original_resolver"$'\n'"$invocation"' 2> err.txt' \
+    "$original_resolver"$'\n'"$invocation"' 2>&1' \
+    "$original_resolver"$'\n'"$invocation"' &' \
+    "$original_resolver"$'\n'"$invocation"' ; other-command' \
+    "$original_resolver"$'\n'"$invocation"' "quoted arg" | other-command' \
+    "$original_resolver"$'\n'"$invocation"$' \\\n  --flag value | other-command' \
+    "$original_resolver"$'\n'"$invocation"$' \\\n  [--state <state-file>] > out.txt' \
+    "$original_resolver"$'\n'"$invocation"$' \\\n  [--state <state-file> > out.txt]'; do
     # shellcheck disable=SC2016 # Backticks delimit Markdown, not shell commands.
     printf '```bash\n%s\n%s\n```\n```bash\n%s\n```\n' "$original_resolver" "$invocation" "$bad_block" > "$fixture/invalid.md" || die "cannot write invalid bootstrap fixture"
     if bash -c 'source "$1"; check_invocations invalid "$2"; (( FAIL > 0 ))' \
       bash "${BASH_SOURCE[0]}" "$fixture/invalid.md" > "$fixture/guard.log" 2>&1; then
       pass
     else
-      fail "bootstrap guard accepted a nonconforming command block"
+      fail "bootstrap guard accepted a nonconforming command block: ${bad_block##*$'\n'}"
+    fi
+  done
+  # Placeholders, bracketed alternatives, and quoted arguments may carry
+  # operator characters; the guard must keep accepting them.
+  local good_block
+  for good_block in \
+    "$original_resolver"$'\n'"$invocation"' --judge-mode <adjudication|diagnosis> --pane <pane>' \
+    "$original_resolver"$'\n'"$invocation"$' \\\n  [--retain-context | --retain-specialist | --no-clear] [claude|codex|grok]' \
+    "$original_resolver"$'\n'"$invocation"$' \\\n  [--exclude <role>=<agent>[,<agent>...]]... \\\n  <round-reports-dir>/review-<base7>..<head7>.diff' \
+    "$original_resolver"$'\n'"$invocation"' "quoted | literal > text"' \
+    "$original_resolver"$'\nuv run --no-project --no-python-downloads --python ">=3.11" python "$CP/skills/herdr-standup/standup-render.py" \\\n  --team "<label>" \\\n  [--roles <roles-json>]'; do
+    # shellcheck disable=SC2016 # Backticks delimit Markdown, not shell commands.
+    printf '```bash\n%s\n%s\n```\n```bash\n%s\n```\n' "$original_resolver" "$invocation" "$good_block" > "$fixture/valid.md" || die "cannot write valid bootstrap fixture"
+    if bash -c 'source "$1"; check_invocations valid "$2"; (( FAIL == 0 ))' \
+      bash "${BASH_SOURCE[0]}" "$fixture/valid.md" > "$fixture/guard.log" 2>&1; then
+      pass
+    else
+      fail "bootstrap guard rejected a conforming command block: ${good_block##*$'\n'}"
+      cat "$fixture/guard.log" >&2
     fi
   done
   cleanup
