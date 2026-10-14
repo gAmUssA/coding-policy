@@ -15,9 +15,14 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, TypeGuard, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK_TIMEOUT_SECONDS = 45
+
+
+def is_json_object(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict)
 
 
 def emit_context(context: str) -> None:
@@ -55,7 +60,7 @@ def bundled_path(name: str) -> Path:
     return path
 
 
-def policy_context(manifest: dict) -> str:
+def policy_context(manifest: dict[str, Any]) -> str:
     lines = [
         f"gamussa/coding-policy {manifest['version']} is installed at {ROOT}.",
         "Read the always-on rules listed below before repository work; apply conditional rules when their frontmatter scope matches the task. Preserve the scope and exceptions written in each rule.",
@@ -68,7 +73,7 @@ def policy_context(manifest: dict) -> str:
     return "\n".join(lines)
 
 
-def run_hook(command: list[str], event_text: str) -> subprocess.CompletedProcess:
+def run_hook(command: list[str], event_text: str) -> subprocess.CompletedProcess[str]:
     if os.name != "posix":
         raise ValueError("hook process groups require macOS, Linux, or WSL")
     with subprocess.Popen(
@@ -99,7 +104,7 @@ def main() -> int:
     try:
         event_text = sys.stdin.read()
         event = json.loads(event_text)
-        if not isinstance(event, dict):
+        if not is_json_object(event):
             raise ValueError("hook input must be a JSON object")
         if event.get("hook_event_name") != "SessionStart":
             return 0
@@ -130,13 +135,14 @@ def main() -> int:
             return result.returncode if result.returncode > 0 else 1
         if result.stdout.strip():
             output = json.loads(result.stdout)
-            if not isinstance(output, dict) or not isinstance(
+            if not is_json_object(output) or not isinstance(
                 output.get("additionalContext"), str
             ):
                 raise ValueError(
                     "SessionStart hook did not return additionalContext text"
                 )
-            emit_context(output["additionalContext"])
+            # The isinstance check above proved the value is text.
+            emit_context(cast(str, output["additionalContext"]))
         return 0
     except (
         OSError,

@@ -9,6 +9,11 @@
     "**/__pycache__"
   ],
   "typeCheckingMode": "standard",
+  "strict": [
+    "hooks",
+    "scripts",
+    "skills/herdr-standup"
+  ],
   "pythonVersion": "3.11",
   "executionEnvironments": [
     {
