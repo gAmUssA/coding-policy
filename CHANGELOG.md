@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.13 — 2026-10-13
+
+### Fixed
+
+- **Codex SessionStart hooks now run on forked threads** (#9). Codex emits a fifth SessionStart source, `fork` (`SessionStartSource::Fork` in `codex-rs/hooks/src/events/session_start.rs`, also present at the `rust-v0.160.0` tag). The native `hooks/hooks.json` matcher listed only `startup|resume|clear|compact`. Codex treats a pattern made only of letters, digits, `_` and `|` as an exact-match list, so a forked thread skipped the policy loader and all five translated lifecycle checks. The matcher now includes `fork`. A regression test in `hooks/tests/test_codex_session_start.py` copies Codex's `HookMatcher` rules and checks that every source Codex emits runs every registered SessionStart handler. With the old matcher the test fails on `source='fork'`.
+
 ## 0.7.12 — 2026-10-13
 
 ### Fixed
