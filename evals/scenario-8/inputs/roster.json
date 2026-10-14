@@ -1,0 +1,27 @@
+{
+  "caller": {
+    "name": "lead",
+    "pane_id": "lead-pane-0",
+    "kind": "claude"
+  },
+  "agents": [
+    {
+      "name": "alice",
+      "kind": "claude",
+      "pane_id": "worker-pane-1",
+      "state": "idle"
+    },
+    {
+      "name": "bob",
+      "kind": "claude",
+      "pane_id": "worker-pane-2",
+      "state": "working"
+    },
+    {
+      "name": "charlie",
+      "kind": "claude",
+      "pane_id": "worker-pane-3",
+      "state": "blocked"
+    }
+  ]
+}

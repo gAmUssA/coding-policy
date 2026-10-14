@@ -1,0 +1,1 @@
+{ "description": "HERDR_ENV routing and CP resolver pattern", "include": ["./inputs"] }

@@ -1,0 +1,66 @@
+{
+  "context": "Tests whether the agent correctly sequences the pre-merge housekeeping (dismiss stale reviews and capture registry baseline) before the merge command, uses the exact merge flags, cleans up local branches, watches CI without --exit-status, and verifies publication with the provided helper scripts.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Dismiss before merge",
+      "description": "merge-plan.sh calls `skills/release/dismiss-stale-reviews.sh` with owner, repo, and PR number BEFORE the `gh pr merge` line",
+      "max_score": 15
+    },
+    {
+      "name": "Correct dismiss args",
+      "description": "dismiss-stale-reviews.sh is called with the exact values from pr-state.json: `gamussa my-tessl-plugin 47`",
+      "max_score": 8
+    },
+    {
+      "name": "Capture baseline before merge",
+      "description": "merge-plan.sh captures the registry baseline with `skills/release/capture-registry-baseline.sh` BEFORE the `gh pr merge` line",
+      "max_score": 15
+    },
+    {
+      "name": "Correct baseline args",
+      "description": "capture-registry-baseline.sh is called with workspace `gamussa` and plugin `my-tessl-plugin` (values from pr-state.json), and the result is stored in a variable (e.g. PRE=...)",
+      "max_score": 7
+    },
+    {
+      "name": "Merge flags",
+      "description": "The merge command is `gh pr merge 47 --merge --delete-branch` (PR number 47, --merge flag, --delete-branch flag)",
+      "max_score": 10
+    },
+    {
+      "name": "Post-merge checkout and pull",
+      "description": "merge-plan.sh contains `git checkout main && git pull --ff-only` after the merge command",
+      "max_score": 8
+    },
+    {
+      "name": "Delete local branch",
+      "description": "merge-plan.sh contains `git branch -d feat/add-validation-hook` after the checkout/pull step",
+      "max_score": 5
+    },
+    {
+      "name": "Prune remote refs",
+      "description": "merge-plan.sh contains `git remote prune origin` after the branch delete",
+      "max_score": 5
+    },
+    {
+      "name": "Resolve publish run",
+      "description": "merge-plan.sh uses `skills/release/resolve-publish-run.sh` to get the Tessl publish workflow run ID after merge",
+      "max_score": 8
+    },
+    {
+      "name": "Watch without --exit-status",
+      "description": "The `gh run watch` call in merge-plan.sh does NOT include the `--exit-status` flag",
+      "max_score": 7
+    },
+    {
+      "name": "Verify publish landed",
+      "description": "merge-plan.sh calls `skills/release/verify-publish-landed.sh` with workspace, plugin, and the PRE variable",
+      "max_score": 8
+    },
+    {
+      "name": "Verify moderation cleared",
+      "description": "merge-plan.sh calls `skills/release/verify-moderation-cleared.sh` after verifying the publish landed",
+      "max_score": 4
+    }
+  ]
+}

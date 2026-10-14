@@ -1,0 +1,44 @@
+.
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       ├── release.yml
+│       └── lint.yml
+├── cli/
+│   ├── __init__.py
+│   ├── main.py
+│   └── commands/
+│       ├── __init__.py
+│       ├── deploy.py
+│       └── rollback.py
+├── plugins/
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   ├── plugin.py
+│   │   └── tests/
+│   │       └── test_auth.py
+│   ├── storage/
+│   │   ├── __init__.py
+│   │   ├── plugin.py
+│   │   └── tests/
+│   │       └── test_storage.py
+│   └── notifications/
+│       ├── __init__.py
+│       ├── plugin.py
+│       └── tests/
+│           └── test_notifications.py
+├── scripts/
+│   ├── bootstrap.sh
+│   ├── run-tests.sh
+│   └── run-diagnostics.sh
+├── docs/
+│   ├── getting-started.md
+│   ├── configuration.md
+│   └── api/
+│       ├── overview.md
+│       └── reference.md
+├── tests/
+│   └── integration/
+│       └── test_end_to_end.py
+├── pyproject.toml
+└── README.md

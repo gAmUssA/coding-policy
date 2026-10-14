@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent correctly performs shell script readiness checks by running `bash -n` on each script, accurately identifies passing and failing scripts, captures the exact error, blocks progress on failures as required by the release process, and processes all scripts rather than stopping early.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "bash -n used",
+      "description": "The agent used `bash -n` (or equivalent shell syntax-check flag) as the validation tool — visible via a script that logs commands, shell invocations referenced in readiness-report.md, or a helper script left in the working directory",
+      "max_score": 15
+    },
+    {
+      "name": "Failing script identified",
+      "description": "readiness-report.md identifies `rotate-keys.sh` as the script that fails the syntax check",
+      "max_score": 10
+    },
+    {
+      "name": "deploy.sh passes",
+      "description": "readiness-report.md reports `deploy.sh` as passing the syntax check",
+      "max_score": 8
+    },
+    {
+      "name": "backup.sh passes",
+      "description": "readiness-report.md reports `backup.sh` as passing the syntax check",
+      "max_score": 8
+    },
+    {
+      "name": "Error message captured",
+      "description": "readiness-report.md includes the actual error message or description produced by the syntax check for `rotate-keys.sh` (references missing `fi`, 'unexpected end of file', or the failing line number)",
+      "max_score": 12
+    },
+    {
+      "name": "Fix-before-proceeding gate",
+      "description": "readiness-report.md explicitly states that the failing script(s) must be fixed before the PR can be created or before proceeding",
+      "max_score": 12
+    },
+    {
+      "name": "Overall status stated",
+      "description": "readiness-report.md contains a clear overall status indicating the branch is NOT ready to proceed (e.g. 'not ready', 'blocked', 'fails readiness check', or similar)",
+      "max_score": 8
+    },
+    {
+      "name": "All scripts checked",
+      "description": "readiness-report.md covers all three shell scripts in the inputs/ directory — none are silently skipped",
+      "max_score": 9
+    },
+    {
+      "name": "No leakage of solution",
+      "description": "readiness-report.md does NOT preemptively fix or rewrite rotate-keys.sh — it reports the problem only; fixing is stated as a prerequisite, not done by the reporter",
+      "max_score": 9
+    },
+    {
+      "name": "Report is a file",
+      "description": "A file named exactly `readiness-report.md` exists in the working directory (not a subdirectory)",
+      "max_score": 9
+    }
+  ]
+}

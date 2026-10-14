@@ -1,0 +1,51 @@
+{
+  "context": "Tests whether the agent produces a correctly-formatted PR draft following the release skill conventions: a conventional-commit title, a three-section body (Change / Verification / Policy and risks), and the absence of AI attribution trailers in the PR body.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Title type prefix",
+      "description": "The PR title contains a type prefix followed by scope in parentheses, e.g. 'feat(utils): ...' — matches the pattern `<type>(<scope>): <summary>`",
+      "max_score": 15
+    },
+    {
+      "name": "Title imperative summary",
+      "description": "The summary part of the title is in the imperative mood (starts with a verb such as 'add', 'fix', 'update') rather than past tense or noun phrase",
+      "max_score": 10
+    },
+    {
+      "name": "Change section present",
+      "description": "The PR body contains a `## Change` section heading",
+      "max_score": 10
+    },
+    {
+      "name": "Verification section present",
+      "description": "The PR body contains a `## Verification` section heading",
+      "max_score": 10
+    },
+    {
+      "name": "Policy and risks section present",
+      "description": "The PR body contains a `## Policy and risks` section heading",
+      "max_score": 10
+    },
+    {
+      "name": "Change section content",
+      "description": "The `## Change` section describes the concrete change — references adding the `greet_user` function or equivalent description of the new helper",
+      "max_score": 10
+    },
+    {
+      "name": "No Co-Authored-By trailer",
+      "description": "The PR body does NOT contain a 'Co-Authored-By:' line or 'Co-authored-by:' line",
+      "max_score": 15
+    },
+    {
+      "name": "No Generated-with marker",
+      "description": "The PR body does NOT contain any phrase matching 'Generated with Claude', 'Generated with Claude Code', or similar AI attribution text",
+      "max_score": 15
+    },
+    {
+      "name": "gh pr create command present",
+      "description": "`pr-draft.md` contains the text `gh pr create` as part of a command",
+      "max_score": 5
+    }
+  ]
+}

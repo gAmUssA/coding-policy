@@ -1,0 +1,20 @@
+{
+  "name": "acme/dev-toolkit",
+  "version": "1.4.2",
+  "description": "A developer toolkit plugin providing coding standards, review automation, and workflow utilities for the Acme engineering platform.",
+  "rules": [
+    "rules/commit-conventions.md",
+    "rules/code-formatting.md",
+    "rules/testing-standards.md",
+    "rules/dependency-management.md",
+    "rules/error-handling.md"
+  ],
+  "skills": [
+    "skills/release/SKILL.md",
+    "skills/code-review/SKILL.md"
+  ],
+  "hooks": [
+    "hooks/pre-commit.sh",
+    "hooks/post-merge.sh"
+  ]
+}

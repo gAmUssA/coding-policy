@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent follows skills/herdr-standup/SKILL.md without the task naming its scripts, flags or steps: ask only idle/done workers with standup-ask.sh and wait with standup-wait.sh, fill working/blocked rows from the round log, render with the exact uv run invocation and an explicit --now, relay the block verbatim with jq -r .block, and treat standup-wait.sh exit 5 as a terminal provider refusal.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "uv run prefix",
+      "description": "standup-plan.sh invokes standup-render.py through a command that starts with `uv run --no-project --no-python-downloads --python`. Source: skills/herdr-standup/SKILL.md Step 5",
+      "max_score": 12
+    },
+    {
+      "name": "Python version flag",
+      "description": "That uv run invocation passes `--python \">=3.11\"` (or `--python '>=3.11'`) before the `python` subcommand. Source: skills/herdr-standup/SKILL.md Step 5",
+      "max_score": 8
+    },
+    {
+      "name": "--now flag present",
+      "description": "The standup-render.py call passes `--now` with an ISO-8601 timestamp: a literal, or a value the script computes and passes explicitly (e.g. from `date -u +%Y-%m-%dT%H:%M:%SZ`). Omitting --now, or passing an unset variable, fails. Source: skills/herdr-standup/SKILL.md Step 5 '--now is required and never defaults to the clock'",
+      "max_score": 12
+    },
+    {
+      "name": "jq -r .block for output",
+      "description": "standup-plan.sh saves the renderer's JSON output to a file and prints the block with `jq -r .block <file>`, with no reformatting. Source: skills/herdr-standup/SKILL.md Step 6 'Print block from the saved output verbatim (jq -r .block <file>)'",
+      "max_score": 12
+    },
+    {
+      "name": "Alice asked via standup-ask.sh",
+      "description": "standup-plan.sh calls standup-ask.sh for alice (the idle worker) with an absolute report path, and waits on her with standup-wait.sh. Source: skills/herdr-standup/SKILL.md Steps 2-3",
+      "max_score": 8
+    },
+    {
+      "name": "Bob not asked",
+      "description": "standup-plan.sh does NOT call standup-ask.sh or standup-wait.sh, or send any message, to bob (state `working`). Source: skills/herdr-standup/SKILL.md Step 1 '`working` or `blocked` — never asked'",
+      "max_score": 8
+    },
+    {
+      "name": "Charlie not asked",
+      "description": "standup-plan.sh does NOT call standup-ask.sh or standup-wait.sh, or send any message, to charlie (state `blocked`). Source: skills/herdr-standup/SKILL.md Step 1 '`working` or `blocked` — never asked'",
+      "max_score": 8
+    },
+    {
+      "name": "Round log used for bob/charlie",
+      "description": "bob's and charlie's rows (the --extra JSON) take their done/plan/blocked content from round-log.json — read from it in the script or copied from it — not from a pane read or an invented summary. Source: skills/herdr-standup/SKILL.md Step 4 'Take the content from the round log or the assignment ledger — never from a pane read, and never from a guess'",
+      "max_score": 8
+    },
+    {
+      "name": "Exit 5 — no retry",
+      "description": "NOTES.md states that standup-wait.sh exit 5 means a confirmed provider refusal, that the worker's row is recorded as missing and the operator notified, and that the script does NOT retry, rephrase, switch models/providers, or synthesize an answer. Source: skills/herdr-standup/SKILL.md Step 3 'Exit 5 ... never automatically retry, rephrase, switch models/providers, or synthesize an answer'",
+      "max_score": 12
+    },
+    {
+      "name": "Working/blocked explanation",
+      "description": "NOTES.md explains that bob and charlie are not asked because they are working/blocked (a standup never interrupts a worker), and that their rows come from the round log. Source: skills/herdr-standup/SKILL.md preamble 'A worker that is mid-task keeps working and its row comes from what you already know' and Step 1",
+      "max_score": 12
+    }
+  ]
+}

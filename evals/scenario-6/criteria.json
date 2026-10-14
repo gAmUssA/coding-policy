@@ -1,0 +1,46 @@
+{
+  "context": "Tests whether the agent routes requests the way rules/agent-team-operation.md and skills/herdr-teamlead/SKILL.md Step 1 prescribe, without the task naming the mode signal, the command or the resolver: HERDR_ENV unset or empty means standalone, so a single edit is done directly with no team machinery; a catch-up on waiting attention runs `teamlead.sh catch-up` through the CP resolver, needs no live Herdr, and never fabricates missing history.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Direct execution when unset",
+      "description": "For Request 1, routing-decisions.md describes doing the edit directly — no roster call, brief, provisioning, report file, or simulated worker role. Source: skills/herdr-teamlead/SKILL.md Step 1 'Unset or empty — this skill does not apply ... do the task directly, without roster calls, briefs, provisioning, reports, or simulated worker roles'; rules/agent-team-operation.md 'A standalone agent never simulates the roles, the briefs, or the reports'",
+      "max_score": 15
+    },
+    {
+      "name": "Function actually added",
+      "description": "inputs/utils.py contains a function named `add` that returns `a + b` (or an equivalent addition expression), and the existing functions are intact",
+      "max_score": 15
+    },
+    {
+      "name": "No team artifacts for Request 1",
+      "description": "No Herdr team artifacts were created for Request 1: no brief, task ledger, worker report file, or worktree, and no roster/preflight/plan/apply command was run or proposed for it. Source: rules/agent-team-operation.md 'In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer'",
+      "max_score": 10
+    },
+    {
+      "name": "HERDR_ENV explanation",
+      "description": "routing-decisions.md names HERDR_ENV as the signal checked and states that unset or empty means standalone, so the team skill does not apply to Request 1. Source: rules/agent-team-operation.md 'Read HERDR_ENV to tell the modes apart'; skills/herdr-teamlead/SKILL.md Step 1",
+      "max_score": 10
+    },
+    {
+      "name": "catch-up command named",
+      "description": "routing-decisions.md gives `teamlead.sh catch-up` (with or without `--state <file>`) as the command for Request 2. Source: skills/herdr-teamlead/SKILL.md Step 1 'For catch-up or saved attention ... teamlead.sh catch-up [--state <state-file>]'",
+      "max_score": 15
+    },
+    {
+      "name": "No live Herdr needed",
+      "description": "routing-decisions.md states that the catch-up needs no live Herdr session (works offline from saved state). Source: skills/herdr-teamlead/SKILL.md Step 1 'these commands need no live Herdr' and the description 'saved memory and attention work offline'",
+      "max_score": 10
+    },
+    {
+      "name": "CP resolver pattern present",
+      "description": "The Request 2 command in routing-decisions.md resolves the plugin root with `CP=.tessl/plugins/gamussa/coding-policy; [ -d \"$CP\" ] || CP=\"$HOME/$CP\"` (or a close equivalent with the same local-then-home fallback) and invokes `bash \"$CP/skills/herdr-teamlead/teamlead.sh\" catch-up`. Source: skills/herdr-teamlead/SKILL.md 'Each command resolves CP to the local or home plugin. Repeat its resolver in every call.'",
+      "max_score": 15
+    },
+    {
+      "name": "No fabricated attention items",
+      "description": "routing-decisions.md does not invent pending attention items: it either reports what the catch-up command actually returned (including a non-zero exit and its diagnostic) or states that no saved state was available here. A made-up list of items fails. Source: skills/herdr-teamlead/SKILL.md Step 1 'Non-zero requires reporting its diagnostic; never fabricate missing history.'",
+      "max_score": 10
+    }
+  ]
+}

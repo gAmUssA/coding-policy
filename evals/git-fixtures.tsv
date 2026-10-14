@@ -1,0 +1,3 @@
+# <target-dir>	<head-ref>	<stream-file> — see scripts/eval-fixtures.sh
+evals/scenario-0/inputs/repo	refs/heads/feat/add-greeting	evals/scenario-0/git-fixture.stream
+evals/scenario-2/inputs	refs/heads/feature/add-env-linting-skill	evals/scenario-2/git-fixture.stream

@@ -35,6 +35,7 @@ alwaysApply: true
 - Before handoff, the agent runs the same gate command CI runs and clears every finding, scoped to the changed set only where the gate supports it
 - The Stop hook blocks the handoff on the engine's error and warning tiers only
 - Info and style tiers (shellcheck `info`/`style`) are reported on stderr by the Stop hook, never blocked
+- An info or style note never fails a script in a report or a gate; report it as a note beside the pass
 - The author fixes or inline-suppresses reported notes before the CI gate, which stays at zero
 - CI runs the same gate as the backstop, never the first place a finding surfaces
 
