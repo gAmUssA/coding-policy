@@ -20,7 +20,7 @@ name: Publish Plugin
 #      release commit cannot loop back into this workflow.
 #   5. `tessl plugin publish` only when the manifest version is strictly ahead
 #      of the registry (assemble-release.sh's `publish` field). A merge with no
-#      fragments publishes nothing; re-running a run whose publish failed
+#      fragments assigns no version and publishes nothing new; re-running a run whose publish failed
 #      publishes the already-committed version.
 #
 # The release skill (skills/release/SKILL.md Step 7) resolves this run by the

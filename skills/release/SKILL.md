@@ -60,10 +60,11 @@ Decide the level per semver: patch for fixes and rule tightening, minor for a ne
   - Add `changelog.d/<name>.md` with `bump: <level>` front matter and the `### <Section>` entries (format: `changelog.d/README.md`; `rules/context-artifacts.md` Versioning and CHANGELOG)
   - Never edit a manifest `version` or add a `## <version>` CHANGELOG heading; the publish workflow writes both on merge
   - `bash scripts/check-changelog-fragment.sh origin/main` must exit 0; CI runs the same gate on the PR
-- **Hand bump** — every other publishing repo; nothing assigns the version for it
+- **Hand bump** — the repo carries no `changelog.d/` and its publish workflow publishes the manifest version as-is (`rules/context-artifacts.md` Versioning and CHANGELOG exception); nothing assigns the version for it
   - Write the bump into every channel's manifest in this PR
   - Tessl: set `version` in `.tessl-plugin/plugin.json` and add a `## <version> — <YYYY-MM-DD>` heading above this release's CHANGELOG entries
   - GitHub tag/asset: the manifest version is the tag Step 7 cuts (`v<version>`)
+- **Neither mode matches** — `changelog.d/` without an assembling workflow, or an assembling workflow without `changelog.d/`: stop and report the configuration; never guess a mode
 - Commit and push the entry on the same branch
 
 Proceed immediately to Step 4.
@@ -162,15 +163,16 @@ tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha"
 gh run watch "$tessl_run_id"
 ```
 
-Assign-on-merge repos: read whether that run published, from its `Publish` step:
+Assign-on-merge repos: the run must conclude `success` before anything else is read; any other conclusion is a failed release, reported with the run URL. On `success`, read whether it published, from its `Publish` step:
 
 ```bash
-gh run view "$tessl_run_id" --json jobs --jq '.jobs[].steps[] | select(.name == "Publish") | .conclusion'
+gh run view "$tessl_run_id" --json conclusion,jobs \
+  --jq '[.conclusion, (.jobs[].steps[] | select(.name == "Publish") | .conclusion)] | join(" ")'
 ```
 
-- `skipped` — the merge published nothing: no pending fragment, and the manifest is not ahead of the registry. Report "no publication" and skip the two checks below
-- `success` — run the two checks below
-- anything else — the publication failed; report it with the run URL
+- `success skipped` — the merge published nothing: no pending fragment, and the manifest is not ahead of the registry. Report "no publication" and skip the two checks below
+- `success success` — run the two checks below
+- anything else — a failed release; report it with the run URL
 
 ```bash
 landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$tessl_run_id") \

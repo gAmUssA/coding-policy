@@ -32,7 +32,7 @@ Use changelog fragments with the version assigned on merge.
 
 - PRs touching shipped content merge in any order without rebasing for the version. Several fragments merged before a publish run go out together as one version at the highest requested level.
 - The publish job holds `contents: write` and pushes to `main`. A branch protection rule or ruleset that blocks the workflow's token would break publishing; adding one requires allowing that actor to push first.
-- A merge with no pending fragment publishes nothing and is not a failure. The release skill reports it as no publication.
+- A merge with no pending fragment assigns no version and is not a failure. It publishes only when an already-assigned version never reached the registry. The release skill reads the run's `Publish` step and reports a skipped one as no publication.
 - Recovery is re-running the publish workflow. If the push failed, the fragments are still on `main` and are re-assembled from the new tip. If the publish step failed, the version is already committed and still ahead of the registry, so the re-run publishes it.
 - A version can be skipped. When a committed version never reached the registry and new fragments arrive first, the next assembly bumps past it.
 - When a merge lands between the job's checkout and its push, the rebase keeps both commits. The published artifact then includes that merge's content, while its fragment is assembled into the following version.

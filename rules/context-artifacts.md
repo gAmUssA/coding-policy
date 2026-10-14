@@ -63,7 +63,8 @@ When you add, remove, or rename a rule, skill, or hook, update **all** of these:
 - `scripts/check-changelog-fragment.sh` fails the PR on a missing or malformed fragment, an edited manifest version, or an added version heading
 - `.github/workflows/publish.yml` assigns the version on push to `main`: `scripts/assemble-release.sh` bumps both manifests by the highest pending `bump`, writes the `## <version> — <date>` heading with the merged fragments, and deletes them
 - The workflow commits that result to `main` as `chore(release): <version>` and publishes it
-- A merge with no pending fragment publishes nothing
+- A merge with no pending fragment assigns no new version
+- The workflow publishes only a manifest version ahead of the registry; that re-publishes an already-assigned version whose earlier publish failed
 - Narrow exception for a plugin repo with no assembling publish workflow.
 - Preconditions (all required):
   1. The repo carries no `changelog.d/` directory

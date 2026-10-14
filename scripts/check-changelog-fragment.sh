@@ -35,8 +35,8 @@
 #           "shipped_changed": bool, "shipped_files": [...],
 #           "fragments": [{"path": "...", "bump": "..."}], "errors": [...]}
 #        `fragments` lists the valid fragments the PR adds or modifies; an
-#        empty list means the merge publishes nothing unless another fragment
-#        is already pending on the base.
+#        empty list means the merge assigns no new version unless another
+#        fragment is already pending on the base.
 # Exit:  0 ok; 1 a gate failure (each named on stderr with what to do);
 #        2 on tool/setup error (git or jq missing, unknown ref, no merge base)
 #        with empty stdout.
@@ -244,8 +244,10 @@ main() {
   for m in "${MANIFESTS[@]}"; do
     old=$(manifest_version "$mb" "$m") || return 2
     new=$(manifest_version "$head" "$m") || return 2
-    if [[ -n "$old" && -n "$new" && "$old" != "$new" ]]; then
-      errors+=("${m}: version changed ${old} -> ${new} — revert it to ${old}; the publish workflow assigns the version on merge from the ${FRAGMENT_DIR}/ fragments")
+    # A removed or nulled version reads as empty; it is a change like any
+    # other, and the post-merge assembler would fail on it.
+    if [[ -n "$old" && "$old" != "$new" ]]; then
+      errors+=("${m}: version changed ${old} -> ${new:-<removed>} — restore it to ${old}; the publish workflow assigns the version on merge from the ${FRAGMENT_DIR}/ fragments")
     fi
   done
 

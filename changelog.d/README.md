@@ -33,4 +33,4 @@ bump: patch
 4. The fragments are deleted. This README stays.
 5. The workflow commits the result as `chore(release): <version>`, pushes it to `main` and publishes.
 
-A merge that leaves no fragment here publishes nothing.
+A merge that leaves no fragment here assigns no version; it publishes only a manifest version still ahead of the registry from an earlier failed publish.

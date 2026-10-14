@@ -115,7 +115,7 @@ main() {
   repo "$TMP/6"; printf '%s' "$VALID_FRAGMENT" > "$TMP/6/changelog.d/x.md"
   printf '{\n  "name": "gamussa/coding-policy",\n  "version": "0.8.6"\n}\n' > "$TMP/6/.tessl-plugin/plugin.json"; commit "$TMP/6"
   run "$TMP/6"
-  if [[ $RC -eq 1 ]] && grep -q '.tessl-plugin/plugin.json: version changed 0.8.5 -> 0.8.6 — revert it' <<<"$ERR"; then pass
+  if [[ $RC -eq 1 ]] && grep -q '.tessl-plugin/plugin.json: version changed 0.8.5 -> 0.8.6 — restore it' <<<"$ERR"; then pass
   else fail "tessl version edit: RC=$RC ERR=$ERR"; fi
 
   # 7. codex manifest version edited -> fail
@@ -124,6 +124,15 @@ main() {
   run "$TMP/7"
   if [[ $RC -eq 1 ]] && grep -q '.codex-plugin/plugin.json: version changed' <<<"$ERR"; then pass
   else fail "codex version edit: RC=$RC ERR=$ERR"; fi
+
+  # 7b. manifest version removed or nulled -> fail, not deferred to the assembler
+  repo "$TMP/7b"; printf '%s' "$VALID_FRAGMENT" > "$TMP/7b/changelog.d/x.md"
+  printf '{\n  "name": "gamussa/coding-policy"\n}\n' > "$TMP/7b/.tessl-plugin/plugin.json"
+  printf '{\n  "name": "gamussa-coding-policy",\n  "version": null\n}\n' > "$TMP/7b/.codex-plugin/plugin.json"; commit "$TMP/7b"
+  run "$TMP/7b"
+  if [[ $RC -eq 1 ]] && grep -q '.tessl-plugin/plugin.json: version changed 0.8.5 -> <removed>' <<<"$ERR" \
+     && grep -q '.codex-plugin/plugin.json: version changed .* -> <removed>' <<<"$ERR"; then pass
+  else fail "version removed: RC=$RC ERR=$ERR"; fi
 
   # 8. CHANGELOG version heading added -> fail
   repo "$TMP/8"; printf -- '- two\n' >> "$TMP/8/rules/a.md"; printf '%s' "$VALID_FRAGMENT" > "$TMP/8/changelog.d/x.md"

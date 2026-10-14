@@ -112,4 +112,4 @@ Every PR that changes shipped content adds a changelog fragment, `changelog.d/<n
 bash scripts/check-changelog-fragment.sh origin/main
 ```
 
-On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to assign the version and write the CHANGELOG entry, commits it to `main` as `chore(release): <version>` through `scripts/push-release.sh`, and publishes. A merge with no fragment publishes nothing. Re-running a publish run whose publish step failed publishes the version it already committed. The decision is recorded in [ADR 0003](docs/adr/0003-version-on-merge.md).
+On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to assign the version and write the CHANGELOG entry, commits it to `main` as `chore(release): <version>` through `scripts/push-release.sh`, and publishes. A merge with no fragment assigns no version and publishes only a version whose earlier publish failed. Re-running a publish run whose publish step failed publishes the version it already committed. The decision is recorded in [ADR 0003](docs/adr/0003-version-on-merge.md).
