@@ -33,8 +33,8 @@
       "max_score": 14
     },
     {
-      "name": "Advisory reply literal used",
-      "description": "response-plan.md states the reply text for at least one advisory finding opens with exactly 'Acknowledged \u2014 deferred to <follow-up ref>' (or the literal text 'Acknowledged \u2014 deferred to' followed by a reference placeholder)",
+      "name": "Advisory reply literal matches disposition",
+      "description": "Every advisory thread's planned reply opens with the literal skills/release/SKILL.md Step 6 prescribes for its disposition: 'Acknowledged \u2014 deferred to <follow-up ref>' for a deferred advisory, or 'Fixed in <sha>' for one folded into the blocking round. Score 0 if any advisory reply uses neither literal, or the literal contradicts the disposition the plan states.",
       "max_score": 14
     },
     {

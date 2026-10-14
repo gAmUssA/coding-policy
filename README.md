@@ -120,7 +120,7 @@ On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to 
 
 ```
 bash scripts/eval-fixtures.sh import
-tessl eval run . --model claude-sonnet-5-5
+tessl eval run .   # add --model <id> on a paid Tessl plan
 ```
 
 After changing a fixture's history, run `bash scripts/eval-fixtures.sh export` and remove the fixture's `.git` before staging it, or git records the directory as an empty submodule link.
