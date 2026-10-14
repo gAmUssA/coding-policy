@@ -169,10 +169,10 @@ main() {
   # 12. base advanced after the branch point (a release commit on main) -> the
   #     PR is judged on its own diff from the merge base only
   repo "$TMP/12"; printf 'more\n' >> "$TMP/12/docs/a.md"; commit "$TMP/12"
-  git -C "$TMP/12" checkout -q main
+  git -C "$TMP/12" checkout -q main || { echo "fatal: checkout main in $TMP/12" >&2; exit 2; }
   printf '{\n  "name": "gamussa/coding-policy",\n  "version": "0.9.0"\n}\n' > "$TMP/12/.tessl-plugin/plugin.json"
   printf '# Changelog\n\n## 0.9.0 — 2026-10-15\n\n- x\n' > "$TMP/12/CHANGELOG.md"; commit "$TMP/12"
-  git -C "$TMP/12" checkout -q pr
+  git -C "$TMP/12" checkout -q pr || { echo "fatal: checkout pr in $TMP/12" >&2; exit 2; }
   run "$TMP/12"
   if [[ $RC -eq 0 ]] && jq -e '.ok and .shipped_changed == false' <<<"$OUT" >/dev/null 2>&1; then pass
   else fail "advanced base: RC=$RC OUT=$OUT ERR=$ERR"; fi

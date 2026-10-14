@@ -163,16 +163,15 @@ tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha"
 gh run watch "$tessl_run_id"
 ```
 
-Assign-on-merge repos: the run must conclude `success` before anything else is read; any other conclusion is a failed release, reported with the run URL. On `success`, read whether it published, from its `Publish` step:
+Assign-on-merge repos: classify the run before the two checks below (contract and exit codes in the `skills/release/publish-outcome.sh` header):
 
 ```bash
-gh run view "$tessl_run_id" --json conclusion,jobs \
-  --jq '[.conclusion, (.jobs[].steps[] | select(.name == "Publish") | .conclusion)] | join(" ")'
+outcome=$(skills/release/publish-outcome.sh <owner> <repo> "$tessl_run_id" | jq -r .outcome)
 ```
 
-- `success skipped` — the merge published nothing: no pending fragment, and the manifest is not ahead of the registry. Report "no publication" and skip the two checks below
-- `success success` — run the two checks below
-- anything else — a failed release; report it with the run URL
+- `no_publication` — the merge published nothing; report "no publication" and skip the two checks below
+- `published` — run the two checks below
+- `failed`, `ambiguous`, or a non-zero exit — report it with the run URL; never a release
 
 ```bash
 landed=$(skills/release/verify-publish-landed.sh <workspace> <plugin> "$PRE" "$tessl_run_id") \
