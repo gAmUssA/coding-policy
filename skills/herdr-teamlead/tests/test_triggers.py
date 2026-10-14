@@ -68,6 +68,20 @@ class DeclarationTest(TempCase):
         self.assertIn("No trigger declaration at", caught.exception.message)
         self.assertIn("package roots", caught.exception.message)
 
+    def test_a_refused_declaration_is_typed_and_keeps_the_usage_code(self):
+        # preflight reports a refused declaration as a stop by its type;
+        # detect-triggers still emits the same usage_error code.
+        for payload in (None, {**DECLARATION, "trust_boundary_paths": [""]}):
+            if payload is not None:
+                self.write(payload)
+            with self.assertRaises(triggers.DeclarationError) as caught:
+                triggers.load_declaration(self.tmp)
+            self.assertEqual(caught.exception.to_dict()["error"], "usage_error")
+
+    def test_a_complete_declaration_raises_no_declaration_error(self):
+        self.write(DECLARATION)
+        self.assertEqual(triggers.load_declaration(self.tmp)["schema_version"], 1)
+
     def test_invalid_json_is_refused(self):
         self.path.write_text("{not json")
         with self.assertRaises(UsageError) as caught:
@@ -438,6 +452,11 @@ class PlannedSurfacesTest(TempCase):
         with self.assertRaises(UsageError) as caught:
             triggers.run_command(namespace(repo=self.tmp), runner=self.runner())
         self.assertIn("--planned", caught.exception.message)
+
+    def test_an_unclassified_round_is_typed_and_keeps_the_usage_code(self):
+        with self.assertRaises(triggers.UnclassifiedRoundError) as caught:
+            triggers.run_command(namespace(repo=self.tmp), runner=self.runner())
+        self.assertEqual(caught.exception.to_dict()["error"], "usage_error")
 
     def test_an_empty_plan_classifies_no_more_than_an_absent_one(self):
         # A well-formed but empty plan would otherwise report success with no
