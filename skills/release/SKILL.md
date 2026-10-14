@@ -2,7 +2,8 @@
 name: release
 description: >
   Structured workflow for shipping code via GitHub pull requests: readiness checks,
-  PR creation, version + CHANGELOG bump for plugin repos, dual-lens automated review
+  PR creation, version + CHANGELOG entry (a changelog fragment where the publish
+  workflow assigns the version, a hand bump elsewhere) for publishing repos, dual-lens automated review
   (the Codex policy reviewer for rule compliance + Copilot for correctness), watching
   the PR to a terminal verdict, addressing feedback, merging on green without asking,
   and post-merge cleanup and publish verification. Use when the user wants to open a
@@ -22,7 +23,7 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 - Run the linter and the language-diagnostics gate — zero findings (`bash scripts/run-diagnostics.sh` here; the project's `tsc --noEmit` / `./gradlew check` / `swiftlint` / `ruff` + `pyright` elsewhere, per `rules/language-diagnostics.md`)
 - Self-audit the diff against every rule whose domain covers the touched paths — the policy reviewer is a backstop, not the first read
 - `bash -n <script>` must exit 0 on every changed shell script, and its own test suite must pass
-- Plugin repos only: run `bash scripts/check-version-bump.sh` when shipped content changed (rules, skills, hooks, manifest); a red result means Step 3 is still owed
+- Plugin repos carrying `changelog.d/`: run `bash scripts/check-changelog-fragment.sh origin/main` on the committed branch; a red result means Step 3 is still owed or the branch edits a version it must not
 - If anything fails, fix it before proceeding
 
 ## Step 2 — Create PR
@@ -45,7 +46,7 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 
 Proceed immediately to Step 3.
 
-## Step 3 — Bump Version and CHANGELOG (publishing repos)
+## Step 3 — Record the Release Entry (publishing repos)
 
 Applies to repos that publish a package. Name the channels first, by reading the publish workflow and the manifest; a repo can publish on more than one:
 
@@ -53,13 +54,17 @@ Applies to repos that publish a package. Name the channels first, by reading the
 - **GitHub tag/asset** — a workflow triggered on a tag push (`on: push: tags:`) that creates a release carrying the package's assets
 - **Neither** — proceed immediately to Step 4
 
-Then bump:
+Decide the level per semver: patch for fixes and rule tightening, minor for a new rule/skill/hook or a process change, major for a removed or contract-breaking one. Then record it by the repo's mode:
 
-- Decide the bump per semver: patch for fixes and rule tightening, minor for a new rule/skill/hook, major for a removed or contract-breaking one
-- Write the bump into every channel's manifest in this PR; nothing auto-bumps on either channel
-- Tessl: set `version` in `.tessl-plugin/plugin.json` and add a `## <version> — <YYYY-MM-DD>` heading above this release's CHANGELOG entries (`rules/context-artifacts.md` Versioning and CHANGELOG); `bash scripts/check-version-bump.sh` must exit 0 — CI runs the same gate on the PR, and the publish workflow publishes the manifest version as-is
-- GitHub tag/asset: the manifest version is the tag Step 7 cuts (`v<version>`)
-- Commit and push the bump on the same branch
+- **Assign-on-merge** — the repo carries `changelog.d/` and a publish workflow that assembles it (`scripts/assemble-release.sh`)
+  - Add `changelog.d/<name>.md` with `bump: <level>` front matter and the `### <Section>` entries (format: `changelog.d/README.md`; `rules/context-artifacts.md` Versioning and CHANGELOG)
+  - Never edit a manifest `version` or add a `## <version>` CHANGELOG heading; the publish workflow writes both on merge
+  - `bash scripts/check-changelog-fragment.sh origin/main` must exit 0; CI runs the same gate on the PR
+- **Hand bump** — every other publishing repo; nothing assigns the version for it
+  - Write the bump into every channel's manifest in this PR
+  - Tessl: set `version` in `.tessl-plugin/plugin.json` and add a `## <version> — <YYYY-MM-DD>` heading above this release's CHANGELOG entries
+  - GitHub tag/asset: the manifest version is the tag Step 7 cuts (`v<version>`)
+- Commit and push the entry on the same branch
 
 Proceed immediately to Step 4.
 
@@ -119,6 +124,13 @@ Only proceed when Step 5 returned `ready`, every non-empty review body has been 
 skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>
 ```
 
+**Assign-on-merge repos: decide whether the merge publishes.** It publishes nothing when both hold:
+
+- `.fragments` of `bash scripts/check-changelog-fragment.sh origin/main` is empty
+- `git ls-tree --name-only origin/main changelog.d/` lists only `changelog.d/README.md`
+
+Then skip the baseline and the registry checks below, watch the publish run to `success`, and report "no publication". Otherwise the Tessl publication checks below apply.
+
 **Tessl publication: capture the registry baseline before merging** so the post-merge check has something to compare against. A GitHub tag/asset publication skips this:
 
 ```bash
@@ -149,7 +161,7 @@ git remote prune origin
 
 **After merge — publishing repos:** the confirmation is owed once per publication, each read from the channel that carried it (`rules/ci-safety.md` Always Watch CI). A green GitHub release confirms nothing about a pending Tessl moderation, and a cleared Tessl publish confirms nothing about an absent GitHub asset. Bind every run to its exact commit, never "latest on main".
 
-**Tessl publication** — the publish workflow fires on the merge commit:
+**Tessl publication** — the publish workflow fires on the merge commit; in an assign-on-merge repo its `chore(release): <version>` commit lands on `main` after the merge:
 
 ```bash
 merge_sha=$(gh pr view <N> --json mergeCommit --jq '.mergeCommit.oid')

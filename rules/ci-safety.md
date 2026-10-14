@@ -77,3 +77,9 @@ alwaysApply: true
 
 - Don't push directly to `main` or `master`
 - All changes go through pull requests
+- Narrow exception for a publish workflow's release commit.
+- Preconditions (all required):
+  1. The commit is made and pushed by the publish workflow with its own `GITHUB_TOKEN`, never by an agent or a person
+  2. It changes only the manifests' `version` fields, `CHANGELOG.md`, and the consumed `changelog.d/` fragments
+  3. A tested script assembles it deterministically from fragments merged through reviewed pull requests (`scripts/assemble-release.sh` in this repo)
+- Every other change to `main` still goes through a pull request
