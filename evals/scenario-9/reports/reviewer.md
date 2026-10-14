@@ -1,8 +1,8 @@
 # Broad Policy Review — Mode B
 
-**Branch:** feat/auth-v2  
-**Reviewed SHA:** abc1234  
-**Reviewer:** Codex Policy Bot (Mode B — broad review)  
+**Branch:** feat/auth-v2\
+**Reviewed SHA:** abc1234\
+**Reviewer:** Codex Policy Bot (Mode B — broad review)\
 **Review Date:** 2026-10-11 09:15 UTC
 
 ## Review Summary

@@ -1,8 +1,8 @@
 # Integration Test Report — Mode C
 
-**Branch:** feat/auth-v2  
-**Verified SHA:** abc1234  
-**Tester:** Herdr Integration Bot (Mode C — broad test)  
+**Branch:** feat/auth-v2\
+**Verified SHA:** abc1234\
+**Tester:** Herdr Integration Bot (Mode C — broad test)\
 **Report Date:** 2026-10-11 11:42 UTC
 
 ## Test Execution

@@ -116,7 +116,7 @@ On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to 
 
 ### Evals
 
-`evals/` holds Tessl eval scenarios that compare an agent with this plugin against a baseline without it. Two scenarios hand the agent a git repository; their histories are stored as `git fast-export` streams listed in `evals/git-fixtures.tsv`, since a nested `.git` cannot be committed. Rebuild them before a run:
+`evals/` holds Tessl eval scenarios that compare an agent with this plugin against a baseline without it. Two scenarios hand the agent a git repository; their histories are stored as `git fast-export` streams listed in `evals/git-fixtures.tsv`. Rebuild them before a run:
 
 ```
 bash scripts/eval-fixtures.sh import

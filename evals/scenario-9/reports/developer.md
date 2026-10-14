@@ -1,8 +1,8 @@
 # Developer Implementation Report
 
-**Branch:** feat/auth-v2  
-**Commit SHA:** abc1234  
-**Submitted:** 2026-10-10 14:32 UTC  
+**Branch:** feat/auth-v2\
+**Commit SHA:** abc1234\
+**Submitted:** 2026-10-10 14:32 UTC\
 **Author:** Priya Sharma
 
 ## Summary
