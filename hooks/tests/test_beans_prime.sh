@@ -133,11 +133,13 @@ main() {
   while [[ ! -e "$CASE/started" ]] && (( tries < 200 )); do sleep 0.05; tries=$((tries + 1)); done
   [[ -e "$CASE/started" ]] || { kill -KILL -- "-$hook_pid"; die "the fake beans never started"; }
   kill -KILL -- "-$hook_pid" || die "could not kill the hook's process group"
-  wait "$hook_pid"
+  # 137 = 128 + SIGKILL: the hook died from the kill, mid-run, as under Codex.
+  local wait_rc=0
+  wait "$hook_pid" || wait_rc=$?
   local leftovers
   leftovers="$(ls -A "$CASE/tmp")" || die "could not list $CASE/tmp"
-  if [[ -z "$leftovers" ]]; then
-    pass; else fail "killed hook: expected an empty TMPDIR, found: $leftovers"; fi
+  if (( wait_rc == 137 )) && [[ -z "$leftovers" ]]; then
+    pass; else fail "killed hook: expected exit 137 and an empty TMPDIR, got exit ${wait_rc}, found: ${leftovers:-nothing}"; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; return 1; fi
