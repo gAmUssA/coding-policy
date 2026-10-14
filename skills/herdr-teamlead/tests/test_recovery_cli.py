@@ -11,6 +11,7 @@ import io
 import json
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from teamlead.state import add_assignment, empty_state, save_state, state_lock
@@ -348,6 +349,13 @@ class RecoveryCommandTests(fixture.CliCase):
         # A free-text diagnosis identity still yields a valid obligation id.
         request = {"id": "diag stop 1", "task": TASK, "checkpoint": "cap-5", "judge_report": str(stop),
                    "scope": WORK["scope"], "allowed_paths": ["src/*"]}
+        # coding-policy#22: the accepted defect's tracking issue is required,
+        # and a refused stop files no obligation.
+        code, _, err = self.owner("diagnose", request)
+        self.assertEqual(code, 1)
+        self.assertIn("owner/repo#number", err)
+        self.assertEqual(attention.load(self.state)[1], {})
+        request["defect_issue"] = "gAmUssA/coding-policy#22"
         code, _, err = self.owner("diagnose", request)
         self.assertEqual(code, 0, err)
         _document, entries, _progress = attention.load(self.state)
@@ -356,7 +364,10 @@ class RecoveryCommandTests(fixture.CliCase):
         self.assertEqual((entry["kind"], entry["task"], entry["status"]), ("failure", TASK, "open"))
         self.assertNotIn(entry["kind"], attention.GATING_KINDS)
         self.assertIn("diag stop 1", entry["context"])
-        self.assertEqual(entry["sources"][0]["ref"], str(stop))
+        self.assertIn("gAmUssA/coding-policy#22", entry["context"])
+        self.assertEqual([row["ref"] for row in entry["sources"]], [str(stop), "gAmUssA/coding-policy#22"])
+        saved = json.loads(self.state.read_text())["recovery"]["diagnoses"]
+        self.assertEqual(saved[-1]["defect_issue"], "gAmUssA/coding-policy#22")
         # The obligation refuses no further dispatch on the task.
         self.assertEqual(attention.dispatch_gate(self.state, TASK, AT), [])
         # Replaying the diagnosis records no second obligation.
@@ -364,6 +375,43 @@ class RecoveryCommandTests(fixture.CliCase):
         self.assertEqual(code, 0, err)
         _document, replayed, _progress = attention.load(self.state)
         self.assertEqual(list(replayed), list(entries))
+
+    def test_a_refused_stop_save_files_no_attention_obligation(self):
+        # coding-policy#22: the obligation announces a recorded stop, so it is
+        # filed only once the recovery store has saved. The filesystem, a
+        # process boundary, refuses the state file's replace alone; the
+        # attention sidecar beside it still writes.
+        from teamlead import attention
+        self.seed_cap(skip_diagnosis=True)
+        stop = self.tmp / "stop-diagnosis.md"
+        stop.write_text("DIAGNOSIS: the review surface is the cause\nREMEDY: stop — ship the parser, track F1\n"
+                        "BOUND: none\nASSESSMENT: " + self.investigation() + "\n"
+                        "EVIDENCE: rounds 1-5\nUNVERIFIED: none\n")
+        request = {"id": "diag-stop-unsaved", "task": TASK, "checkpoint": "cap-5", "judge_report": str(stop),
+                   "scope": WORK["scope"], "allowed_paths": ["src/*"], "defect_issue": "gAmUssA/coding-policy#22"}
+        target = self.state.resolve()
+        real_replace = os.replace
+
+        def refuse_state_replace(source, destination):
+            if Path(destination) == target:
+                raise OSError(28, "No space left on device")
+            return real_replace(source, destination)
+
+        before = target.read_bytes()
+        with patch.object(os, "replace", refuse_state_replace):
+            code, _, err = self.owner("diagnose", request)
+        self.assertEqual(code, 1, err)
+        self.assertIn("Cannot write the state file", err)
+        self.assertEqual(target.read_bytes(), before)
+        self.assertEqual(attention.load(target)[1], {})
+        # Once the store can save, the same stop records and files its obligation.
+        code, _, err = self.owner("diagnose", request)
+        self.assertEqual(code, 0, err)
+        saved = json.loads(target.read_text())["recovery"]["diagnoses"]
+        self.assertEqual([row["id"] for row in saved], ["diag-stop-unsaved"])
+        entries = attention.load(target)[1]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(next(iter(entries.values()))["sources"][1]["ref"], "gAmUssA/coding-policy#22")
 
     def test_diagnose_refuses_a_report_the_pinned_judge_did_not_deliver(self):
         self.seed_cap(diagnosis_only=True)

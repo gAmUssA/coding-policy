@@ -51,8 +51,21 @@ DISPATCH_METADATA_FIELDS = frozenset({"requirements", "reviewer_scope"})
 DIAGNOSIS_LADDER = ("continue", "restructure", "stop")
 #: Diagnosis record version. 1 recorded the remedy alone. 2 adds `reissue` --
 #: whether this diagnosis repeats its predecessor's rung -- and
-#: `investigator_report`, the assessment the judge ruled on (#415).
-DIAGNOSIS_RECORD_VERSION = 2
+#: `investigator_report`, the assessment the judge ruled on (#415). 3 adds
+#: `defect_issue`: the issue tracking a `stop` remedy's accepted defect, null
+#: on every other rung (#22).
+DIAGNOSIS_RECORD_VERSION = 3
+#: What a version-1 row upgrades into before the `defect_issue` step.
+REISSUE_DIAGNOSIS_VERSION = 2
+#: Versions the reader accepts. A version-2 `stop` row predates the issue
+#: reference and stays at 2: a migration never invents the issue it tracks
+#: (rules/stateful-artifacts.md Migration Policy). Every other version-2 row
+#: has nothing to track and upgrades to 3 with `defect_issue: null`.
+DIAGNOSIS_VERSIONS = frozenset({REISSUE_DIAGNOSIS_VERSION, DIAGNOSIS_RECORD_VERSION})
+#: The issue reference a `stop` remedy's accepted defect carries:
+#: `owner/repo#number`. A bare `#number` names no repository, and a task's
+#: recovery record names none either, so it is refused as ambiguous.
+DEFECT_ISSUE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.{1,2}#)[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,9}\Z")
 DEFAULT_FIX_LIMIT = 5
 #: The most attempts one remedy may buy, in developer attempts. A remedy that
 #: needs more than the task's own original allowance is not a bounded
@@ -115,30 +128,50 @@ def _migrate_checkpoints(store):
 
 
 def _migrate_diagnoses(store):
-    """Stamp version-1 diagnosis rows with the fields version 2 records.
+    """Upgrade older diagnosis rows to the fields the current version records.
 
-    A version-1 row predates both additions, so its defaults are the facts it
-    already carried: it repeated no rung, and it cited no investigator report
-    (rules/stateful-artifacts.md Migration Policy). A version-1 row already
-    carrying either field is unowned newer data and is refused rather than
-    stamped, the way `migrate_store` refuses every other newer record: keeping
-    the present value would let a `reissue: true` or an investigator binding
-    reach the validator through a migration that never wrote it.
+    A version-1 row predates `reissue` and `investigator_report`, so its
+    defaults are the facts it already carried: it repeated no rung, and it
+    cited no investigator report. A version-2 row predates `defect_issue`. On
+    a `continue` or `restructure` row the field is null by definition, so it
+    upgrades to 3. A `stop` row stays at version 2: its accepted defect was
+    never given an issue reference, and a migration never invents one
+    (rules/stateful-artifacts.md Migration Policy). Such a row keeps its
+    terminal remedy and does not satisfy the Judge-Accepted Defect
+    Carve-Out's issue-reference precondition.
+
+    An older row already carrying a field its version never wrote is unowned
+    newer data and is refused rather than stamped, the way `migrate_store`
+    refuses every other newer record: keeping the present value would let a
+    `reissue: true`, an investigator binding or an issue reference reach the
+    validator through a migration that never wrote it.
     """
     rows = store.get("diagnoses")
     if not isinstance(rows, list):
         return False
     migrated = False
     for row in rows:
-        if not isinstance(row, dict) or row.get("schema_version") != 1:
+        if not isinstance(row, dict) or row.get("schema_version") not in {1, REISSUE_DIAGNOSIS_VERSION}:
             continue
-        if "reissue" in row or "investigator_report" in row:
+        if "defect_issue" in row or row["schema_version"] == 1 and ("reissue" in row or "investigator_report" in row):
             raise UsageError("An older diagnosis carries newer recorded fields; preserve the ledger for owner recovery.", {})
-        row["schema_version"] = DIAGNOSIS_RECORD_VERSION
-        row["reissue"] = False
-        row["investigator_report"] = None
-        migrated = True
+        if row["schema_version"] == 1:
+            row["schema_version"] = REISSUE_DIAGNOSIS_VERSION
+            row["reissue"] = False
+            row["investigator_report"] = None
+            migrated = True
+        if row.get("remedy") != "stop":
+            row["schema_version"] = DIAGNOSIS_RECORD_VERSION
+            row["defect_issue"] = None
+            migrated = True
     return migrated
+
+
+def defect_issue(value):
+    """Validate the `owner/repo#number` issue tracking an accepted defect."""
+    if not isinstance(value, str) or DEFECT_ISSUE_RE.fullmatch(value) is None:
+        raise UsageError("defect_issue must name the issue tracking the accepted defect as owner/repo#number; file the issue first, then record the stop with its reference.", {})
+    return value
 
 
 def _refuse_unowned_legacy(store, version):
@@ -615,8 +648,8 @@ def diagnose(store, assignments, data, at, judge_agent, enrolled_report, supervi
     enrollment binds the judge's own.
     """
     required = {"id", "task", "checkpoint", "judge_report", "scope", "allowed_paths"}
-    if not isinstance(data, dict) or not required <= set(data) or set(data) - required - {"supersedes", "authorization"}:
-        raise UsageError("Diagnosis requires id, task, checkpoint, judge_report, scope and allowed_paths, and allows an optional supersedes with authorization.", {})
+    if not isinstance(data, dict) or not required <= set(data) or set(data) - required - {"supersedes", "authorization", "defect_issue"}:
+        raise UsageError("Diagnosis requires id, task, checkpoint, judge_report, scope and allowed_paths, and allows an optional supersedes with authorization and a stop remedy's defect_issue.", {})
     if "authorization" in data and "supersedes" not in data:
         raise UsageError("An operator override accompanies the supersedes it authorizes; record the plan it replaces.", {})
     if "supersedes" in data:
@@ -632,6 +665,7 @@ def diagnose(store, assignments, data, at, judge_agent, enrolled_report, supervi
                 and prior["scope"] == data["scope"] and prior["allowed_paths"] == data["allowed_paths"]
                 and prior.get("supersedes") == data.get("supersedes")
                 and prior.get("authorization") == data.get("authorization")
+                and prior.get("defect_issue") == data.get("defect_issue")
                 and prior["judge_evidence"] == receipt(data["judge_report"])[0])
         if not same:
             raise UsageError("Diagnosis identity already describes a different remedy; record a new diagnosis without rewriting the old one.", {})
@@ -726,7 +760,15 @@ def diagnose(store, assignments, data, at, judge_agent, enrolled_report, supervi
     if remedy == "stop":
         if bound_line.group(1).lower() != "none":
             raise UsageError("A stop remedy allows no attempts; its BOUND is `none`.", {})
+        # rules/review-severity.md Judge-Accepted Defect Carve-Out: the
+        # remainder ships only as a tracked accepted defect with its issue
+        # reference, and this record is where that reference lives (#22).
+        if "defect_issue" not in data:
+            raise UsageError("A stop remedy records its accepted defect's tracking issue: file the remaining blocking finding as an issue and pass defect_issue as owner/repo#number.", {})
+        defect_issue(data["defect_issue"])
     else:
+        if "defect_issue" in data:
+            raise UsageError("Only a stop remedy accepts a defect; a {} remedy records no defect_issue.".format(remedy), {})
         raw = bound_line.group(1)
         if not raw.isdigit() or int(raw) < 1:
             raise UsageError("A {} remedy needs a positive BOUND naming the developer attempts it allows.".format(remedy), {})
@@ -738,8 +780,9 @@ def diagnose(store, assignments, data, at, judge_agent, enrolled_report, supervi
     record = {"schema_version": DIAGNOSIS_RECORD_VERSION, "at": at, "id": data["id"], "task": data["task"],
               "checkpoint": data["checkpoint"], "fix_round": count, "base_revision": task["base_revision"],
               "remedy": remedy, "bound": bound, "reissue": reissue,
+              "defect_issue": data.get("defect_issue"),
               "judge_agent": judge_agent, "judge_evidence": evidence,
-              "investigator_report": {"schema_version": DIAGNOSIS_RECORD_VERSION,
+              "investigator_report": {"schema_version": REISSUE_DIAGNOSIS_VERSION,
                                       "report": assessment["report"], "evidence": assessment["report_evidence"]},
               "scope": data["scope"], "allowed_paths": data["allowed_paths"],
               "supersedes": data.get("supersedes"), "authorization": data.get("authorization"),
@@ -1316,6 +1359,17 @@ def _validate_refusals(store):
             validate_receipt(cited["evidence"])
             if text(cited["report"], "diagnosis investigator report") != cited["evidence"]["path"]:
                 raise UsageError("A diagnosis cites an investigator report whose receipt names another artifact; preserve the ledger for owner recovery.", {})
+        if row["schema_version"] == REISSUE_DIAGNOSIS_VERSION:
+            # Only a `stop` row stays at version 2, and it never carries the
+            # reference its version did not write.
+            if row["remedy"] != "stop" or "defect_issue" in row:
+                raise UsageError("A version-2 diagnosis is a stop recorded before its issue reference; preserve the ledger for owner recovery.", {})
+        elif "defect_issue" not in row:
+            raise UsageError("A diagnosis is missing its defect_issue; preserve the ledger for owner recovery.", {})
+        elif row["remedy"] == "stop":
+            defect_issue(row["defect_issue"])
+        elif row["defect_issue"] is not None:
+            raise UsageError("Only a stop remedy accepts a defect; preserve the ledger for owner recovery.", {})
         if row.get("supersedes") is not None:
             text(row["supersedes"], "diagnosis supersedes")
         if row.get("authorization") is not None:
@@ -1458,7 +1512,7 @@ def validate_store(store, assignments):
             for row in store[name]:
                 versions = ({1, 2} if name in {"delivery_recoveries", "dispatches"}
                             else CHECKPOINT_VERSIONS if name == "checkpoints"
-                            else {DIAGNOSIS_RECORD_VERSION} if name == "diagnoses"
+                            else DIAGNOSIS_VERSIONS if name == "diagnoses"
                             else {RECOVERY_SCHEMA_VERSION})
                 if not isinstance(row, dict) or type(row.get("schema_version")) is not int or row["schema_version"] not in versions:
                     raise UsageError("A recovery record has an unsupported schema; update its owner.", {})

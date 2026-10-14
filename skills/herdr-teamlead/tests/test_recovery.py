@@ -34,6 +34,8 @@ AUTH = {"source": "fixture operator message", "quote": "Approve this task and it
 REQUEST = {"source": "fixture operator message", "quote": "Ask the judge to rule on this exhaustion."}
 WORK = {"base_revision": BASE, "scope": "Correct parser findings", "paths": ["src/parser.py"], "findings": ["F1"]}
 PROGRESS = "PROGRESS: two of the three findings closed under the prior remedy.\n"
+#: The tracking issue a `stop` remedy's accepted defect carries (#22).
+DEFECT_ISSUE = "gAmUssA/coding-policy#22"
 
 
 def _dispatch(store, identifier):
@@ -151,9 +153,14 @@ class RecoveryTests(unittest.TestCase):
         return diagnose(self.store, self.history, data, AT, judge, enrolled, enrolled is not None, investigations)
 
     def diagnosis(self, name, remedy, bound, checkpoint_id="checkpoint-5", extra="", assessment=None):
-        return {"id": name, "task": TASK, "checkpoint": checkpoint_id,
-                "judge_report": self.diagnosis_report(remedy, bound, name + ".md", extra, assessment),
-                "scope": WORK["scope"], "allowed_paths": ["src/*"]}
+        # A `stop` request carries its accepted defect's tracking issue; the
+        # cases proving that gate drop or replace it.
+        request = {"id": name, "task": TASK, "checkpoint": checkpoint_id,
+                   "judge_report": self.diagnosis_report(remedy, bound, name + ".md", extra, assessment),
+                   "scope": WORK["scope"], "allowed_paths": ["src/*"]}
+        if remedy == "stop":
+            request["defect_issue"] = DEFECT_ISSUE
+        return request
 
     def test_a_bounded_remedy_records_the_plan_its_bound_authorizes(self):
         # coding-policy#407: the judge supplies the budget the operator used to.
@@ -355,31 +362,104 @@ class RecoveryTests(unittest.TestCase):
         older = copy.deepcopy(self.store)
         row = older["diagnoses"][0]
         row.update(schema_version=1)
-        del row["reissue"], row["investigator_report"]
+        del row["reissue"], row["investigator_report"], row["defect_issue"]
         # Both record kinds migrate in one pass; neither short-circuits the
         # other (rules/stateful-artifacts.md Migration Policy).
         older["checkpoints"][0]["schema_version"] = 1
         older["checkpoints"][0].pop("requested_by", None)
         self.assertTrue(migrate_store(older))
         self.assertEqual(older["checkpoints"][0]["schema_version"], 2)
-        self.assertEqual(older["diagnoses"][0]["schema_version"], 2)
+        self.assertEqual(older["diagnoses"][0]["schema_version"], 3)
         self.assertIs(older["diagnoses"][0]["reissue"], False)
         self.assertIsNone(older["diagnoses"][0]["investigator_report"])
+        self.assertIsNone(older["diagnoses"][0]["defect_issue"])
         validate_store(older, self.history)
 
     def test_an_older_diagnosis_carrying_newer_fields_is_refused(self):
-        # A version-1 row predates both fields, so one already carrying either
-        # is unowned newer data; stamping it would let the value through.
+        # An older row predates the fields its successors added, so one
+        # already carrying any is unowned newer data; stamping it would let
+        # the value through.
         self.seed_checkpoint()
         self.run_diagnosis(self.diagnosis("diag-1", "continue", 2), "judge")
-        for field, value in (("reissue", True), ("investigator_report", None)):
+        for field, value in (("reissue", True), ("investigator_report", None), ("defect_issue", DEFECT_ISSUE)):
             corrupt = copy.deepcopy(self.store)
             row = corrupt["diagnoses"][0]
             row.update(schema_version=1)
-            del row["reissue"], row["investigator_report"]
+            del row["reissue"], row["investigator_report"], row["defect_issue"]
             row[field] = value
             with self.assertRaisesRegex(UsageError, "newer recorded fields"):
                 migrate_store(corrupt)
+        corrupt = copy.deepcopy(self.store)
+        corrupt["diagnoses"][0]["schema_version"] = 2
+        with self.assertRaisesRegex(UsageError, "newer recorded fields"):
+            migrate_store(corrupt)
+
+    def test_a_stop_remedy_records_the_issue_tracking_its_accepted_defect(self):
+        # coding-policy#22: rules/review-severity.md Judge-Accepted Defect
+        # Carve-Out precondition 2 needs the accepted defect's issue reference,
+        # and the stop record is where it lives.
+        self.seed_checkpoint()
+        request = self.diagnosis("diag-stop", "stop", "none")
+        missing = {key: value for key, value in request.items() if key != "defect_issue"}
+        with self.assertRaisesRegex(UsageError, "records its accepted defect's tracking issue"):
+            self.run_diagnosis(missing, "judge")
+        for malformed in ("#22", "22", "coding-policy#22", "gAmUssA/coding-policy#0", "gAmUssA/coding-policy",
+                          "https://github.com/gAmUssA/coding-policy/issues/22", " gAmUssA/coding-policy#22",
+                          "-owner/repo#1", "owner/..#1", "owner/repo#22 extra", None, 22):
+            with self.assertRaisesRegex(UsageError, "owner/repo#number"):
+                self.run_diagnosis({**request, "defect_issue": malformed}, "judge")
+        self.assertEqual(self.store["diagnoses"], [])
+        record = self.run_diagnosis(request, "judge")
+        self.assertEqual((record["schema_version"], record["remedy"], record["defect_issue"]), (3, "stop", DEFECT_ISSUE))
+        validate_store(self.store, self.history)
+        # A replay must carry the same reference; a different one is another remedy.
+        self.assertEqual(self.run_diagnosis(request, "judge"), record)
+        with self.assertRaisesRegex(UsageError, "already describes a different remedy"):
+            self.run_diagnosis({**request, "defect_issue": "gAmUssA/coding-policy#23"}, "judge")
+        corrupt = copy.deepcopy(self.store)
+        corrupt["diagnoses"][0]["defect_issue"] = "#22"
+        with self.assertRaisesRegex(UsageError, "owner/repo#number"):
+            validate_store(corrupt, self.history)
+
+    def test_only_a_stop_remedy_accepts_a_defect(self):
+        self.seed_checkpoint()
+        with self.assertRaisesRegex(UsageError, "Only a stop remedy accepts a defect"):
+            self.run_diagnosis({**self.diagnosis("diag-1", "continue", 2), "defect_issue": DEFECT_ISSUE}, "judge")
+        record = self.run_diagnosis(self.diagnosis("diag-1", "continue", 2), "judge")
+        self.assertIsNone(record["defect_issue"])
+        corrupt = copy.deepcopy(self.store)
+        corrupt["diagnoses"][0]["defect_issue"] = DEFECT_ISSUE
+        with self.assertRaisesRegex(UsageError, "Only a stop remedy accepts a defect"):
+            validate_store(corrupt, self.history)
+
+    def test_an_older_stop_row_stays_at_its_version_without_an_invented_issue(self):
+        # rules/stateful-artifacts.md Migration Policy: a version-2 stop row
+        # never recorded the issue its accepted defect needs, and a migration
+        # never invents one. It keeps its terminal remedy at version 2.
+        self.seed_checkpoint()
+        self.run_diagnosis(self.diagnosis("diag-stop", "stop", "none"), "judge")
+        older = copy.deepcopy(self.store)
+        row = older["diagnoses"][0]
+        row["schema_version"] = 2
+        del row["defect_issue"]
+        self.assertFalse(migrate_store(older))
+        self.assertEqual(older["diagnoses"][0]["schema_version"], 2)
+        self.assertNotIn("defect_issue", older["diagnoses"][0])
+        validate_store(older, self.history)
+        with self.assertRaisesRegex(UsageError, "terminal"):
+            validate_work(older, self.history, TASK, 6, None, WORK)
+        # A version-1 stop upgrades as far as version 2 and stops there.
+        oldest = copy.deepcopy(older)
+        oldest["diagnoses"][0]["schema_version"] = 1
+        del oldest["diagnoses"][0]["reissue"], oldest["diagnoses"][0]["investigator_report"]
+        self.assertTrue(migrate_store(oldest))
+        self.assertEqual(oldest["diagnoses"][0]["schema_version"], 2)
+        validate_store(oldest, self.history)
+        # A version-2 row the migration should have upgraded is refused.
+        stale = copy.deepcopy(older)
+        stale["diagnoses"][0]["remedy"] = "continue"
+        with self.assertRaisesRegex(UsageError, "version-2 diagnosis is a stop"):
+            validate_store(stale, self.history)
 
     def test_a_judge_seat_is_not_spent_before_the_assessment_exists(self):
         # coding-policy#408: the gate guards the dispatch, not only the record,

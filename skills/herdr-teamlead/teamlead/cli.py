@@ -1075,20 +1075,30 @@ def _record_stopped_task(state_path, diagnosis, at):
     The obligation identity is derived from the diagnosis identity, which is
     free text, so the digest keeps it inside the queue's identifier alphabet
     and keeps a replayed diagnosis on its original obligation.
+
+    The tracking issue the diagnosis recorded (#22) rides as a second source.
+    A version-2 `stop` row predates that reference; its replay rebuilds the
+    obligation it originally filed, without one.
     """
     name = "diagnosis-stop-" + hashlib.sha256(diagnosis["id"].encode("utf-8")).hexdigest()[:16]
+    issue = diagnosis.get("defect_issue")
+    context = "Diagnosis {} returned REMEDY: stop at fix round {}, ruling on the investigator's assessment.".format(
+        diagnosis["id"], diagnosis["fix_round"])
+    sources = [{"schema_version": attention.SCHEMA_VERSION, "kind": "artifact",
+                "ref": diagnosis["judge_evidence"]["path"]}]
+    if issue is not None:
+        context += " The accepted defect is tracked in {}.".format(issue)
+        sources.append({"schema_version": attention.SCHEMA_VERSION, "kind": "other", "ref": issue})
     return attention.write(state_path, "record", {
         "id": name,
         "kind": "failure",
         "task": diagnosis["task"],
         "priority": 80,
         "title": "Task {} stopped at the judge's diagnosis".format(diagnosis["task"])[:300],
-        "context": "Diagnosis {} returned REMEDY: stop at fix round {}, ruling on the investigator's assessment.".format(
-            diagnosis["id"], diagnosis["fix_round"]),
+        "context": context,
         "consequence": "Implementation on this task has ended. What is clean ships; the remainder is a tracked accepted defect under rules/review-severity.md Judge-Accepted Defect Carve-Out.",
         "resolution_condition": "Record the acknowledgement, or authorize a plan over this remedy to override it.",
-        "sources": [{"schema_version": attention.SCHEMA_VERSION, "kind": "artifact",
-                     "ref": diagnosis["judge_evidence"]["path"]}],
+        "sources": sources,
     }, at)
 
 
@@ -1097,6 +1107,7 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     state = _load_state_for_write(state_path, warn)
     store, history = state["recovery"], state["assignments"]
     data, at = _read_record(args.record), args.now or now_iso()
+    stopped = None
     if args.command == "task":
         result = recovery.register_task(store, data, at)
     elif args.command == "checkpoint":
@@ -1122,8 +1133,12 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
         result = recovery.diagnose(store, history, data, at, judge.agent if judge else None, enrolled,
                                    supervision.dispatch_binding(state_path) is not None,
                                    state["specialist_assessments"])
+        # The obligation is filed after the store saves, never before: a
+        # refused save would leave it announcing a stop nobody recorded. A
+        # failed write after the save is repaired by replaying the diagnosis,
+        # which returns the saved record and files the same obligation.
         if result["remedy"] == "stop":
-            _record_stopped_task(state_path, result, at)
+            stopped = result
     elif args.command == "record-report":
         if isinstance(data, dict):
             dispatch = next((item for item in store["dispatches"] if item["id"] == data.get("dispatch")), None)
@@ -1200,6 +1215,8 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     recovery.validate_store(store, history)
     engagement.validate_assessments(state)
     save_state(state_path, state)
+    if stopped is not None:
+        _record_stopped_task(state_path, stopped, at)
     return result, None
 
 

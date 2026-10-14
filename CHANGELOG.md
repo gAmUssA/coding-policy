@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.0 — 2026-10-14
+
+### Changed
+
+- **Stop diagnoses record the issue tracking their accepted defect** (#22). No owner record could satisfy `rules/review-severity.md` Judge-Accepted Defect Carve-Out precondition 2 before this. `teamlead diagnose` now requires `defect_issue` (`owner/repo#number`) when the judge's remedy is `stop`, refuses it on `continue` and `restructure`, and rejects a bare `#number` or an issue URL. The `stop` attention obligation names that issue as a second source. Diagnosis records move to schema 3. Version-2 non-`stop` rows migrate with `defect_issue: null`. Version-2 `stop` rows stay at version 2, since migration never invents an issue; they keep their terminal remedy but do not satisfy precondition 2. `state-schema.md`, `references/round-flow.md`, `references/dispatch-recovery.md` and the judge-diagnosis brief now say that the lead files the issue before recording the `stop`. The `stop` obligation is also filed only after the recovery store saves. A refused save no longer leaves an attention entry for a stop the ledger never recorded, and replaying the diagnosis restores an entry whose write failed after the save.
+
 ## 0.7.15 — 2026-10-14
 
 ### Fixed

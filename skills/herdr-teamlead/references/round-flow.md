@@ -340,8 +340,11 @@ names the investigator report the judge ruled on, and the record binds that
 path the way supervision's enrollment binds the judge's own report. A `stop`
 remedy ships what is clean and records the remainder as a tracked accepted
 defect; that authority is the judge's, stated so a lead does not re-escalate
-out of caution. Recording it also files a user-attention obligation, so the
-operator learns of the override they hold without going to look for it.
+out of caution. The judge files nothing: the lead files the remainder as an
+issue and records its `owner/repo#number` reference on the diagnosis, which
+`diagnose` requires for `stop` and refuses on any other rung. Recording it also
+files a user-attention obligation naming that issue, so the operator learns of
+the override they hold without going to look for it.
 
 The diagnosis is re-enterable when its own remedy's bound exhausts with
 blocking work remaining. A remedy that was independently diagnosed and still
@@ -454,9 +457,15 @@ authorization. A blocked ruling follows the operator-question path below.
 - **`REMEDY: restructure`** — record the diagnosis, apply the named structural
   change to the shape of the work, then return to Step 12 within its bound.
   The change is the judge's to name and the lead's to carry out.
-- **`REMEDY: stop`** — record the diagnosis, release what is clean, and record
-  the remainder as a tracked accepted defect. The remedy carries that
-  authority; do not re-escalate it. Proceed to Step 20 for what ships.
+- **`REMEDY: stop`** — file the remainder the remedy names as an issue, under
+  the round's verified repo authority (`rules/external-repo-contributions.md`).
+  Record the diagnosis with that issue as `defect_issue` (`owner/repo#number`);
+  `diagnose` refuses a `stop` without one. Release what is clean, with the
+  remainder as the tracked accepted defect that issue holds. The remedy
+  carries that authority; do not re-escalate it. Proceed to Step 20 for what
+  ships. A version-2 `stop` record predates the reference and does not satisfy
+  `rules/review-severity.md` Judge-Accepted Defect Carve-Out precondition 2;
+  shipping its remainder needs the operator's plan over that remedy or a fix.
 - A remedy's bound exhausting with blocking work remaining returns to Step
   12's exhaustion workflow: record a new checkpoint, consult the investigator
   again so an assessed consultation follows the latest developer attempt, then
