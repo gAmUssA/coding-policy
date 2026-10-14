@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import ModuleType
 from typing import IO, cast
 from unittest.mock import patch
 
@@ -155,7 +156,7 @@ class CodexSessionStart(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("inspect the plugin installation", result.stderr)
 
-    def load_adapter(self):
+    def load_adapter(self) -> ModuleType:
         # Load the installed copy so its ROOT is the fixture plugin root.
         spec = importlib.util.spec_from_file_location(
             "codex_session_start", self.root / "hooks/codex-session-start.py"
@@ -168,9 +169,13 @@ class CodexSessionStart(unittest.TestCase):
     def test_child_timeout_is_reported(self):
         (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
         adapter = self.load_adapter()
-        communicate = subprocess.Popen.communicate
+        communicate = subprocess.Popen[str].communicate
 
-        def time_out(process, input=None, timeout=None):
+        def time_out(
+            process: subprocess.Popen[str],
+            input: str | None = None,
+            timeout: float | None = None,
+        ) -> tuple[str, str]:
             if timeout is not None:
                 raise subprocess.TimeoutExpired(process.args, timeout)
             # Bound cleanup in the test, so a regression fails instead of hanging.
