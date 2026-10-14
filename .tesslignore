@@ -5,3 +5,4 @@ pyrightconfig.json
 *.bak
 *.tmp
 .herdr/
+changelog.d/
