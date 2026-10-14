@@ -77,7 +77,11 @@ that the lead applies it without asking you a question.
 
 `stop` ships what is clean and tracks the remainder. Name both halves: what
 goes out, and what is recorded as an accepted defect. Your remedy carries the
-authority to accept a tracked defect into a release.
+authority to accept a tracked defect into a release. Name the remaining
+blocking finding precisely enough for the lead to file it as an issue without
+asking you a question: the lead files that issue and records its
+`owner/repo#number` reference with your diagnosis, and a `stop` without one is
+refused. You file nothing.
 
 The ladder descends, and one rung may be repeated once. A remedy that produced
 no progress is never reissued: after a fruitless `continue` the choices are

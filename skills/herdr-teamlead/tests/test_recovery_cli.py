@@ -348,6 +348,13 @@ class RecoveryCommandTests(fixture.CliCase):
         # A free-text diagnosis identity still yields a valid obligation id.
         request = {"id": "diag stop 1", "task": TASK, "checkpoint": "cap-5", "judge_report": str(stop),
                    "scope": WORK["scope"], "allowed_paths": ["src/*"]}
+        # coding-policy#22: the accepted defect's tracking issue is required,
+        # and a refused stop files no obligation.
+        code, _, err = self.owner("diagnose", request)
+        self.assertEqual(code, 1)
+        self.assertIn("owner/repo#number", err)
+        self.assertEqual(attention.load(self.state)[1], {})
+        request["defect_issue"] = "gAmUssA/coding-policy#22"
         code, _, err = self.owner("diagnose", request)
         self.assertEqual(code, 0, err)
         _document, entries, _progress = attention.load(self.state)
@@ -356,7 +363,10 @@ class RecoveryCommandTests(fixture.CliCase):
         self.assertEqual((entry["kind"], entry["task"], entry["status"]), ("failure", TASK, "open"))
         self.assertNotIn(entry["kind"], attention.GATING_KINDS)
         self.assertIn("diag stop 1", entry["context"])
-        self.assertEqual(entry["sources"][0]["ref"], str(stop))
+        self.assertIn("gAmUssA/coding-policy#22", entry["context"])
+        self.assertEqual([row["ref"] for row in entry["sources"]], [str(stop), "gAmUssA/coding-policy#22"])
+        saved = json.loads(self.state.read_text())["recovery"]["diagnoses"]
+        self.assertEqual(saved[-1]["defect_issue"], "gAmUssA/coding-policy#22")
         # The obligation refuses no further dispatch on the task.
         self.assertEqual(attention.dispatch_gate(self.state, TASK, AT), [])
         # Replaying the diagnosis records no second obligation.
