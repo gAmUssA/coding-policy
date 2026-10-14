@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.2 — 2026-10-14
+
+### Changed
+
+- **Pyright strict for `hooks/`, `scripts/` and `skills/herdr-standup`; `herdr-teamlead` stays at standard** (#2, ADR 0002). The Herdr port left the repo at `standard`, and #2 planned a sequenced strict adoption for the whole tree. Re-measured on 2026-10-14, strict reports 21,890 findings: 21,674 in `herdr-teamlead`, 125 in `herdr-standup`, 80 in `hooks/` and 11 in `scripts/`. 81% are `reportUnknown*` from JSON-shaped ledgers handled as plain dicts, and `herdr-teamlead` still syncs from upstream. `docs/adr/0002-pyright-strict-scope.md` records the decision. The small trees adopt strict now, through the `strict` list in `pyrightconfig.json`, with all 216 findings fixed by annotations, a `TypeGuard` helper and casts behind existing checks, and no suppressions. `herdr-teamlead` stays at `standard` with zero findings and nothing switched off. The ADR names what would reopen a strict adoption there: the tree stops syncing from upstream, or gains typed record definitions.
+
 ## 0.8.1 — 2026-10-14
 
 ### Changed
