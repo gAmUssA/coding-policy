@@ -10,15 +10,13 @@ import io
 import json
 import os
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from teamlead import cli, supervision
-from teamlead.errors import StateError
 from teamlead.state import state_lock
 from tests import test_cli as fixture
-from tests.fakes import FakeRunner
+from tests.fakes import FakeRunner, failing_replace, replaces_into
 
 AT = fixture.AT
 TASK = "fleet-task"
@@ -164,16 +162,20 @@ class SupervisionCliTest(fixture.CliCase):
 
     def test_enrollment_write_failure_prevents_even_clear_input(self):
         client = self._client({"grok": "idle"})
-        with patch.object(supervision, "enroll", side_effect=StateError("Cannot persist enrollment; restore the owner directory.", {})):
+        owner = supervision.store_path(self.state)
+        with failing_replace(replaces_into(owner), "injected enrollment write failure"):
             code, _, err = self.invoke(self.apply_arguments(), client)
         self.assertEqual(code, 1)
-        self.assertIn("persist enrollment", err)
+        self.assertIn("Cannot write the state file", err)
+        self.assertIn("injected enrollment write failure", err)
         self.assertEqual(self.runner.writes(), [])
         self.assertFalse(self.state.exists())
 
     def test_interrupted_send_remains_active_and_retry_never_resends(self):
         client = self._client({"grok": "idle"})
-        with patch("teamlead.assign.send_message", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+        # The operator interrupts while the brief is being pasted.
+        self.runner.raises["agent prompt grok"] = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
             self.invoke(self.apply_arguments(), client)
         member = self.saved()["members"][0]
         self.assertTrue(member["active"])
@@ -357,15 +359,13 @@ class SupervisionCliTest(fixture.CliCase):
         self.assertIn("dispatch", err)
 
     def test_sidecar_failure_after_confirmed_send_does_not_make_it_replayable(self):
-        original_enroll = supervision.enroll
-        calls = []
-        def fail_after_send(*arguments, **options):
-            calls.append(arguments)
-            if len(calls) == 3:
-                raise StateError("Post-send sidecar failure; restore its storage.", {})
-            return original_enroll(*arguments, **options)
-        with patch.object(supervision, "enroll", side_effect=fail_after_send):
-            code, _, err = self.invoke(self.apply_arguments(), self._client({"grok": "idle"}))
+        client = self._client({"grok": "idle"})
+        sent = self.runner
+        owner = supervision.store_path(self.state)
+        def after_send(_source, target):
+            return target == owner and any(call[1:3] == ["agent", "prompt"] for call in sent.calls)
+        with failing_replace(after_send, "Post-send sidecar failure"):
+            code, _, err = self.invoke(self.apply_arguments(), client)
         self.assertEqual(code, 1)
         self.assertIn("Post-send sidecar", err)
         self.assertEqual(json.loads(self.state.read_text())["recovery"]["dispatches"][0]["status"], "applied")
@@ -434,12 +434,9 @@ class SupervisionCliTest(fixture.CliCase):
         who = supervision.identity("initializing-native", str(self.tmp), "fixture", pane_id="lead-pane")
         record = self.tmp / "initializing-binding.json"
         record.write_text(json.dumps(who))
-        original_save = supervision.save_state
-        def fail_final_owner(path, value):
-            if Path(path) == supervision.store_path(self.state) and value["binding"] is not None:
-                raise StateError("Simulated interrupted binding commit; resume initialization.", {})
-            return original_save(path, value)
-        with patch.object(supervision, "save_state", side_effect=fail_final_owner):
+        def bound_owner(source, target):
+            return target == supervision.store_path(self.state) and json.loads(source.read_text())["binding"] is not None
+        with failing_replace(bound_owner, "Simulated interrupted binding commit; resume initialization."):
             code, _, err = self.invoke(["supervision-bind", "--record", str(record), "--now", AT])
         self.assertEqual(code, 1, err)
         self.assertIsNone(self.saved()["binding"])

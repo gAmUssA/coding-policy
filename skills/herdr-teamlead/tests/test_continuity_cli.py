@@ -6,11 +6,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teamlead import attention, cli, memory
+from teamlead.config import default_config_path
+from tests.fakes import forbid_processes, forbid_reads
 
 
 NOW = "2025-01-01T12:00:00Z"
@@ -28,9 +29,9 @@ class ContinuityCliTests(unittest.TestCase):
 
     def invoke(self, *arguments, now=NOW):
         out, err = io.StringIO(), io.StringIO()
-        with patch.object(cli, "load_config", side_effect=AssertionError("offline command read config")), \
-                patch.object(cli, "_client", side_effect=AssertionError("offline command contacted Herdr")), \
-                patch.object(cli, "load_state_checked", side_effect=AssertionError("offline command read dispatch state")):
+        with forbid_reads(default_config_path(), reason="offline command read config"), \
+                forbid_processes("offline command contacted Herdr"), \
+                forbid_reads(self.state, reason="offline command read dispatch state"):
             code = cli.main([*arguments, "--state", str(self.state), "--now", now], stdout=out, stderr=err)
         return code, json.loads(out.getvalue()) if out.getvalue() else None, err.getvalue()
 

@@ -17,6 +17,8 @@ if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
 
 import contextlib
+import copy
+import os
 import io
 import json
 import shutil
@@ -28,6 +30,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from teamlead import attention, cli
+from teamlead import retrospective as notes
 from teamlead.cli import build_parser, main
 from teamlead.errors import UsageError
 from teamlead.herdr import HerdrClient
@@ -35,6 +38,7 @@ from teamlead.state import STATE_SCHEMA_VERSION, add_assignment, empty_state, sa
 
 from tests.fakes import (
     FakeRunner,
+    PhasedReads,
     ScriptedReads,
     agent_json,
     composer_reads,
@@ -114,11 +118,8 @@ class CliCase(unittest.TestCase):
     """Shared temp workspace: config, state, briefs, snapshot."""
 
     def setUp(self):
-        # These fixtures isolate the existing CLI/dispatch contracts. Real
-        # retrospective gates and storage are exercised in test_retrospective_runtime.
-        retro = patch("teamlead.cli.retrospective_runtime.Guard")
-        retro.start()
-        self.addCleanup(retro.stop)
+        # The real retrospective Guard gates every dispatch; run_cli records
+        # the coverage it asks for before each apply (see cover_retrospective).
         self.tmp = Path(tempfile.mkdtemp(prefix="teamlead-cli-test-"))
         self.addCleanup(shutil.rmtree, self.tmp)
         self.config = self.tmp / "config.json"
@@ -145,8 +146,125 @@ class CliCase(unittest.TestCase):
         self.err = io.StringIO()
 
     def run_cli(self, argv, client=None):
+        if client is not None and ("apply" in argv or "start-judge" in argv) and "--dry-run" not in argv:
+            self.cover_retrospective(argv, client)
         code = main(argv, stdout=self.out, stderr=self.err, client=client)
         return code, self.out.getvalue(), self.err.getvalue()
+
+    #: Bound on rehearsals; each one records the coverage of one more refusal.
+    RETROSPECTIVE_REHEARSALS = 8
+
+    def cover_retrospective(self, argv, client):
+        """Record the retrospective coverage the real Guard requires for `argv`.
+
+        Rehearses the command against a deep copy of the fake transport, so the
+        test's own transport sees no extra calls. Each time the real Guard
+        refuses for missing coverage, the workspace is restored and the exact
+        descriptors from its refusal are committed through the real owner
+        writer (`retrospective.record`). The command the test then runs meets
+        an already-covered transition, as it would after a lead's retrospective.
+        """
+        # A fixture may wrap its FakeRunner in a checking function; rehearse
+        # against the fake transport underneath it.
+        runner = getattr(client, "_runner", None)
+        runner = runner if isinstance(runner, FakeRunner) else getattr(self, "runner", None)
+        if not isinstance(runner, FakeRunner):
+            return
+        state = self._state_argument(argv)
+        # argparse keeps the last --now, as some fixtures override a base one.
+        # Coverage is stamped with the command's own --now, never the wall
+        # clock. A command without one gets no coverage: if it reaches the
+        # real Guard it is refused the same way on every run date.
+        if "--now" not in argv:
+            return
+        at = argv[len(argv) - argv[::-1].index("--now")]
+        recorded = []
+        for _ in range(self.RETROSPECTIVE_REHEARSALS):
+            saved = self._save_workspace()
+            out, err = io.StringIO(), io.StringIO()
+            # A plain client: hooks a test patched onto its own client stay
+            # with the real run, never fire during rehearsal.
+            rehearsal = HerdrClient(binary=client.binary, runner=copy.deepcopy(runner))
+            try:
+                main(argv, stdout=out, stderr=err, client=rehearsal)
+            except (KeyboardInterrupt, AssertionError):
+                # A fixture interrupt, or a call the fixture never scripted:
+                # either way the gate's verdict, if any, is already on stderr.
+                pass
+            finally:
+                self._restore_workspace(saved)
+            refusal = self._retrospective_refusal(err.getvalue())
+            if refusal is None or refusal in recorded:
+                return
+            recorded.append(refusal)
+            self._record_coverage(state, refusal, at)
+
+    def _state_argument(self, argv):
+        return Path(argv[len(argv) - argv[::-1].index("--state")]) if "--state" in argv else self.state
+
+    def _save_workspace(self):
+        saved = {}
+        for path in sorted(self.tmp.rglob("*")):
+            if path.is_symlink():
+                saved[path] = ("link", os.readlink(path))
+            elif path.is_dir():
+                saved[path] = ("dir", None)
+            else:
+                # Plain file I/O: fixtures may patch pathlib reads for the command.
+                with open(path, "rb") as handle:
+                    saved[path] = ("file", handle.read())
+        return saved
+
+    def _restore_workspace(self, saved):
+        # Restore in place: a lock file a test holds keeps its inode.
+        for path in sorted(self.tmp.rglob("*"), reverse=True):
+            if path not in saved or saved[path][0] != ("link" if path.is_symlink() else "dir" if path.is_dir() else "file"):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+        for path, (kind, value) in saved.items():
+            if kind == "dir":
+                path.mkdir(parents=True, exist_ok=True)
+            elif kind == "link":
+                if not path.is_symlink():
+                    path.symlink_to(value)
+            else:
+                current = None
+                if path.exists():
+                    with open(path, "rb") as handle:
+                        current = handle.read()
+                if current != value:
+                    with open(path, "wb") as handle:
+                        handle.write(value)
+
+    @staticmethod
+    def _retrospective_refusal(stderr):
+        start = stderr.find("{\n")
+        if start < 0:
+            return None
+        try:
+            error = json.loads(stderr[start:])
+        except json.JSONDecodeError:
+            return None
+        if "A retrospective is due" not in error.get("message", ""):
+            return None
+        return error["details"]["coverage"]
+
+    def _record_coverage(self, state, coverage, at):
+        self.retrospective_records = getattr(self, "retrospective_records", 0) + 1
+        inputs = self.tmp / "retrospective-inputs"
+        inputs.mkdir(exist_ok=True)
+        note = inputs / "note.md"
+        note.write_text("# Fixture retrospective\n" + "".join(
+            "\n## " + section + "\nFixture observations and a concrete next action.\n" for section in notes.SECTIONS))
+        check = inputs / "check.json"
+        check.write_text(json.dumps({"coverage": coverage}))
+        with notes.lock(state):
+            notes.record(state, {"id": "fixture-{}".format(self.retrospective_records), "note": str(note),
+                                 "period_start": at, "period_end": at, "triggers": ["daily", "transition"],
+                                 "tasks": [], "participants": [], "unavailable": {}, "sources": [],
+                                 "completed": True, "check": str(check)}, coverage, at)
 
     def base(self):
         return ["--config", str(self.config), "--state", str(self.state)]
@@ -1369,11 +1487,12 @@ class ApplyCommandTest(CliCase):
 
     def test_identity_appearing_after_first_prompt_supports_the_next_retained_fix(self):
         client = self._client({"grok": "idle"})
-        self.runner.responses["agent get grok"] = ScriptedReads([
-            agent_json("grok", "idle", "w4:p1", "previous-task"),
-            agent_json("grok", "idle", "w4:p1"),
-            agent_json("grok", "working", "w4:p1"),
-            agent_json("grok", "working", "w4:p1", "delayed-native-id"),
+        # Before the clear, after the clear, then after the prompt.
+        self.runner.responses["agent get grok"] = PhasedReads([
+            (None, [agent_json("grok", "idle", "w4:p1", "previous-task")]),
+            ("pane send-text w4:p1 /new", [agent_json("grok", "idle", "w4:p1")]),
+            ("agent prompt grok", [agent_json("grok", "working", "w4:p1"),
+                                   agent_json("grok", "working", "w4:p1", "delayed-native-id")]),
         ])
         args = self._fix_args(1)
         position = args.index("--fix-round")
@@ -1406,9 +1525,10 @@ class ApplyCommandTest(CliCase):
                 save_state(self.state, empty_state())
                 self.out, self.err = io.StringIO(), io.StringIO()
                 client = self._client({"grok": "idle"})
-                self.runner.responses["agent get grok"] = ScriptedReads([
-                    agent_json("grok", "idle", "w4:p1", "old-session"),
-                    agent_json("grok", "idle", "w4:p1", before), after,
+                self.runner.responses["agent get grok"] = PhasedReads([
+                    (None, [agent_json("grok", "idle", "w4:p1", "old-session")]),
+                    ("pane send-text w4:p1 /new", [agent_json("grok", "idle", "w4:p1", before)]),
+                    ("agent prompt grok", [after]),
                 ])
                 args = self._fix_args(1)
                 position = args.index("--fix-round")
@@ -1422,6 +1542,62 @@ class ApplyCommandTest(CliCase):
                 self.assertTrue(err)
                 self.assertEqual(sum(command.startswith("agent prompt grok 'New assignment")
                                      for command in self.runner.commands()), 1)
+
+    def _plain_apply(self):
+        return self.base() + ["apply", "--composer-settle", "0", "--assignments", json.dumps({"developer": "grok"}),
+                              "--common", str(self.common), "--now", AT] + self.brief_args("developer")
+
+    def _direct(self, argv, client=None):
+        # Straight to main, skipping run_cli's recorded coverage: the real
+        # retrospective Guard alone decides.
+        out, err = io.StringIO(), io.StringIO()
+        code = main(argv, stdout=out, stderr=err, client=client)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    def _error(stderr):
+        return json.loads(stderr[stderr.find("{\n"):])
+
+    def test_real_retrospective_gate_refuses_an_uncovered_transition(self):
+        client = self._client({"grok": "idle"})
+        code, out, err = self._direct(self._plain_apply(), client)
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        error = self._error(err)
+        self.assertIn("A retrospective is due before dispatch", error["message"])
+        self.assertEqual(error["details"]["missing_coverage"], ["grok"])
+        self.assertEqual(self.runner.writes(), [])
+        self.assertFalse(self.state.exists() and json.loads(self.state.read_text())["assignments"])
+
+    def test_real_retrospective_gate_accepts_a_recorded_transition(self):
+        code, _, err = self._direct(self._plain_apply(), self._client({"grok": "idle"}))
+        self.assertEqual(code, 1)
+        item = self._error(err)["details"]["request"]["transitions"][0]
+        reason = "First dispatch to this worker; no prior report exists."
+        request = self.tmp / "retro-request.json"
+        request.write_text(json.dumps({"transitions": [{**item, "unavailable": reason}]}))
+        code, out, err = self._direct(self.base() + ["retro-check", "--record", str(request), "--now", AT],
+                                      self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["due"])
+        check = self.tmp / "retro-check.json"
+        check.write_text(out)
+        note = self.tmp / "retro-note.md"
+        note.write_text("# Retrospective\n" + "".join(
+            "\n## " + section + "\nObserved the idle worker; brief it next.\n" for section in notes.SECTIONS))
+        record = self.tmp / "retro-record.json"
+        record.write_text(json.dumps({"id": "before-first-dispatch", "note": str(note), "period_start": AT,
+                                      "period_end": AT, "triggers": ["daily", "transition"], "tasks": [],
+                                      "participants": [], "unavailable": {"grok": reason}, "sources": [],
+                                      "completed": True, "check": str(check)}))
+        code, _, err = self._direct(self.base() + ["retro-record", "--record", str(record), "--now", AT],
+                                    self._client({"grok": "idle"}))
+        self.assertEqual(code, 0, err)
+        client = self._client({"grok": "idle"})
+        code, out, err = self._direct(self._plain_apply(), client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["applied"][0]["status"], "applied")
+        self.assertEqual(sum(command.startswith("agent prompt grok") for command in self.runner.commands()), 1)
 
     def test_missing_brief_flag_is_an_actionable_error(self):
         client = self._client({})

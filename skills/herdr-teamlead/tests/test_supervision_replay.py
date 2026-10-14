@@ -7,14 +7,15 @@ if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
 
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from teamlead import supervision as store
 from teamlead import supervision_hook as hook
 from teamlead.errors import StateError, UsageError
+from tests.fakes import failing_replace, replaces_into
 
 AT = "2026-09-01T12:00:00+00:00"
 DEADLINE = "2026-09-01T12:00:30+00:00"
@@ -164,12 +165,7 @@ class SupervisionReplayTest(unittest.TestCase):
 
     def test_existing_owner_survives_interrupted_generation_handoff_retry(self):
         new_who = store.identity("replacement", str(self.root), "fixture", pane_id="p0")
-        save = store.save_state
-        def fail_owner(path, data):
-            if Path(path) == store.store_path(self.path):
-                raise StateError("Owner commit interrupted; retry it.", {})
-            return save(path, data)
-        with patch.object(store, "save_state", side_effect=fail_owner):
+        with failing_replace(replaces_into(store.store_path(self.path)), "Owner commit interrupted; retry it."):
             with self.assertRaises(StateError):
                 store.bind(self.path, new_who, LATER, root=self.bindings)
         self.assertEqual(self.stop("replacement")["decision"], "block")
@@ -188,12 +184,9 @@ class SupervisionReplayTest(unittest.TestCase):
     def test_interrupted_first_bind_retries_from_unbound_empty_owner(self):
         other = self.root / "first-use.json"
         other_who = store.identity("first-lead", str(self.root), "fixture", pane_id="p2")
-        save = store.save_state
-        def fail_bound_owner(path, data):
-            if Path(path) == store.store_path(other) and data["binding"] is not None:
-                raise StateError("Initial binding commit interrupted; retry it.", {})
-            return save(path, data)
-        with patch.object(store, "save_state", side_effect=fail_bound_owner):
+        def bound_owner(source, target):
+            return target == store.store_path(other) and json.loads(source.read_text())["binding"] is not None
+        with failing_replace(bound_owner, "Initial binding commit interrupted; retry it."):
             with self.assertRaises(StateError):
                 store.bind(other, other_who, AT, root=self.bindings)
         self.assertIsNone(store.load(other)["binding"])

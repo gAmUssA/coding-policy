@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.8.3 — 2026-10-14
+
+### Changed
+
+- **Herdr test fakes moved to the process boundary** (#11). The Herdr and Codex-hook suites no longer patch teamlead's own functions: `retro._install_note`, `save_state`, `supervision.enroll`, `assign.send_message`, `report_delivery.source_path`, `memory.state_lock`, `recovery.receipt`, `RECOVERY_STORE_VERSION`, the adapter's `run_hook`, and the CLI fixtures' `retrospective_runtime.Guard`. Each failure is now caused at the boundary underneath: `os.replace`/`os.link`, a FakeRunner interrupt, fixture session trees under `CODEX_HOME`/`CLAUDE_CONFIG_DIR`, `fcntl.flock`, sockets, and `Popen.communicate`. Shared helpers in `tests/fakes.py` cover these boundaries: `failing_replace`, `forbid_reads`, `forbid_writes`, `forbid_processes`, `forbid_locks`, `forbid_network` and `PhasedReads`. CLI fixtures now pass the real retrospective Guard by recording the coverage it asks for through `retrospective.record`. Two CLI tests show the gate refusing and accepting. Each rewritten test was shown failing against a broken production line, and no production code changed.
+
 ## 0.8.2 — 2026-10-14
 
 ### Changed

@@ -24,6 +24,7 @@ from teamlead import supervision as store
 from teamlead import supervision_runtime as runtime
 from teamlead import supervision_hook as hook
 from teamlead.errors import HerdrError, StateError, UsageError
+from tests.fakes import failing_replace, replaces_into
 
 AT = "2026-09-01T12:00:00+00:00"
 PROCESS = {"pid": 101, "identity": "live-process-identity"}
@@ -373,12 +374,7 @@ class SupervisionTest(unittest.TestCase):
     def test_interrupted_new_lead_binding_blocks_new_session_until_retry(self):
         self.member()
         new_who = store.identity("new-lead", str(self.root), "fixture", pane_id="lead-pane")
-        original_save = store.save_state
-        def fail_owner(path, data):
-            if Path(path) == store.store_path(self.path):
-                raise StateError("Simulated interrupted owner commit; retry binding.", {})
-            return original_save(path, data)
-        with patch.object(store, "save_state", side_effect=fail_owner):
+        with failing_replace(replaces_into(store.store_path(self.path)), "Simulated interrupted owner commit; retry binding."):
             with self.assertRaises(StateError):
                 store.bind(self.path, new_who, AT, root=self.bindings)
         self.assertEqual(self.stop({**self.payload, "session_id": "new-lead"})["decision"], "block")

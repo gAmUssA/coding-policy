@@ -15,7 +15,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from teamlead.cli import COMMANDS, build_parser, main
 from teamlead.errors import UsageError
@@ -239,11 +238,14 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
             }, AT, "judge")
         self.assertEqual(self.path.read_bytes(), before)
 
-    def test_schema8_reader_refuses_schema9_without_overwrite(self):
+    def test_reader_refuses_a_newer_recovery_store_without_overwrite(self):
+        # A store one version ahead of this build is what an older reader
+        # meets after an upgrade elsewhere; it must not be read or rewritten.
         self.install_receipts()
+        self.state["recovery"]["schema_version"] = 10
+        self.write_state()
         before = self.path.read_bytes()
-        with patch("teamlead.recovery.RECOVERY_STORE_VERSION", 8):
-            _, usable = load_state_checked(self.path, warn=lambda _: None, persist_migration=False)
+        _, usable = load_state_checked(self.path, warn=lambda _: None, persist_migration=False)
         self.assertFalse(usable)
         self.assertEqual(self.path.read_bytes(), before)
 

@@ -3,10 +3,23 @@
 `FakeRunner` is a scripted stand-in for `subprocess.run`: it matches a call by
 the first few argv tokens, records every invocation, and returns a canned
 result. Nothing here starts a process.
+
+The context managers at the bottom fake the other process boundaries the
+suites exercise -- the filesystem, process spawning, process locks and the
+network -- so a test induces a failure, or forbids an effect, at the syscall
+wrapper instead of replacing a teamlead function.
 """
 
+import contextlib
+import fcntl
+import os
 import shlex
 import json
+import socket
+import subprocess
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 
 class FakeCompleted:
@@ -78,6 +91,8 @@ class FakeRunner:
                 )
             )
         response = self.responses[best]
+        if isinstance(response, PhasedReads):
+            response = response.next_completed(self)
         if isinstance(response, ScriptedReads):
             response = response.next_completed()
         if argv[1:3] == ["agent", "get"] and response.returncode == 0:
@@ -142,6 +157,39 @@ class ScriptedReads:
         return FakeCompleted(0, text, "")
 
 
+class PhasedReads:
+    """A response that changes when the worker's terminal receives input.
+
+    `phases` is a list of `(command_prefix, texts)`. The first phase's prefix
+    is None; a later phase starts once the runner has recorded a command
+    starting with its prefix (a clear, a prompt, a kill, a start), after the
+    previous phase's command. Within a phase, reads walk `texts` and the last
+    one repeats. However many read-only probes run between two actions
+    (readiness, retrospective evidence), each sees the same worker.
+    """
+
+    def __init__(self, phases):
+        self._phases = [(prefix, list(texts)) for prefix, texts in phases]
+        self._reads = [0] * len(self._phases)
+
+    def _phase(self, runner):
+        commands, current, cursor = runner.commands(), 0, 0
+        for index, (prefix, _texts) in enumerate(self._phases[1:], start=1):
+            match = next((position for position in range(cursor, len(commands))
+                          if commands[position].startswith(prefix)), None)
+            if match is None:
+                break
+            current, cursor = index, match + 1
+        return current
+
+    def next_completed(self, runner):
+        phase = self._phase(runner)
+        texts = self._phases[phase][1]
+        text = texts[min(self._reads[phase], len(texts) - 1)]
+        self._reads[phase] += 1
+        return FakeCompleted(0, text, "")
+
+
 #: The composer row each agent draws, keyed by the glyph in its config.
 COMPOSER_GLYPHS = {"claude": "❯ ", "codex": "› ", "grok": "│ ❯"}
 
@@ -195,3 +243,77 @@ def agent_json(name, status, pane_id, session_id=None):
 def ok_json(kind="ok"):
     """A generic successful control response."""
     return '{"id":"cli:test","result":{"type":"%s"}}' % kind
+
+
+@contextlib.contextmanager
+def failing_replace(predicate, message="injected replace failure"):
+    """Fail `os.replace` -- the commit step of every atomic state write.
+
+    `predicate(source, target)` receives both paths; the temporary `source`
+    is still readable, so a predicate can inspect the bytes about to land.
+    Every other replace runs for real.
+    """
+    real = os.replace
+
+    def replace(source, target, *args, **kwargs):
+        if predicate(Path(source), Path(target)):
+            raise OSError(message)
+        return real(source, target, *args, **kwargs)
+
+    with patch.object(os, "replace", replace):
+        yield
+
+
+def replaces_into(path):
+    """A `failing_replace` predicate matching writes that land on `path`."""
+    path = Path(path)
+    return lambda _source, target: target == path
+
+
+@contextlib.contextmanager
+def forbid_writes(reason="unexpected filesystem write"):
+    """Raise AssertionError at every atomic-write syscall (mkstemp, replace, link)."""
+    with patch.object(tempfile, "mkstemp", side_effect=AssertionError(reason)), \
+            patch.object(os, "replace", side_effect=AssertionError(reason)), \
+            patch.object(os, "link", side_effect=AssertionError(reason)):
+        yield
+
+
+@contextlib.contextmanager
+def forbid_reads(*paths, reason="unexpected read"):
+    """Raise AssertionError when any of `paths` is read through pathlib."""
+    forbidden = {Path(path).expanduser().resolve() for path in paths}
+    originals = {name: getattr(Path, name) for name in ("read_text", "read_bytes", "open")}
+
+    def guarded(name):
+        def method(self, *args, **kwargs):
+            if self.expanduser().resolve() in forbidden:
+                raise AssertionError("{}: {}".format(reason, self))
+            return originals[name](self, *args, **kwargs)
+        return method
+
+    with contextlib.ExitStack() as stack:
+        for name in originals:
+            stack.enter_context(patch.object(Path, name, guarded(name)))
+        yield
+
+
+@contextlib.contextmanager
+def forbid_processes(reason="unexpected child process"):
+    """Raise AssertionError when anything spawns a process (Herdr, git, ps)."""
+    with patch.object(subprocess, "Popen", side_effect=AssertionError(reason)):
+        yield
+
+
+@contextlib.contextmanager
+def forbid_locks(reason="unexpected process lock"):
+    """Raise AssertionError when anything takes an OS file lock."""
+    with patch.object(fcntl, "flock", side_effect=AssertionError(reason)):
+        yield
+
+
+@contextlib.contextmanager
+def forbid_network(reason="unexpected network access"):
+    """Raise AssertionError when anything opens a socket."""
+    with patch.object(socket, "socket", side_effect=AssertionError(reason)):
+        yield

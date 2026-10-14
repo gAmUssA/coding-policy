@@ -449,8 +449,11 @@ class RecoveryCommandTests(fixture.CliCase):
         code, _, err = self.owner("record-report", {"dispatch": dispatch, "head_revision": HEAD, "verdict": "blocking",
             "review_mode": "full", "reviewer": "codex", "report": str(review), "changed_paths": ["src/parser.py"]})
         self.assertEqual(code, 0, err)
-        with patch("teamlead.assign.send_message", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
-            self.invoke(self.apply_args("developer", 7, *extra), self.fresh_client("fix-6", "fix-7-interrupted"))
+        client = self.fresh_client("fix-6", "fix-7-interrupted")
+        # The operator interrupts while the brief is being pasted.
+        self.runner.raises["agent prompt grok"] = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.invoke(self.apply_args("developer", 7, *extra), client)
         pending = self.saved()["recovery"]["dispatches"][-1]
         self.assertEqual(pending["status"], "sending")
         code, _, err = self.invoke(self.apply_args("developer", 7, *extra), self._client({}))
@@ -499,7 +502,8 @@ class RecoveryCommandTests(fixture.CliCase):
         self.register()
         args = self.apply_args("developer", None, "--dispatch-id", "interrupted")
         client = self.fresh_client("old", "started-session")
-        with patch("teamlead.assign.send_message", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+        self.runner.raises["agent prompt grok"] = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
             self.invoke(args, client)
         self.assertEqual(self.saved()["assignments"], [])
         self.assertEqual(self.saved()["recovery"]["dispatches"][0]["status"], "sending")

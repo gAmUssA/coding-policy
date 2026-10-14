@@ -476,14 +476,16 @@ class StaleGrokDeliveryTests(unittest.TestCase):
             self.assertEqual(delivery.source_root('grok'), home / 'sessions')
 
     def test_report_changed_during_verification_cannot_get_a_receipt(self):
-        real_receipt = recovery.receipt
+        real_read = Path.read_bytes
+        plan = Path(self.data['plan'])
         def change_report(path):
-            result = real_receipt(path)
-            if path == self.data['plan']:
+            # The report changes on disk right after the plan's bytes are read.
+            data = real_read(path)
+            if path == plan:
                 Path(self.data['report']).write_text('changed during verification')
-            return result
+            return data
         before = copy.deepcopy(self.document)
-        with patch.object(recovery, 'receipt', side_effect=change_report):
+        with patch.object(Path, 'read_bytes', change_report):
             with self.assertRaisesRegex(UsageError, 'grok_evidence_changed'):
                 self.recover()
         self.assertEqual(self.document, before)
