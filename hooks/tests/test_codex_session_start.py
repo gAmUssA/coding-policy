@@ -155,21 +155,32 @@ class CodexSessionStart(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("inspect the plugin installation", result.stderr)
 
-    def test_child_timeout_is_reported(self):
-        spec = importlib.util.spec_from_file_location("codex_session_start", ADAPTER)
+    def load_adapter(self):
+        # Load the installed copy so its ROOT is the fixture plugin root.
+        spec = importlib.util.spec_from_file_location(
+            "codex_session_start", self.root / "hooks/codex-session-start.py"
+        )
         assert spec is not None and spec.loader is not None
         adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(adapter)
+        return adapter
+
+    def test_child_timeout_is_reported(self):
+        (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
+        adapter = self.load_adapter()
+        communicate = subprocess.Popen.communicate
+
+        def time_out(process, input=None, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            # Bound cleanup in the test, so a regression fails instead of hanging.
+            return communicate(process, input=input, timeout=5)
+
         errors = io.StringIO()
         with (
-            patch.object(adapter, "ROOT", self.root),
             patch.object(sys, "argv", ["hook", "check.sh"]),
             patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
-            patch.object(
-                adapter,
-                "run_hook",
-                side_effect=subprocess.TimeoutExpired("fixture", 45),
-            ),
+            patch.object(subprocess.Popen, "communicate", time_out),
             redirect_stderr(errors),
         ):
             self.assertEqual(adapter.main(), 1)
@@ -183,10 +194,7 @@ class CodexSessionStart(unittest.TestCase):
             "python3 -c 'import os, signal; print(os.getpid(), flush=True); signal.pause()' &\n"
             "wait\n"
         )
-        spec = importlib.util.spec_from_file_location("codex_session_start", ADAPTER)
-        assert spec is not None and spec.loader is not None
-        adapter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(adapter)
+        adapter = self.load_adapter()
         communicate = subprocess.Popen[str].communicate
         descendants: list[tuple[int, int]] = []
 
@@ -212,7 +220,6 @@ class CodexSessionStart(unittest.TestCase):
         errors = io.StringIO()
         try:
             with (
-                patch.object(adapter, "ROOT", self.root),
                 patch.object(sys, "argv", ["hook", "check.sh"]),
                 patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
                 patch.object(subprocess.Popen, "communicate", timeout_when_ready),
