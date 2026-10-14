@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -227,7 +228,44 @@ class CodexSessionStart(unittest.TestCase):
                     continue
 
 
+# Every source Codex emits: codex-rs/hooks/src/events/session_start.rs
+# `SessionStartSource::as_str` (openai/codex rust-v0.160.0).
+CODEX_SESSION_START_SOURCES = ("startup", "resume", "clear", "compact", "fork")
+
+
+def codex_matcher_selects(matcher, source):
+    """Mirror codex-rs/hooks/src/engine/matcher.rs `HookMatcher::matches`."""
+    if matcher is None or matcher in ("", "*"):
+        return True
+    if all(ch.isascii() and (ch.isalnum() or ch in "_|") for ch in matcher):
+        return source in matcher.split("|")
+    return re.search(matcher, source) is not None
+
+
 class CodexPackage(unittest.TestCase):
+    def test_every_session_start_source_runs_every_handler(self):
+        groups = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"][
+            "SessionStart"
+        ]
+        registered = [hook["command"] for group in groups for hook in group["hooks"]]
+        for source in CODEX_SESSION_START_SOURCES:
+            with self.subTest(source=source):
+                selected = [
+                    hook["command"]
+                    for group in groups
+                    if codex_matcher_selects(group.get("matcher"), source)
+                    for hook in group["hooks"]
+                ]
+                self.assertIn(
+                    'python3 "${PLUGIN_ROOT}/hooks/codex-session-start.py"', selected
+                )
+                self.assertEqual(selected, registered)
+
+    def test_matcher_model_rejects_unlisted_source(self):
+        self.assertFalse(codex_matcher_selects("startup|resume", "fork"))
+        self.assertTrue(codex_matcher_selects("startup|fork", "fork"))
+        self.assertTrue(codex_matcher_selects(None, "fork"))
+
     def test_manifest_version_and_skills_match_tessl(self):
         codex = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         tessl = json.loads((ROOT / ".tessl-plugin/plugin.json").read_text())
