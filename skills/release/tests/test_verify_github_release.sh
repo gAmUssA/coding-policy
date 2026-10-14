@@ -41,6 +41,12 @@
 # shellcheck disable=SC2329  # test cases run indirectly via run() ("$@" dispatch); shellcheck cannot trace dynamic invocation
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/verify-github-release.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: verify-github-release.sh not executable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required — the transport mock filters fixtures with it" >&2; exit 2; }
@@ -533,6 +539,6 @@ test_missing_gh() {
 run "missing gh exits 2 with an install hint" test_missing_gh
 
 echo
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
 exit "$FAIL_COUNT"

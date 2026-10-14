@@ -21,11 +21,15 @@
 # A shell harness's exit code alone cannot prove it ran anything: each one
 # exits on its failure count, so a harness whose cases were all removed or
 # never reached exits 0 (#26). Every shell harness therefore prints its
-# counts as a summary line, and a shell suite exiting 0 passes only when its
-# LAST such line reports at least one pass and zero failures:
-#   test-summary: passed=<N> failed=<M>
-# The last line wins so a harness that runs another harness is judged by its
-# own summary, never the nested one. A Python suite needs no line: unittest
+# counts as a summary line, and a shell suite exiting 0 passes only when it
+# printed a summary carrying its own token, reporting at least one pass and
+# zero failures:
+#   test-summary: passed=<N> failed=<M> token=<TEST_SUMMARY_TOKEN>
+# The runner exports a fresh TEST_SUMMARY_TOKEN for each suite. A harness
+# saves it and unsets it before running anything, so a harness it runs prints
+# an empty token and a nested runner hands out tokens of its own. Neither
+# kind of nested summary can stand in for the suite's own (#31), wherever it
+# sits in the output. A Python suite needs no line: unittest
 # exits non-zero on "NO TESTS RAN".
 #
 # Output contract (rules/script-delegation.md — structured stdout):
@@ -92,25 +96,26 @@ run_suite() {
   "$interp" "$suite"
 }
 
-# Judge a shell suite that exited 0 by its own summary line (see header).
-# Prints the reason on stdout when the suite fails the contract; prints
-# nothing when it passes. Returns 1 on a contract failure.
-SUMMARY_RE='^test-summary: passed=([0-9]+) failed=([0-9]+)$'
+# Judge a shell suite that exited 0 by the summary line carrying its token
+# (see header). Prints the reason on stdout when the suite fails the
+# contract; prints nothing when it passes. Returns 1 on a contract failure.
+SUMMARY_RE='^test-summary: passed=([0-9]+) failed=([0-9]+) token=(.*)$'
 summary_verdict() {
-  local output="$1" line last=""
-  while IFS= read -r line; do
-    [[ "$line" =~ $SUMMARY_RE ]] && last="$line"
+  local output="$1" token="$2" line passed="" failed=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ $SUMMARY_RE ]] && [[ "${BASH_REMATCH[3]}" == "$token" ]]; then
+      passed="${BASH_REMATCH[1]}" failed="${BASH_REMATCH[2]}"
+    fi
   done < "$output"
-  if [[ -z "$last" ]]; then
-    echo "exited 0 with no test-summary line — print 'test-summary: passed=<N> failed=<M>' as its last summary"
+  if [[ -z "$passed" ]]; then
+    echo "exited 0 without a test-summary line carrying its token — print 'test-summary: passed=<N> failed=<M> token=\${TEST_SUMMARY_TOKEN}' (saved before running anything)"
     return 1
   fi
-  [[ "$last" =~ $SUMMARY_RE ]]
-  if (( BASH_REMATCH[2] > 0 )); then
-    echo "exited 0 but reported ${BASH_REMATCH[2]} failed"
+  if (( failed > 0 )); then
+    echo "exited 0 but reported ${failed} failed"
     return 1
   fi
-  if (( BASH_REMATCH[1] == 0 )); then
+  if (( passed == 0 )); then
     echo "exited 0 but ran zero cases"
     return 1
   fi
@@ -215,19 +220,23 @@ main() {
   #
   # A suite's output is captured to a file, not piped through `tee`: a pipe
   # would run run_suite in a subshell and lose the side channel.
-  local failed=() setup_error="" suite_out reason
+  local failed=() setup_error="" suite_out reason token n=0
   suite_out="$(mktemp)"
   for s in "${suites[@]}"; do
     echo "▶ $s" >&2
     local suite_rc=0
     DISPATCH_FAULT_SUITE=""
-    run_suite "$s" > "$suite_out" 2>&1 || suite_rc=$?
+    # A nonce, not a secret: it only has to differ from any token a nested
+    # run hands out.
+    n=$((n + 1))
+    token="$$-${n}-${RANDOM}${RANDOM}"
+    TEST_SUMMARY_TOKEN="$token" run_suite "$s" > "$suite_out" 2>&1 || suite_rc=$?
     cat "$suite_out" >&2
     if [[ -n "$DISPATCH_FAULT_SUITE" ]]; then
       setup_error="$DISPATCH_FAULT_SUITE"
       break
     fi
-    if [[ $suite_rc -eq 0 && "$s" == *.sh ]] && ! reason="$(summary_verdict "$suite_out")"; then
+    if [[ $suite_rc -eq 0 && "$s" == *.sh ]] && ! reason="$(summary_verdict "$suite_out" "$token")"; then
       echo "  ✗ $s — $reason" >&2
       failed+=("$s")
     elif [[ $suite_rc -eq 0 ]]; then

@@ -7,6 +7,12 @@
 
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/../templates" && pwd)/mask-secrets.sh"
 [[ -f "$SCRIPT" && -r "$SCRIPT" ]] || { echo "fatal: mask-secrets.sh not readable at $SCRIPT" >&2; exit 2; }
 
@@ -49,6 +55,6 @@ t_masks_long_tokens
 t_skips_short_fields
 t_missing_file_ok
 t_bad_args
-echo "test-summary: passed=${pass} failed=${fail}"
 echo "== summary: ${pass} passed, ${fail} failed =="
+echo "test-summary: passed=${pass} failed=${fail} token=${SUMMARY_TOKEN}"
 [[ "$fail" -eq 0 ]]

@@ -31,6 +31,12 @@
 # Run: bash hooks/tests/test_check_git_sync.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 die() { echo "fatal: $*" >&2; exit 2; }
 
 cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
@@ -212,10 +218,10 @@ main() {
   sv9=""; read -r sv9 _ < "$stampdir9/sync-$key9" || sv9=""
   if [[ "$sv9" == "2" ]]; then pass; else fail "future stamp: expected preserved version 2, got '$sv9'"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2
+  echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

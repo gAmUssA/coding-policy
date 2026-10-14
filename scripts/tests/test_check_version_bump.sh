@@ -18,6 +18,12 @@
 # Run: bash scripts/tests/test_check_version_bump.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-version-bump.sh"
 [[ -f "$SCRIPT" && -r "$SCRIPT" ]] || { echo "fatal: script not readable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "fatal: jq required" >&2; exit 2; }
@@ -98,10 +104,10 @@ main() {
   run "$TMP/8" '{"version":"0.1.0"}'
   if [[ $RC -eq 2 ]]; then pass; else fail "missing manifest: RC=$RC"; fi
 
-  echo "test-summary: passed=${PASS} failed=${FAIL}"
   echo "─────────────────────────────────────────────"
   if (( FAIL > 0 )); then echo "FAILED: ${FAIL} of $((PASS+FAIL)) checks" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks"
+  echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
 }
 
 main "$@"

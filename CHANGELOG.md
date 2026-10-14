@@ -4,6 +4,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 (`rules/context-artifacts.md` Writing Style). Authors write the `## <version> — <date>`
 heading by hand in the same PR that bumps `.tessl-plugin/plugin.json`.
 
+## 0.7.12 — 2026-10-13
+
+### Fixed
+
+- **A shell suite's summary is bound to the suite by a per-suite token** (#31). 0.7.11 judged a shell suite exiting 0 by its last `test-summary:` line anywhere in its output. A harness that echoed a nested harness's passing summary and then exited 0 before printing its own inherited the nested line and passed: the same early-exit shape #26 closed. Requiring the summary to be the final output line was tried first and is not enough: a nested summary immediately followed by `exit 0` is itself the final line (the policy reviewer's blocking finding on #32). The runner now exports a fresh `TEST_SUMMARY_TOKEN` for each suite and accepts only a summary line carrying it, `test-summary: passed=<N> failed=<M> token=<token>`. Every harness saves the token and unsets it before running anything, so a harness it runs directly prints an empty token, and a nested runner hands out tokens of its own. Seven cases in `scripts/tests/test_run_tests.sh` cover the rejections (zero passes, no line, reported failures, an untokened line, another run's token, an inner harness's summary) and the accept case of an outer harness's own tokened summary followed by an inner one. With the previous runner restored, the untokened-summary case passes when it must fail.
+
 ## 0.7.11 — 2026-10-13
 
 ### Fixed

@@ -16,6 +16,12 @@
 # Run: bash hooks/tests/test_check_policy_freshness.sh
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/check-policy-freshness.sh"
 [[ -f "$SCRIPT" && -r "$SCRIPT" ]] || { echo "fatal: hook not found/readable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "fatal: jq required for these tests" >&2; exit 2; }
@@ -91,7 +97,7 @@ d="$TMP/c6"
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW="not-a-number"
 if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "invalid clock: expected silent exit 0, got RC=$RC OUT=$OUT"; fi
 
-echo "test-summary: passed=${PASS} failed=${FAIL}"
 echo "─────────────────────────────────────────────" >&2
 if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
 echo "PASSED: all ${PASS} checks" >&2
+echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"

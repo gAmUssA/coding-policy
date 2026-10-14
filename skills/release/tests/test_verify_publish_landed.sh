@@ -19,6 +19,12 @@
 # shellcheck disable=SC2329  # test cases run indirectly via run() ("$@" dispatch); shellcheck cannot trace dynamic invocation
 set -uo pipefail
 
+# The runner's per-suite token binds this suite's summary line to this
+# suite (scripts/run-tests.sh header). Unset it so a harness run from
+# here prints an empty token and never stands in for this one.
+SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
+unset TEST_SUMMARY_TOKEN
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/verify-publish-landed.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: verify-publish-landed.sh not executable at $SCRIPT" >&2; exit 2; }
 
@@ -415,6 +421,6 @@ run "main runs safely under set -euo pipefail"                     t_main_runs_u
 run "missing jq emits JSON on stdout AND diagnostic on stderr"     t_missing_jq_emits_json_AND_stderr
 run "output is valid JSON with documented shape"                   t_output_is_valid_json_with_documented_shape
 
-echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT}"
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
+echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
 [[ "$FAIL_COUNT" -eq 0 ]]
