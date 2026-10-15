@@ -150,6 +150,13 @@ def _error(message):
     raise ConfigError(message + " Update the agent's tiers in config.json.", {})
 
 
+def effort_rank(effort, unknown):
+    """Position in EFFORT_ORDER, 0 for no effort, `unknown` for any other value."""
+    if effort is None:
+        return 0
+    return EFFORT_ORDER.index(effort) + 1 if effort in EFFORT_ORDER else unknown
+
+
 def effort_at_or_above(effort, floor):
     return effort in EFFORT_ORDER and EFFORT_ORDER.index(effort) >= EFFORT_ORDER.index(floor)
 

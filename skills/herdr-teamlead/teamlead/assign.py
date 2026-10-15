@@ -58,7 +58,7 @@ from .chronology import latest_assignment
 from .state import MAX_FIX_ROUNDS
 from .recovery import developer_attempts, empty_recovery, fresh_transition, task_record, validate_work
 from .launch import restart_worker, verify_running, verify_running_permissions
-from .tiers import launch_flags, worker_launch_args
+from .tiers import effort_rank, launch_flags, worker_launch_args
 from .composition import normalize_requirement, parse_requirements
 
 # Version 3 adds verified model-tier metadata to context and task/fix evidence.
@@ -343,6 +343,23 @@ def validate_retained_history(assignments, history, task, fix_round):
     return prior
 
 
+def retained_developer_tier(previous_tier, wanted):
+    """The tier a retained fix runs on: the verified session's, never lower.
+
+    Refuses a model switch, an unverified prior tier, or a verified effort
+    below the requested one. A higher verified effort is kept with its cost.
+    """
+    if (not isinstance(previous_tier, dict) or not previous_tier.get("verified")
+            or previous_tier.get("model") != wanted["model"]
+            or effort_rank(previous_tier.get("effort"), -1) < effort_rank(wanted.get("effort"), 0)):
+        raise UsageError("Retained context cannot switch model or raise effort. Recover the task through an explicit fresh-round decision without resetting its counter.", {})
+    tier = {**wanted, "effort": previous_tier.get("effort")}
+    if previous_tier.get("effort") != wanted.get("effort"):
+        for key, default in (("multiplier", 1.0), ("effective_multiplier", 1.0), ("billing_window", "unknown")):
+            tier[key] = previous_tier.get(key, default)
+    return tier
+
+
 def validate_specialist_history(assignments, history, task, requirements, tiers):
     """Retain only the latest unchanged consultation with recorded tier proof."""
     role, name = next(iter(assignments.items()))
@@ -602,17 +619,7 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     tiers = dict(tiers or {})
     specialist_prior = validate_specialist_history(assignments, history, task, requirements, tiers) if retain_specialist else None
     if prior is not None and tiers.get("developer"):
-        previous_tier = prior.get("tier")
-        wanted = tiers["developer"]
-        effort_rank = {None: 0, "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
-        if (not isinstance(previous_tier, dict) or not previous_tier.get("verified")
-                or previous_tier.get("model") != wanted["model"]
-                or effort_rank.get(previous_tier.get("effort"), -1) < effort_rank.get(wanted.get("effort"), 0)):
-            raise UsageError("Retained context cannot switch model or raise effort. Recover the task through an explicit fresh-round decision without resetting its counter.", {})
-        tiers["developer"] = {**wanted, "effort": previous_tier.get("effort")}
-        if previous_tier.get("effort") != wanted.get("effort"):
-            for key, default in (("multiplier", 1.0), ("effective_multiplier", 1.0), ("billing_window", "unknown")):
-                tiers["developer"][key] = previous_tier.get(key, default)
+        tiers["developer"] = retained_developer_tier(prior.get("tier"), tiers["developer"])
     skip_clear = no_clear or retain_context or retain_specialist
     clear_reason = "retained" if retain_context or retain_specialist else "hand" if no_clear else "automatic"
     # Resolve the sink once. Every helper below defaults it too, but this
