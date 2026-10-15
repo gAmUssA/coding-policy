@@ -55,14 +55,14 @@ fi
 # poll-pr-reviews.sh.
 reviews_by() {
   local owner="$1" repo="$2" pr="$3" login="$4"
-  gh api --paginate "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" \
+  gh api --hostname github.com --paginate "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" \
     | jq -s --arg login "$login" \
         '(add // []) | [.[] | select(.user.login == $login) | {id, state, commit_id, submitted_at}]'
 }
 
 dismiss_review() {
   local owner="$1" repo="$2" pr="$3" review_id="$4"
-  gh api -X PUT \
+  gh api --hostname github.com -X PUT \
     "repos/${owner}/${repo}/pulls/${pr}/reviews/${review_id}/dismissals" \
     -f message="$DISMISS_MESSAGE" \
     -f event="DISMISS" >/dev/null
@@ -84,7 +84,7 @@ main() {
 
   for login in "${GATING_BOTS[@]}"; do
     reviews=$(reviews_by "$owner" "$repo" "$pr" "$login") \
-      || { echo "error: failed to fetch reviews for ${login} on ${owner}/${repo}#${pr} — run 'gh auth status' to verify auth, then retry" >&2; exit 1; }
+      || { echo "error: failed to fetch reviews for ${login} on ${owner}/${repo}#${pr} — run 'gh auth status --hostname github.com' to verify auth, then retry" >&2; exit 1; }
 
     # No reviews from this bot yet — nothing to do.
     [[ "$(jq 'length' <<<"$reviews")" == "0" ]] && continue

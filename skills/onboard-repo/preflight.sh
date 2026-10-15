@@ -77,8 +77,8 @@ check_gh() {
     push_failure "gh-installed" "GitHub CLI not found on PATH — install from https://cli.github.com/"
     return 0
   fi
-  gh auth status >/dev/null 2>&1 \
-    || push_failure "gh-authenticated" "GitHub CLI not authenticated — run 'gh auth login' (or 'gh auth refresh -h github.com')"
+  gh auth status --hostname github.com >/dev/null 2>&1 \
+    || push_failure "gh-authenticated" "GitHub CLI not authenticated — run 'gh auth login --hostname github.com' (or 'gh auth refresh -h github.com')"
 }
 
 check_codex_auth() {

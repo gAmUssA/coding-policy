@@ -23,6 +23,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/poll-pr-reviews.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: poll-pr-reviews.sh not executable at $SCRIPT" >&2; exit 2; }
 
@@ -62,7 +71,7 @@ run() {
 # Mock `gh` — supports the four invocations poll-pr-reviews.sh issues.
 # MOCK_MERGE_STATE selects the fixture for `gh pr view`; other surfaces
 # return minimal fixtures so main() can complete.
-gh() {
+_gh_mock() {
   case "$1" in
     pr)
       local subcmd="$2"
@@ -170,6 +179,7 @@ gh() {
     *) echo "mock gh: unsupported invocation: $*" >&2; return 2 ;;
   esac
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # --- test bodies ---
 
@@ -414,7 +424,7 @@ t_toplevel_comments_by_warns_on_non_object_element() {
   local err
   err=$( { toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}" >/dev/null; } 2>&1 )
   case "$err" in
-    *"1 non-object element"*) return 0 ;;
+    *"1 non-object element"*) gh_hints_pinned "$err" ;;
     *) echo "    FAIL: expected a non-object-element warning on stderr, got: '${err}'" >&2; return 1 ;;
   esac
 }
@@ -622,9 +632,10 @@ t_main_no_head_sha_fails() {
   MOCK_REVIEWS_BODY='[]'
   # Subshell: main() calls `exit` on the guard, which would otherwise
   # terminate this sourced test script rather than just the call.
-  local rc=0
-  ( main "owner" "repo" "1" ) >/dev/null 2>&1 || rc=$?
+  local rc=0 err
+  err=$( ( main "owner" "repo" "1" >/dev/null ) 2>&1 ) || rc=$?
   [[ "$rc" -ne 0 ]] || { echo "    FAIL: main should exit non-zero on empty headRefOid, got rc=0" >&2; return 1; }
+  gh_hints_pinned "$err"
 }
 
 # --- #182: cancelled superseded runs are no-signal, not failure ---

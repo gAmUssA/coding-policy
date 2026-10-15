@@ -36,7 +36,7 @@ fetch_pr_node_id() {
   # would otherwise emit. Without this guard the downstream mutation
   # runs with `pullRequestId: "null"` and surfaces as a confusing
   # GraphQL error several steps removed from the actual root cause.
-  pr_id=$(gh api graphql -f query="
+  pr_id=$(gh api --hostname github.com graphql -f query="
     query { repository(owner: \"${owner}\", name: \"${repo}\") {
       pullRequest(number: ${pr_number}) { id }
     } }
@@ -78,7 +78,7 @@ fetch_pr_node_id() {
 # suppression, but the terminal path must say what broke).
 request_with_bot_id() {
   local pr_id="$1" bot_id="$2" err_path="${3:-/dev/null}"
-  gh api graphql -f query="
+  gh api --hostname github.com graphql -f query="
     mutation { requestReviews(input: {
       pullRequestId: \"${pr_id}\", botIds: [\"${bot_id}\"], union: true
     }) { pullRequest { reviewRequests(first: 20) { nodes {
@@ -93,7 +93,7 @@ discover_copilot_bot_id() {
   # the suffix; GraphQL is inconsistent). Match either form so the
   # filter does not silently miss a real Copilot review and run the
   # mutation against an empty/wrong actor ID.
-  gh api graphql -f query="
+  gh api --hostname github.com graphql -f query="
     query { repository(owner: \"$1\", name: \"$2\") {
       pullRequests(last: 20) { nodes { reviews(first: 10) {
         nodes { author { ... on Bot { id login } } }
@@ -157,7 +157,7 @@ main() {
     }
     trap cleanup_mutation_err EXIT
     reviewers=$(request_with_bot_id "$pr_node_id" "$bot_id" "$mutation_err") || {
-      echo "error: requestReviews failed with discovered bot ID ${bot_id}: $(cat "$mutation_err") — the GraphQL error above names the cause; a rejected botId means Copilot is not enabled for ${owner}/${repo}, anything else is an auth or network fault ('gh auth status')" >&2
+      echo "error: requestReviews failed with discovered bot ID ${bot_id}: $(cat "$mutation_err") — the GraphQL error above names the cause; a rejected botId means Copilot is not enabled for ${owner}/${repo}, anything else is an auth or network fault ('gh auth status --hostname github.com')" >&2
       exit 1
     }
   fi

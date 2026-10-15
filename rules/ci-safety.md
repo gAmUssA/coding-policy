@@ -50,7 +50,7 @@ alwaysApply: true
 - A bot review is complete when its verdict posts (state leaves `none`), zero inline comments included — never wait for comments to appear
 - For a reviewer workflow, the run `conclusion` reports only that the workflow finished, never that the review happened — a fail-open gate can report `success` having reviewed nothing
 - Gate a reviewer workflow on its posted verdict, not the check's color; never promote it to a required branch-protection gate while a fail-open path exists
-- A failed PR check that no event re-triggers stays red until an explicit `gh run rerun --failed` once its cause is fixed
+- A failed PR check that no event re-triggers stays red until an explicit `gh run rerun <run-id> --failed --repo github.com/<owner>/<repo>` once its cause is fixed
 - For plugin/package releases, the duty extends past merge — confirm the resolved run's conclusion and the publication's own published-artifact evidence; no single signal is authoritative
 - The duty is keyed on the publication, never on the package — a package that publishes through more than one channel owes it once per publication, each confirmed against the channel that carried it
 - Channel-independent, whatever publishes the package:
@@ -70,7 +70,7 @@ alwaysApply: true
 ## Checks Not Starting
 
 - When pushed checks sit in `queued` and no `github-actions` run is created, check the PR's merge state before assuming an Actions outage
-- Diagnose with `gh pr view <N> --json mergeable,mergeStateStatus` — `CONFLICTING` / `DIRTY` is the cause
+- Diagnose with `gh pr view <N> --repo github.com/<owner>/<repo> --json mergeable,mergeStateStatus` — `CONFLICTING` / `DIRTY` is the cause
 - Fix: rebase the branch onto the base, resolve conflicts, push — the `github-actions` suite runs and `mergeStateStatus` flips to `UNSTABLE` / `CLEAN`
 
 ## Protected Branches

@@ -11,7 +11,10 @@ name: PR Policy Review (Codex, subscription)
 # The subscription token is read ONLY from the CODEX_AUTH_JSON secret at
 # runtime — never persisted on the runner. Set it once per repo:
 #   codex login                                   # Sign in with ChatGPT, trusted machine
-#   gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json
+#   gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json
+#     (the `target` from
+#     .tessl/plugins/gamussa/coding-policy/skills/release/origin-repo.sh;
+#     never gh's default repository or a hostless one GH_HOST could redirect)
 # Re-run the second command whenever the review fails on expired auth.
 # See https://learn.chatgpt.com/docs/auth/ci-cd-auth
 #
@@ -68,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CODEX_AUTH_JSON:-}" ]; then
-            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json' (see this workflow's header)" >&2
+            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON --repo github.com/${GITHUB_REPOSITORY} < ~/.codex/auth.json' (see this workflow's header)" >&2
             exit 1
           fi
           export CODEX_HOME="$HOME/.codex"

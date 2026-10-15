@@ -18,6 +18,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/dismiss-stale-reviews.sh"
 [[ -r "$SCRIPT" ]] || { echo "fatal: dismiss-stale-reviews.sh not readable at $SCRIPT" >&2; exit 2; }
 
@@ -39,7 +48,7 @@ assert_eq() {
 
 run() {
   local name="$1"; shift
-  DISMISS_LOG="$(mktemp)"
+  DISMISS_LOG="$(mktemp)" || { echo "fatal: mktemp failed — check that \$TMPDIR is writable" >&2; exit 2; }
   export DISMISS_LOG
   if "$@"; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -54,7 +63,7 @@ run() {
 # Mock `gh api` — two surfaces:
 #   GET  repos/<o>/<r>/pulls/<N>/reviews?per_page=100   -> $MOCK_REVIEWS_BODY
 #   PUT  repos/<o>/<r>/pulls/<N>/reviews/<id>/dismissals -> log <id>, return {}
-gh() {
+_gh_mock() {
   [[ "$1" == "api" ]] || { echo "mock gh: unsupported invocation: $*" >&2; return 2; }
   shift
   local method="GET" path="" saw_paginate=0
@@ -70,17 +79,19 @@ gh() {
 
   if [[ "$method" == "PUT" && "$path" == *"/dismissals" ]]; then
     local rid="${path%/dismissals}"; rid="${rid##*/}"
-    echo "$rid" >> "$DISMISS_LOG"
+    echo "$rid" >> "$DISMISS_LOG" || { echo "mock gh: cannot log the dismissal to $DISMISS_LOG" >&2; return 98; }
     echo '{}'
     return 0
   fi
 
   [[ $saw_paginate -eq 1 ]] || { echo "mock gh api: reviews fetch missing --paginate" >&2; return 99; }
+  if [[ -n "${MOCK_GH_FAIL:-}" ]]; then echo "HTTP 502: bad gateway" >&2; return 1; fi
   case "$path" in
     *reviews*) echo "${MOCK_REVIEWS_BODY:-[]}" ;;
     *) echo "mock gh api: unsupported path: $path" >&2; return 2 ;;
   esac
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # Convenience: how many dismissals were issued this test.
 dismiss_count() { [[ -s "$DISMISS_LOG" ]] || { echo 0; return; }; wc -l < "$DISMISS_LOG" | tr -d ' '; }
@@ -201,15 +212,24 @@ t_login_is_glob_safe_against_cwd_files() {
     {"id":72,"state":"COMMENTED","commit_id":"bbb","submitted_at":"2026-01-02T00:00:00Z","user":{"login":"github-actions[bot]"}}
   ]'
   local decoy_dir out ids
-  decoy_dir=$(mktemp -d)
+  decoy_dir=$(mktemp -d) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
   # Files that `github-actions[bot]` and `copilot-...[bot]` would glob to.
-  : > "${decoy_dir}/github-actionsb"
-  : > "${decoy_dir}/copilot-pull-request-reviewero"
+  { : > "${decoy_dir}/github-actionsb" && : > "${decoy_dir}/copilot-pull-request-reviewero"; } \
+    || { echo "fatal: cannot write the decoy files in ${decoy_dir}" >&2; exit 2; }
   out=$(cd "$decoy_dir" && main "owner" "repo" "1") || { rm -rf "$decoy_dir"; return 1; }
   rm -rf "$decoy_dir"
   ids=$(jq -r '.dismissed | map(.review_id) | join(",")' <<<"$out")
   assert_eq "dismissed despite cwd decoy files" "71" "$ids" || return 1
   assert_eq "one dismissal" "1" "$(dismiss_count)"
+}
+
+# A failed fetch exits non-zero, and its recovery hint names github.com so
+# GH_HOST cannot send the operator's retry to another server.
+t_fetch_failure_hint_is_pinned() {
+  local err rc=0
+  err=$( ( MOCK_GH_FAIL=1; main "owner" "repo" "1" >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  gh_hints_pinned "$err"
 }
 
 # --- runner ---
@@ -223,6 +243,7 @@ run "no reviews is a no-op"                     t_no_reviews_is_noop
 run "latest DISMISSED leaves earlier active CR" t_latest_dismissed_leaves_earlier_active_cr
 run "multiple stale CRs all dismissed"          t_multiple_stale_crs_all_dismissed
 run "login is glob-safe against cwd files"      t_login_is_glob_safe_against_cwd_files
+run "fetch failure hint is pinned to github.com" t_fetch_failure_hint_is_pinned
 
 echo
 echo "passed: ${PASS_COUNT}, failed: ${FAIL_COUNT}"

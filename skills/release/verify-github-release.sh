@@ -164,7 +164,7 @@ main() {
     exit 2
   fi
   if ! command -v gh >/dev/null 2>&1; then
-    echo "error: gh not found on PATH — install the GitHub CLI (https://cli.github.com) and run 'gh auth login'" >&2
+    echo "error: gh not found on PATH — install the GitHub CLI (https://cli.github.com) and run 'gh auth login --hostname github.com'" >&2
     exit 2
   fi
 
@@ -172,29 +172,29 @@ main() {
 
   # Conjunct 1 — the resolved run's own conclusion.
   local conclusion rc=0
-  conclusion=$(gh run view "$run_id" --repo "${owner}/${repo}" --json conclusion --jq '.conclusion' 2>"$VGR_ERR_FILE") || rc=$?
+  conclusion=$(gh run view "$run_id" --repo "github.com/${owner}/${repo}" --json conclusion --jq '.conclusion' 2>"$VGR_ERR_FILE") || rc=$?
   if (( rc != 0 )); then
     echo "error: could not read run ${run_id} in ${owner}/${repo} — $(cat "$VGR_ERR_FILE")" >&2
-    echo "check 'gh auth status', then retry 'gh run view ${run_id} --repo ${owner}/${repo} --json conclusion'" >&2
+    echo "check 'gh auth status --hostname github.com', then retry 'gh run view ${run_id} --repo github.com/${owner}/${repo} --json conclusion'" >&2
     exit 2
   fi
   # `gh run view --jq .conclusion` prints the literal `null` for a run
   # that has not finished. Treating that as "not success" would report a
   # failed publish against a run still in flight.
   if [[ -z "$conclusion" || "$conclusion" == "null" ]]; then
-    echo "error: run ${run_id} in ${owner}/${repo} has not reached a terminal state — run 'gh run watch ${run_id}' first, then re-run this check" >&2
+    echo "error: run ${run_id} in ${owner}/${repo} has not reached a terminal state — run 'gh run watch ${run_id} --repo github.com/${owner}/${repo}' first, then re-run this check" >&2
     exit 2
   fi
   if [[ "$conclusion" != "success" ]]; then
     deny "publish run ${run_id} concluded ${conclusion}" "$tag" 0 "$conclusion" \
-      "inspect 'gh run view ${run_id} --repo ${owner}/${repo} --log-failed' and fix the failing step before re-releasing"
+      "inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed' and fix the failing step before re-releasing"
   fi
 
   # Conjunct 2 — the release the run was supposed to create.
   local row encoded_tag
   encoded_tag=$(url_encode_tag "$tag") || return $?
   rc=0
-  row=$(gh api "repos/${owner}/${repo}/releases/tags/${encoded_tag}" \
+  row=$(gh api --hostname github.com "repos/${owner}/${repo}/releases/tags/${encoded_tag}" \
     --jq '[.tag_name, (.draft|tostring), ([.assets[]|select(.state == "uploaded")]|length|tostring), (.assets|length|tostring), .html_url] | @tsv' \
     2>"$VGR_ERR_FILE") || rc=$?
 
@@ -203,10 +203,10 @@ main() {
     gh_err=$(cat "$VGR_ERR_FILE")
     if [[ "$gh_err" == *"HTTP 404"* ]]; then
       deny "no release exists at tag ${tag} in ${owner}/${repo}" "$tag" 0 "$conclusion" \
-        "the publish run succeeded without creating the release — inspect 'gh run view ${run_id} --repo ${owner}/${repo} --log' for the publish step's own output"
+        "the publish run succeeded without creating the release — inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log' for the publish step's own output"
     fi
     echo "error: could not read repos/${owner}/${repo}/releases/tags/${tag} — ${gh_err}" >&2
-    echo "check 'gh auth status', then retry 'gh api repos/${owner}/${repo}/releases/tags/${tag}'" >&2
+    echo "check 'gh auth status --hostname github.com', then retry 'gh api --hostname github.com repos/${owner}/${repo}/releases/tags/${tag}'" >&2
     exit 2
   fi
 
@@ -214,7 +214,7 @@ main() {
   IFS=$'\t' read -r actual_tag draft uploaded total url <<<"$row"
 
   if [[ -z "$actual_tag" || -z "$draft" || -z "$uploaded" || -z "$total" ]]; then
-    echo "error: unparseable release payload for tag ${tag} in ${owner}/${repo}, got: '${row}' — inspect 'gh api repos/${owner}/${repo}/releases/tags/${tag}' to diagnose" >&2
+    echo "error: unparseable release payload for tag ${tag} in ${owner}/${repo}, got: '${row}' — inspect 'gh api --hostname github.com repos/${owner}/${repo}/releases/tags/${tag}' to diagnose" >&2
     exit 2
   fi
 
@@ -230,7 +230,7 @@ main() {
   fi
   if [[ "$total" == "0" ]]; then
     deny "release ${tag} carries no assets" "$tag" 0 "$conclusion" \
-      "inspect the publish step's upload output in 'gh run view ${run_id} --repo ${owner}/${repo} --log'"
+      "inspect the publish step's upload output in 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log'"
   fi
   if [[ "$uploaded" != "$total" ]]; then
     deny "${uploaded} of ${total} assets on release ${tag} are in the uploaded state" "$tag" "$total" "$conclusion" \

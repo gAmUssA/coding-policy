@@ -21,7 +21,9 @@ name: PR Policy Review (Codex, subscription)
 #      ~/.codex/auth.json has "auth_mode": "chatgpt" and "has_refresh_token": true.
 #   2. Store the FULL contents of ~/.codex/auth.json as the repo secret
 #      CODEX_AUTH_JSON (re-run whenever the review fails on expired auth):
-#        gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json
+#        gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json
+#      (the `target` from skills/release/origin-repo.sh; never gh's default
+#      repository or a hostless one GH_HOST could redirect)
 # See https://learn.chatgpt.com/docs/auth/ci-cd-auth
 #
 # The reviewer prompt, output schema, and the post/mask/leak-guard scripts are
@@ -68,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CODEX_AUTH_JSON:-}" ]; then
-            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json' (see this workflow's header)" >&2
+            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON --repo github.com/${GITHUB_REPOSITORY} < ~/.codex/auth.json' (see this workflow's header)" >&2
             exit 1
           fi
           export CODEX_HOME="$HOME/.codex"
@@ -88,11 +90,20 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "$BASE_REF"
+          # Model and effort are pinned so the merge gate does not drift with
+          # the CLI's default when Renovate bumps @openai/codex. gpt-5.6-sol is
+          # Codex's top model (skills/herdr-teamlead/teamlead/tiers.py
+          # TOP_MODELS); its own default effort is too shallow for a policy
+          # review, hence high. Renovate does not track this pin: renew it by
+          # hand whenever TOP_MODELS["codex"] changes, and re-check it at each
+          # @openai/codex bump (rules/dependency-management.md Freshness).
           { printf 'Environment: RULES_DIR=%s BASE_REF=%s\n\n' "$RULES_DIR" "$BASE_REF"; cat "$REVIEW_DIR/prompt.md"; } \
             | codex exec \
                 --json \
                 --skip-git-repo-check \
                 --dangerously-bypass-approvals-and-sandbox \
+                --model gpt-5.6-sol \
+                -c 'model_reasoning_effort="high"' \
                 --output-schema "$REVIEW_DIR/schema.json" \
                 --output-last-message /tmp/codex-final.json \
                 -

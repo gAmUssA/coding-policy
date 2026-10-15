@@ -95,6 +95,8 @@ Python tooling requires Python 3.11+ and `uv`. The Python suites use the standar
 
 ```
 bash scripts/run-diagnostics.sh   # shellcheck + pyright at zero findings
+bash scripts/check-rules-budget.sh      # rules/*.md total within its byte budget
+bash scripts/check-conflict-markers.sh  # no leftover merge-conflict markers
 uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 tessl plugin lint                 # manifest and structure
 ```

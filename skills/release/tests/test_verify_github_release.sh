@@ -47,6 +47,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/verify-github-release.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: verify-github-release.sh not executable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required — the transport mock filters fixtures with it" >&2; exit 2; }
@@ -122,7 +131,7 @@ run() {
 # `gh api <path> --jq '<filter>'` is driven by MOCK_MODE_FILE: `ok`
 # serves the fixture body through the caller's own filter, `404` and
 # `auth` reproduce gh's non-zero exit and its stderr text.
-gh() {
+_gh_mock() {
   if [[ "$1" == "run" && "$2" == "view" ]]; then
     local run_mode
     run_mode=$(cat "$MOCK_RUN_FILE")
@@ -158,12 +167,13 @@ gh() {
   [[ -n "$filter" ]] || { echo "mock gh: no --jq filter passed" >&2; return 99; }
   jq -r "$filter" "$MOCK_BODY_FILE"
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
-set_mode() { echo "$1" > "$MOCK_MODE_FILE"; }
-set_run() { echo "$1" > "$MOCK_RUN_FILE"; }
+set_mode() { echo "$1" > "$MOCK_MODE_FILE" || { echo "fatal: cannot write $MOCK_MODE_FILE" >&2; exit 2; }; }
+set_run() { echo "$1" > "$MOCK_RUN_FILE" || { echo "fatal: cannot write $MOCK_RUN_FILE" >&2; exit 2; }; }
 # Default every case to a successful run so a release-side fixture
 # exercises conjunct 2; cases about conjunct 1 override it.
-set_body() { cat > "$MOCK_BODY_FILE"; set_mode ok; set_run success; }
+set_body() { cat > "$MOCK_BODY_FILE" || { echo "fatal: cannot write $MOCK_BODY_FILE" >&2; exit 2; }; set_mode ok; set_run success; }
 
 ok_of() { echo "$1" | jq -r 'if has("ok") then (.ok|tostring) else empty end'; }
 reason_of() { echo "$1" | jq -r 'if has("reason") then .reason else empty end'; }
@@ -228,6 +238,7 @@ JSON
   assert_eq "exit code" "2" "$rc" || return 1
   assert_eq "stdout must stay empty" "" "$out" || return 1
   [[ "$stderr" == *"gh run watch"* ]] || { echo "    FAIL: stderr should point at the watch, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "a run still in flight is indeterminate, not a failed publish" test_run_in_flight
 
@@ -238,9 +249,10 @@ test_run_lookup_failure() {
 JSON
   set_run ERROR
   local out rc=0
-  out=$(invoke_main "$OWNER" "$REPO" "$TAG" "$RUN_ID" 2>/dev/null) || rc=$?
+  out=$(invoke_main "$OWNER" "$REPO" "$TAG" "$RUN_ID" 2>"$TMPDIR_TEST/err") || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   assert_eq "stdout must stay empty" "" "$out" || return 1
+  gh_hints_pinned "$(cat "$TMPDIR_TEST/err")"
 }
 run "an unreadable run is indeterminate" test_run_lookup_failure
 
@@ -340,6 +352,7 @@ test_auth_failure_indeterminate() {
   assert_eq "exit code" "2" "$rc" || return 1
   assert_eq "stdout must stay empty" "" "$out" || return 1
   [[ "$stderr" == *"gh auth status"* ]] || { echo "    FAIL: stderr should carry a recovery hint, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "auth failure is indeterminate, never reported as absent" test_auth_failure_indeterminate
 
@@ -349,9 +362,10 @@ test_unparseable_payload() {
 {"unexpected": "shape"}
 JSON
   local out rc=0
-  out=$(invoke_main "$OWNER" "$REPO" "$TAG" "$RUN_ID" 2>/dev/null) || rc=$?
+  out=$(invoke_main "$OWNER" "$REPO" "$TAG" "$RUN_ID" 2>"$TMPDIR_TEST/err") || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   assert_eq "stdout must stay empty" "" "$out" || return 1
+  gh_hints_pinned "$(cat "$TMPDIR_TEST/err")"
 }
 run "unparseable release payload is indeterminate" test_unparseable_payload
 
@@ -421,6 +435,10 @@ JSON
     assert_eq "${case_name} exit code" "1" "$rc" || return 1
     [[ -n "$stderr" ]] || { echo "    FAIL: ${case_name} wrote no stderr diagnostic" >&2; return 1; }
     [[ "$stderr" == *"verify-github-release.sh:"* ]] || { echo "    FAIL: ${case_name} diagnostic is unattributed, got: ${stderr}" >&2; return 1; }
+    # Denials whose hint names a gh command must name github.com.
+    case "$case_name" in
+      failed-run|absent|empty) gh_hints_pinned "$stderr" || { echo "    FAIL: ${case_name} hint is not pinned" >&2; return 1; } ;;
+    esac
   done
 }
 run "every definitive no writes an actionable stderr diagnostic" test_denials_carry_stderr_diagnostics
@@ -535,6 +553,7 @@ test_missing_gh() {
   ) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   [[ "$stderr" == *"cli.github.com"* ]] || { echo "    FAIL: stderr should carry an install hint, got: ${stderr}" >&2; return 1; }
+  [[ "$stderr" == *"gh auth login --hostname github.com"* ]] || { echo "    FAIL: the login hint must be pinned to github.com, got: ${stderr}" >&2; return 1; }
 }
 run "missing gh exits 2 with an install hint" test_missing_gh
 

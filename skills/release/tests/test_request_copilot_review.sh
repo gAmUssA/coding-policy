@@ -29,6 +29,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/request-copilot-review.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: request-copilot-review.sh not executable at $SCRIPT" >&2; exit 2; }
 
@@ -73,7 +82,7 @@ run() {
 # filter. This is intentional: the filter is the contract that changed
 # in #42 and #43, so the mock applies it the same way the real `gh`
 # would. Anything that isn't `gh api graphql` is unsupported here.
-gh() {
+_gh_mock() {
   if [[ "$1" != "api" || "$2" != "graphql" ]]; then
     echo "mock gh: unsupported invocation: $*" >&2
     return 2
@@ -108,6 +117,7 @@ gh() {
     echo "$fixture"
   fi
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # A content-aware graphql mock for driving main(): it distinguishes the
 # PR-id query, the requestReviews mutation, and the discover query by their
@@ -137,7 +147,7 @@ _main_gh_mock() {
       return 1
     fi
     if [[ -n "${MUT_FAIL_ONCE:-}" && ! -f "${MUT_FAIL_FLAG:-/nonexistent}" ]]; then
-      : > "${MUT_FAIL_FLAG}"
+      : > "${MUT_FAIL_FLAG}" || { echo "mock gh: cannot write the fail-once flag ${MUT_FAIL_FLAG}" >&2; return 98; }
       echo "mock gh: requestReviews rejected the botId" >&2
       return 1
     fi
@@ -219,7 +229,7 @@ t_main_verifies_bot_only_reviewers() {
   local out rc
   out=$(
     # shellcheck disable=SC2317  # gh() runs indirectly through the sourced main(); shellcheck cannot trace the call
-    gh() { _main_gh_mock "$@"; }
+    gh() { gh_pin_gate _main_gh_mock "$@"; }
     MUT_FIXTURE='{"data":{"requestReviews":{"pullRequest":{"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]}}}}}' \
       main owner repo 5 2>/dev/null
   )
@@ -234,7 +244,7 @@ t_main_fails_when_copilot_absent() {
   local err rc
   err=$(
     # shellcheck disable=SC2317  # gh() runs indirectly through the sourced main(); shellcheck cannot trace the call
-    gh() { _main_gh_mock "$@"; }
+    gh() { gh_pin_gate _main_gh_mock "$@"; }
     MUT_FIXTURE='{"data":{"requestReviews":{"pullRequest":{"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"Bot","login":"some-other-bot"}}]}}}}}' \
       main owner repo 5 2>&1 >/dev/null
   )
@@ -248,10 +258,10 @@ t_main_fails_when_copilot_absent() {
 # retried mutation's response.
 t_main_falls_back_on_rejected_pinned_id() {
   local out rc flag
-  flag=$(mktemp -u)
+  flag=$(mktemp -u) || { echo "fatal: mktemp -u failed — check that \$TMPDIR is writable" >&2; exit 2; }
   out=$(
     # shellcheck disable=SC2317  # gh() runs indirectly through the sourced main(); shellcheck cannot trace the call
-    gh() { _main_gh_mock "$@"; }
+    gh() { gh_pin_gate _main_gh_mock "$@"; }
     MUT_FAIL_ONCE=1 MUT_FAIL_FLAG="$flag" \
     DISCOVER_FIXTURE='{"data":{"repository":{"pullRequests":{"nodes":[{"reviews":{"nodes":[{"author":{"id":"BOT_discovered","login":"copilot-pull-request-reviewer"}}]}}]}}}}' \
     MUT_FIXTURE='{"data":{"requestReviews":{"pullRequest":{"reviewRequests":{"nodes":[{"requestedReviewer":{"__typename":"Bot","login":"copilot-pull-request-reviewer"}}]}}}}}' \
@@ -282,7 +292,7 @@ t_mutation_runs_in_union_mode() {
           *)  shift ;;
         esac
       done
-      printf '%s' "$q" > "$query_file"
+      printf '%s' "$q" > "$query_file" || { echo "mock gh: cannot record the query to $query_file" >&2; return 98; }
       echo '[]'
     }
     request_with_bot_id "PR_kwDOX" "BOT_kgDOCnlnWA" >/dev/null
@@ -303,7 +313,7 @@ t_main_surfaces_mutation_error_on_terminal_failure() {
   local err rc
   err=$(
     # shellcheck disable=SC2317  # gh() runs indirectly through the sourced main(); shellcheck cannot trace the call
-    gh() { _main_gh_mock "$@"; }
+    gh() { gh_pin_gate _main_gh_mock "$@"; }
     MUT_FAIL_ALWAYS=1 \
     DISCOVER_FIXTURE='{"data":{"repository":{"pullRequests":{"nodes":[{"reviews":{"nodes":[{"author":{"id":"BOT_discovered","login":"copilot-pull-request-reviewer"}}]}}]}}}}' \
       main owner repo 5 2>&1 >/dev/null

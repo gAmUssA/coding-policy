@@ -10,7 +10,7 @@ Reference for Step 4 of the `release` skill — how the two PR reviewers are wir
 - **Authorship:** submitted with the workflow's `GITHUB_TOKEN`, so the author is `github-actions[bot]` everywhere.
 - **Verdict:** derived from per-finding severity by `post-review.sh` — any blocking finding posts `REQUEST_CHANGES`, advisory-only posts `COMMENT`, a clean pass posts `APPROVE`.
 - **APPROVE limitation:** `github-actions[bot]` cannot `APPROVE` (GitHub returns HTTP 422), so a clean pass falls back to `COMMENT`. A later `COMMENT` never supersedes an earlier `CHANGES_REQUESTED` in GitHub's merge gate, so Step 7 dismisses the stale request via `skills/release/dismiss-stale-reviews.sh`.
-- **Auth / cost:** the token is read only from the secret at runtime and deleted before the post step; Codex refreshes the access token in-memory. If the refresh token expires, the review fails loudly — re-seed with `gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json`.
+- **Auth / cost:** the token is read only from the secret at runtime and deleted before the post step; Codex refreshes the access token in-memory. If the refresh token expires, the review fails loudly — re-seed with `gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json` (the `target` from `skills/release/origin-repo.sh`).
 
 ## Copilot — second reviewer with a different lens
 

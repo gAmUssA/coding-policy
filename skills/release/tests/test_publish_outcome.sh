@@ -28,7 +28,13 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
-SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/publish-outcome.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$(cd "$HERE/.." && pwd)/publish-outcome.sh"
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$HERE/gh_pin_gate.sh" || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
 [[ -r "$SCRIPT" ]] || { echo "fatal: publish-outcome.sh not found at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required" >&2; exit 2; }
 
@@ -60,8 +66,11 @@ outcome_is() { jq -e --arg o "$1" '.outcome == $o' <<<"$OUT" >/dev/null 2>&1; }
 main() {
   TMP="$(mktemp -d)" || { echo "fatal: mktemp" >&2; exit 2; }
   trap cleanup EXIT
+  # The fake passes every call through the github.com host pin gate first
+  # (gh_pin_gate.sh), with GH_HOST pointing at another server.
   # shellcheck disable=SC2016 # the fake's variables expand when the fake runs
-  printf '#!/usr/bin/env bash\nprintf "%%s" "$FAKE_GH_PAYLOAD"\nexit "${FAKE_GH_RC:-0}"\n' > "$TMP/gh" \
+  printf '#!/usr/bin/env bash\nsource %q || exit 2\nfake() { printf "%%s" "$FAKE_GH_PAYLOAD"; exit "${FAKE_GH_RC:-0}"; }\ngh_pin_gate fake "$@"\n' \
+    "$HERE/gh_pin_gate.sh" > "$TMP/gh" \
     || { echo "fatal: cannot write the fake gh" >&2; exit 2; }
   chmod +x "$TMP/gh" || { echo "fatal: chmod fake gh" >&2; exit 2; }
 
@@ -72,11 +81,11 @@ main() {
   if [[ $RC -eq 0 ]] && outcome_is no_publication; then pass; else fail "no publication: RC=$RC OUT=$OUT"; fi
 
   run "$(payload completed failure skipped)" 0
-  if [[ $RC -eq 1 ]] && outcome_is failed && grep -q "concluded 'failure'" <<<"$ERR"; then pass
+  if [[ $RC -eq 1 ]] && outcome_is failed && grep -q "concluded 'failure'" <<<"$ERR" && gh_hints_pinned "$ERR"; then pass
   else fail "failed run, skipped publish: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   run "$(payload completed success failure)" 0
-  if [[ $RC -eq 1 ]] && outcome_is failed; then pass; else fail "publish step failed: RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 1 ]] && outcome_is failed && gh_hints_pinned "$ERR"; then pass; else fail "publish step failed: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   run "$(payload completed success)" 0
   if [[ $RC -eq 1 ]] && outcome_is ambiguous && grep -q "0 steps named 'Publish'" <<<"$ERR"; then pass
@@ -86,15 +95,15 @@ main() {
   if [[ $RC -eq 1 ]] && outcome_is ambiguous; then pass; else fail "two publish steps: RC=$RC OUT=$OUT"; fi
 
   run "$(payload in_progress "" skipped)" 0
-  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "not completed" <<<"$ERR"; then pass
+  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "not completed" <<<"$ERR" && gh_hints_pinned "$ERR"; then pass
   else fail "in flight: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   run "" 1
-  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "gh run view 42 failed" <<<"$ERR"; then pass
+  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "gh run view 42 --repo github.com/gAmUssA/coding-policy failed" <<<"$ERR" && gh_hints_pinned "$ERR"; then pass
   else fail "gh failure: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   run "not json" 0
-  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "unparseable" <<<"$ERR"; then pass
+  if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "unparseable" <<<"$ERR" && gh_hints_pinned "$ERR"; then pass
   else fail "unparseable: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   run "$(payload completed success success)" 0 gAmUssA coding-policy abc

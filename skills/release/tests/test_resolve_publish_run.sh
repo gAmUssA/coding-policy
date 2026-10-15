@@ -54,6 +54,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/resolve-publish-run.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: resolve-publish-run.sh not executable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required — the transport mock filters fixtures with it" >&2; exit 2; }
@@ -80,7 +89,7 @@ TAG=v0.1.4
 WORKFLOW=publish.yml
 
 # Tempfiles tracking mock state across subshell boundaries.
-TMPDIR_TEST=$(mktemp -d -t resolve-pub-test.XXXXXX)
+TMPDIR_TEST=$(mktemp -d -t resolve-pub-test.XXXXXX) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
 # Named handler ending `return 0`, not a bare `trap 'rm -rf ...'`: the
 # EXIT trap's final command status becomes the process's exit status, so
 # a failed cleanup would turn an all-green run non-zero and flake CI
@@ -99,12 +108,12 @@ export MOCK_GH_ARGS_FILE="$TMPDIR_TEST/gh-args"
 export MOCK_SLEEP_CALLS_FILE="$TMPDIR_TEST/sleep-calls"
 export MOCK_GH_QUEUE_FILE="$TMPDIR_TEST/gh-queue"
 export FIXTURE_DIR="$TMPDIR_TEST/fixtures"
-mkdir -p "$FIXTURE_DIR"
+mkdir -p "$FIXTURE_DIR" || { echo "fatal: cannot create $FIXTURE_DIR — check that \$TMPDIR is writable" >&2; exit 2; }
 
 # --- Transport fixtures: raw `gh run list --json ...` arrays -----------------
 # Written in setup rather than checked in, per rules/testing-standards.md
 # Fixtures ("build test data programmatically in test setup").
-write_fixture() { cat > "$FIXTURE_DIR/$1"; }
+write_fixture() { cat > "$FIXTURE_DIR/$1" || { echo "fatal: cannot write fixture $FIXTURE_DIR/$1" >&2; exit 2; }; }
 
 write_fixture empty.json <<JSON
 []
@@ -192,10 +201,10 @@ run() {
 # Reproduces real gh's two-stage behavior: `--branch` narrows the
 # listing server-side, then `--jq` runs over what survives. Records each
 # invocation's arguments so tests can assert the ref actually requested.
-gh() {
+_gh_mock() {
   [[ "$1" == "run" && "$2" == "list" ]] || { echo "mock gh: unexpected invocation: $*" >&2; return 99; }
-  echo "call" >> "$MOCK_GH_CALLS_FILE"
-  echo "$*" >> "$MOCK_GH_ARGS_FILE"
+  { echo "call" >> "$MOCK_GH_CALLS_FILE" && echo "$*" >> "$MOCK_GH_ARGS_FILE"; } \
+    || { echo "mock gh: cannot record the call under $TMPDIR_TEST" >&2; return 98; }
 
   local branch="" workflow="" filter="" prev="" arg
   for arg in "$@"; do
@@ -224,19 +233,18 @@ gh() {
   fi
   jq -r "$filter" <<<"$payload"
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # Mock `sleep` — record the requested duration (one per line) without
 # actually waiting. Tests sum these to verify the loop respects the
 # wall-clock budget.
 sleep() {
-  echo "$1" >> "$MOCK_SLEEP_CALLS_FILE"
+  echo "$1" >> "$MOCK_SLEEP_CALLS_FILE" || { echo "mock sleep: cannot record to $MOCK_SLEEP_CALLS_FILE" >&2; return 98; }
 }
 
 reset_mocks() {
-  : > "$MOCK_GH_CALLS_FILE"
-  : > "$MOCK_GH_ARGS_FILE"
-  : > "$MOCK_SLEEP_CALLS_FILE"
-  : > "$MOCK_GH_QUEUE_FILE"
+  { : > "$MOCK_GH_CALLS_FILE" && : > "$MOCK_GH_ARGS_FILE" && : > "$MOCK_SLEEP_CALLS_FILE" && : > "$MOCK_GH_QUEUE_FILE"; } \
+    || { echo "fatal: cannot reset the mock state files under $TMPDIR_TEST" >&2; exit 2; }
   export MOCK_GH_IGNORE_BRANCH=0
   # Reset env-driven knobs to known-good values. Tests that exercise
   # invalid values override these immediately before invoking main()
@@ -252,7 +260,7 @@ reset_mocks() {
 
 queue_fixtures() {
   for r in "$@"; do
-    echo "$r" >> "$MOCK_GH_QUEUE_FILE"
+    echo "$r" >> "$MOCK_GH_QUEUE_FILE" || { echo "fatal: cannot queue fixture $r" >&2; exit 2; }
   done
 }
 
@@ -335,7 +343,7 @@ test_cli_quoted_ref_without_system_jq() {
   for tool in wc tr; do
     ln -s "$(command -v "$tool")" "$bin/$tool" || return 1
   done
-  cat > "$bin/gh" <<'MOCK'
+  cat > "$bin/gh" <<'MOCK' || return 1
 #!/bin/bash
 set -euo pipefail
 filter=""
@@ -425,6 +433,7 @@ test_ambiguous_matches_refused() {
   assert_eq "stdout must carry no id" "" "$(database_id_of "$out")" || return 1
   echo "$stderr" | grep -q "34188269042" || { echo "    FAIL: diagnostic should name the first candidate, got: ${stderr}" >&2; return 1; }
   echo "$stderr" | grep -q "34199999999" || { echo "    FAIL: diagnostic should name the second candidate, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "two matching runs are refused, not silently narrowed" test_ambiguous_matches_refused
 
@@ -437,6 +446,7 @@ test_budget_exhausted() {
   [[ $rc -ne 0 ]] || { echo "    FAIL: expected non-zero exit, got 0" >&2; return 1; }
   echo "$stderr" | grep -q "$SHA_MERGE" || { echo "    FAIL: stderr missing SHA, got: ${stderr}" >&2; return 1; }
   echo "$stderr" | grep -q "$WORKFLOW" || { echo "    FAIL: stderr missing workflow name, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "budget exhausted exits non-zero with diagnostic" test_budget_exhausted
 
@@ -530,6 +540,7 @@ test_non_numeric_run_id_rejected() {
   stderr=$(main jbaruch coding-policy "$SHA_MERGE" "$WORKFLOW" 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "1" "$rc" || return 1
   echo "$stderr" | grep -q "expected numeric run id" || { echo "    FAIL: stderr should explain numeric validation, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr" || return 1
 }
 run "non-numeric run id rejected with diagnostic" test_non_numeric_run_id_rejected
 

@@ -25,6 +25,15 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/verify-publish-landed.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: verify-publish-landed.sh not executable at $SCRIPT" >&2; exit 2; }
 
@@ -59,7 +68,7 @@ run() {
 # MOCK_REGISTRY_VERSION is the latest published version the versions API
 # (`tessl api v1/tiles/<ws>/<tile>/versions`) reports. Tests set these
 # per-scenario.
-gh() {
+_gh_mock() {
   case "$1" in
     run)
       local subcmd="$2"
@@ -69,14 +78,17 @@ gh() {
           # Contract: `gh run view <id> --json conclusion --jq '.conclusion'`.
           # Validate args explicitly so a regression that asks for the wrong
           # field surfaces as a loud mock failure.
-          local saw_json=0 json_args="" jq_filter=""
+          local saw_json=0 json_args="" jq_filter="" repo_arg=""
           while [[ $# -gt 0 ]]; do
             case "$1" in
+              --repo) repo_arg="${2:-}"; shift 2 ;;
               --json) saw_json=1; json_args="${2:-}"; shift 2 ;;
               --jq)   jq_filter="${2:-}"; shift 2 ;;
               *)      shift ;;
             esac
           done
+          # The run is read from origin's repository, never gh's default.
+          [[ "$repo_arg" == "acme/widgets" ]] || { echo "mock gh run view: wrong or missing --repo: '${repo_arg}' (expected 'acme/widgets')" >&2; return 99; }
           [[ $saw_json -eq 1 ]] || { echo "mock gh run view: missing --json flag" >&2; return 99; }
           [[ "$json_args" == "conclusion" ]] || { echo "mock gh run view: wrong --json args: '${json_args}' (expected 'conclusion')" >&2; return 99; }
           [[ "$jq_filter" == ".conclusion" ]] || { echo "mock gh run view: wrong --jq filter: '${jq_filter}' (expected '.conclusion')" >&2; return 99; }
@@ -84,6 +96,10 @@ gh() {
           # is unset, so a test setting MOCK_RUN_CONCLUSION="" still
           # exercises the empty-conclusion path (the colon form would
           # fall through to "success" on empty).
+          if [[ -n "${MOCK_GH_FAIL:-}" ]]; then
+            echo "HTTP 502: bad gateway" >&2
+            return 1
+          fi
           printf '%s\n' "${MOCK_RUN_CONCLUSION-success}"
           ;;
         *) echo "mock gh run: unsupported subcommand: $subcmd" >&2; return 2 ;;
@@ -92,6 +108,7 @@ gh() {
     *) echo "mock gh: unsupported invocation: $*" >&2; return 2 ;;
   esac
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # Emit a versions-API page whose maximum version is $1. Includes a lower
 # entry (and lists them oldest-first) so the script's max-selection jq is
@@ -122,7 +139,7 @@ t_success_and_advance_returns_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
   assert_eq "ok"               "true"                  "$(echo "$out" | jq -r .ok)"             || return 1
   assert_eq "run_conclusion"   "success"               "$(echo "$out" | jq -r .run_conclusion)" || return 1
@@ -141,7 +158,7 @@ t_race_failure_with_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="failure"
   MOCK_REGISTRY_VERSION="0.3.32"  # interleaved publish advanced it
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
   assert_eq "run_conclusion"   "failure"    "$(echo "$out" | jq -r .run_conclusion)" || return 1
@@ -156,7 +173,7 @@ t_success_but_no_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.31"  # unchanged from PRE
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
   local reason
@@ -169,7 +186,7 @@ t_failure_with_no_advance_returns_not_ok() {
   MOCK_RUN_CONCLUSION="failure"
   MOCK_REGISTRY_VERSION="0.3.31"
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code"        "1"          "$rc"                                    || return 1
   assert_eq "ok"               "false"      "$(echo "$out" | jq -r .ok)"             || return 1
 }
@@ -182,7 +199,7 @@ t_cancelled_conclusion_returns_not_ok() {
   MOCK_RUN_CONCLUSION="cancelled"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code"        "1"             "$rc"                                    || return 1
   assert_eq "run_conclusion"   "cancelled"     "$(echo "$out" | jq -r .run_conclusion)" || return 1
 }
@@ -193,7 +210,7 @@ t_semver_advance_double_digit_patch_returns_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.10"
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.9" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.9" "12345" acme widgets) || rc=$?
   assert_eq "exit code" "0"      "$rc"                          || return 1
   assert_eq "ok"        "true"   "$(echo "$out" | jq -r .ok)"
 }
@@ -204,7 +221,7 @@ t_downgrade_returns_not_ok() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.30"
   local out rc=0
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   assert_eq "exit code" "1"       "$rc"                          || return 1
   assert_eq "ok"        "false"   "$(echo "$out" | jq -r .ok)"
 }
@@ -216,20 +233,29 @@ t_invalid_run_id_exits_two() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gamussa coding-policy "0.3.31" "not-a-number" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "not-a-number" acme widgets >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for non-numeric run-id" "2" "$rc"
 }
 
 t_empty_pre_baseline_exits_two() {
   local rc=0
-  ( main gamussa coding-policy "" "12345" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "" "12345" acme widgets >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for empty pre-baseline" "2" "$rc"
 }
 
+# The pre-origin-binding four-argument call is a usage error: without
+# owner/repo, gh would read the run from its own default repository.
 t_wrong_arg_count_exits_two() {
+  local rc=0 stderr
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code for wrong arg count" "2" "$rc" || return 1
+  [[ "$stderr" == *"origin-repo.sh"* ]] || { echo "    FAIL: usage should point at origin-repo.sh, got: $stderr" >&2; return 1; }
+}
+
+t_empty_owner_exits_two() {
   local rc=0
-  ( main gamussa coding-policy "0.3.31" >/dev/null 2>&1 ) || rc=$?
-  assert_eq "exit code for wrong arg count" "2" "$rc"
+  ( main gamussa coding-policy "0.3.31" "12345" "" widgets >/dev/null 2>&1 ) || rc=$?
+  assert_eq "exit code for empty owner" "2" "$rc"
 }
 
 # run-id == 0 must be rejected — the regex aligned with
@@ -239,7 +265,7 @@ t_zero_run_id_exits_two() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gamussa coding-policy "0.3.31" "0" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "0" acme widgets >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for run-id == 0" "2" "$rc"
 }
 
@@ -253,7 +279,7 @@ t_null_conclusion_in_flight_exits_two() {
   MOCK_RUN_CONCLUSION="null"
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0 stderr
-  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for in-flight (null) conclusion" "2" "$rc" || return 1
   [[ "$stderr" == *"in flight"* ]] || { echo "    FAIL: expected 'in flight' in stderr, got: $stderr" >&2; return 1; }
 }
@@ -264,7 +290,7 @@ t_empty_conclusion_exits_two() {
   MOCK_RUN_CONCLUSION=""
   MOCK_REGISTRY_VERSION="0.3.32"
   local rc=0
-  ( main gamussa coding-policy "0.3.31" "12345" >/dev/null 2>&1 ) || rc=$?
+  ( main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null 2>&1 ) || rc=$?
   assert_eq "exit code for empty conclusion" "2" "$rc"
 }
 
@@ -282,7 +308,7 @@ t_tessl_empty_versions_exits_two() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for empty versions API" "2" "$rc" || return 1
   [[ "$stderr" == *"no published version"* ]] || { echo "    FAIL: expected 'no published version' in diagnostic; got: $stderr" >&2; return 1; }
   # Restore the canonical mock so subsequent tests aren't affected.
@@ -308,7 +334,7 @@ t_tessl_non_json_exits_two() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
   assert_eq "exit code for non-JSON versions body" "2" "$rc" || return 1
   [[ "$stderr" == *"not valid JSON"* ]] || { echo "    FAIL: expected 'not valid JSON' in diagnostic; got: $stderr" >&2; return 1; }
   unset -f tessl
@@ -338,7 +364,7 @@ t_main_runs_under_errexit_pipefail() {
     esac
   }
   local rc=0 stderr
-  stderr=$( ( set -e; set -o pipefail; set -u; main gamussa coding-policy "0.3.31" "12345" >/dev/null ) 2>&1 ) || rc=$?
+  stderr=$( ( set -e; set -o pipefail; set -u; main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
   # Restore the canonical mock so subsequent tests aren't affected.
   unset -f tessl
   tessl() {
@@ -374,8 +400,8 @@ t_missing_jq_emits_json_AND_stderr() {
   local path
   path=$(no_jq_path) || return 0  # SKIP returns 0 to avoid noisy fail
   local out err_file rc=0 err
-  err_file=$(mktemp)
-  out=$(env -i PATH="$path" HOME="$HOME" "$SCRIPT" gamussa coding-policy "0.3.31" "12345" 2>"$err_file") || rc=$?
+  err_file=$(mktemp) || { echo "fatal: mktemp failed — check that \$TMPDIR is writable" >&2; exit 2; }
+  out=$(env -i PATH="$path" HOME="$HOME" "$SCRIPT" gamussa coding-policy "0.3.31" "12345" acme widgets 2>"$err_file") || rc=$?
   err=$(cat "$err_file"); rm -f "$err_file"
   assert_eq "exit code" "2" "$rc" || return 1
   # JSON envelope on stdout (caller-parses-stdout contract still holds).
@@ -393,10 +419,50 @@ t_output_is_valid_json_with_documented_shape() {
   MOCK_RUN_CONCLUSION="success"
   MOCK_REGISTRY_VERSION="0.3.32"
   local out rc=0 keys
-  out=$(main gamussa coding-policy "0.3.31" "12345") || rc=$?
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
   echo "$out" | jq -e . >/dev/null || { echo "    FAIL: stdout not valid JSON: $out" >&2; return 1; }
   keys=$(echo "$out" | jq -r 'keys | sort | join(",")')
   assert_eq "keys" "current,ok,pre,reason,run_conclusion" "$keys"
+}
+
+# Every gh run command a diagnostic tells the operator to run must name
+# origin's repository: a bare `gh run view`/`watch`/`list` reads gh's default
+# repository, which in a fork can be the upstream parent.
+# all_run_hints_bound <text>: 0 when the text quotes at least one
+# 'gh run ...' command and every one carries --repo github.com/acme/widgets.
+all_run_hints_bound() {
+  local hints
+  hints=$(grep -o "'gh run [^']*'" <<<"$1")
+  [[ -n "$hints" ]] || { echo "    FAIL: no quoted 'gh run ...' hint in: $1" >&2; return 1; }
+  if grep -v -- "--repo github.com/acme/widgets" <<<"$hints"; then
+    echo "    FAIL: the hint(s) above lack --repo github.com/acme/widgets" >&2
+    return 1
+  fi
+}
+
+t_gh_failure_hints_carry_repo() {
+  local stderr rc=0
+  stderr=$( ( MOCK_GH_FAIL=1; main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code for gh failure" "2" "$rc" || return 1
+  [[ "$stderr" == *"--log-failed"* ]] || { echo "    FAIL: expected a --log-failed hint, got: $stderr" >&2; return 1; }
+  all_run_hints_bound "$stderr"
+}
+
+t_in_flight_hints_carry_repo() {
+  local stderr rc=0
+  stderr=$( ( MOCK_RUN_CONCLUSION="null"; main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code for in-flight run" "2" "$rc" || return 1
+  [[ "$stderr" == *"gh run watch"* ]] || { echo "    FAIL: expected a gh run watch hint, got: $stderr" >&2; return 1; }
+  all_run_hints_bound "$stderr"
+}
+
+t_failed_run_reason_hint_carries_repo() {
+  MOCK_RUN_CONCLUSION="failure"
+  MOCK_REGISTRY_VERSION="0.3.32"
+  local out rc=0
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
+  assert_eq "exit code for failed run" "1" "$rc" || return 1
+  all_run_hints_bound "$(jq -r .reason <<<"$out")"
 }
 
 # --- driver ---
@@ -412,6 +478,10 @@ run "downgrade (success) -> ok=false"                              t_downgrade_r
 run "non-numeric run-id exits 2"                                   t_invalid_run_id_exits_two
 run "empty pre-baseline exits 2"                                   t_empty_pre_baseline_exits_two
 run "wrong arg count exits 2"                                      t_wrong_arg_count_exits_two
+run "empty owner exits 2"                                          t_empty_owner_exits_two
+run "gh failure: recovery hints carry --repo"                     t_gh_failure_hints_carry_repo
+run "in-flight run: recovery hints carry --repo"                  t_in_flight_hints_carry_repo
+run "failed run: reason's recovery hint carries --repo"           t_failed_run_reason_hint_carries_repo
 run "run-id == 0 exits 2 (matches positive-integer contract)"      t_zero_run_id_exits_two
 run "in-flight (null) conclusion exits 2"                          t_null_conclusion_in_flight_exits_two
 run "empty conclusion exits 2"                                     t_empty_conclusion_exits_two

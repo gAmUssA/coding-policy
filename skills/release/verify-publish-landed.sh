@@ -34,7 +34,10 @@
 # checks the registry, sees the publish landed) and the root fix is at
 # the workflow design layer — keep publish as the last step.
 #
-# Usage: verify-publish-landed.sh <workspace> <plugin> <pre-baseline> <run-id>
+# Usage: verify-publish-landed.sh <workspace> <plugin> <pre-baseline> <run-id> <owner> <repo>
+#   owner/repo  the GitHub repository the run belongs to — origin's, from
+#               skills/release/origin-repo.sh. gh reads the run there, never
+#               from gh's default repository (gh repo set-default).
 # Out:   JSON contract differs by exit code (per rules/script-delegation.md
 #        "JSON-producing"):
 #          - rc 0/1 (publish-landed finding): one JSON object on stdout
@@ -122,11 +125,15 @@ cleanup_err_file() {
 }
 
 main() {
-  if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <workspace> <plugin> <pre-baseline> <run-id>" >&2
+  if [[ $# -ne 6 ]]; then
+    echo "usage: $0 <workspace> <plugin> <pre-baseline> <run-id> <owner> <repo> — owner/repo is origin's GitHub repository (skills/release/origin-repo.sh)" >&2
     exit 2
   fi
-  local workspace="$1" tile="$2" pre="$3" run_id="$4"
+  local workspace="$1" tile="$2" pre="$3" run_id="$4" owner="$5" repo="$6"
+  if [[ -z "$owner" || -z "$repo" ]]; then
+    echo "error: <owner> and <repo> must be non-empty — resolve them with 'skills/release/origin-repo.sh'" >&2
+    exit 2
+  fi
 
   # Positive-integer guard mirrors resolve-publish-run.sh's
   # validate_positive_int: ^[0-9]+$ would accept '0' which isn't a real
@@ -162,10 +169,10 @@ main() {
   # bare 1 — a publish-landed conjunction silently reported as a generic
   # failure. Cleanup reports on cleanup, never on the outcome.
   trap cleanup_err_file EXIT
-  conclusion=$(gh run view "$run_id" --json conclusion --jq '.conclusion' 2>"$err_file") \
-    || { local err; err=$(cat "$err_file"); echo "error: 'gh run view ${run_id}' failed: ${err} — verify (1) the run ID is correct (cross-check 'gh run list --workflow <publish-workflow-name> --branch main --limit 10'), (2) 'gh auth status' shows you're authenticated against the right host, then re-run; if the run failed at the GitHub side, inspect with 'gh run view ${run_id} --log-failed'" >&2; exit 2; }
+  conclusion=$(gh run view "$run_id" --repo "github.com/${owner}/${repo}" --json conclusion --jq '.conclusion' 2>"$err_file") \
+    || { local err; err=$(cat "$err_file"); echo "error: 'gh run view ${run_id} --repo github.com/${owner}/${repo}' failed: ${err} — verify (1) the run ID is correct (cross-check 'gh run list --repo github.com/${owner}/${repo} --workflow <publish-workflow-name> --branch main --limit 10'), (2) 'gh auth status --hostname github.com' shows you're authenticated against the right host, then re-run; if the run failed at the GitHub side, inspect with 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed'" >&2; exit 2; }
   if [[ -z "$conclusion" || "$conclusion" == "null" ]]; then
-    echo "error: 'gh run view ${run_id}' reports no terminal conclusion (got: '${conclusion}') — run is still in flight; run 'gh run watch ${run_id}' first, then re-run this script" >&2
+    echo "error: 'gh run view ${run_id} --repo github.com/${owner}/${repo}' reports no terminal conclusion (got: '${conclusion}') — run is still in flight; run 'gh run watch ${run_id} --repo github.com/${owner}/${repo}' first, then re-run this script" >&2
     exit 2
   fi
 
@@ -194,7 +201,7 @@ main() {
   # different, interleaved run.
   if [[ "$conclusion" != "success" ]]; then
     emit_and_exit "false" \
-      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --log-failed' to diagnose" \
+      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed' to diagnose" \
       "$conclusion" "$pre" "$current" 1
   fi
 

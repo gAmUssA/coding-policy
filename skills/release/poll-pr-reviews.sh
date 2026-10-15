@@ -109,12 +109,12 @@ COPILOT_COMMENT_LOGINS=("Copilot" "copilot-pull-request-reviewer[bot]")
 # volume bounded.
 slurp_api_array() {
   local endpoint="$1" what="$2" payload malformed
-  payload=$(gh api --paginate "$endpoint" | jq -s '(add // [])') \
+  payload=$(gh api --hostname github.com --paginate "$endpoint" | jq -s '(add // [])') \
     || { echo "error: failed to fetch ${what} from ${endpoint}" >&2; return 1; }
   malformed=$(printf '%s' "$payload" | jq '[.[] | select(type != "object")] | length') \
     || { echo "error: failed to inspect the ${what} payload from ${endpoint}" >&2; return 1; }
   if (( malformed > 0 )); then
-    echo "warning: ${endpoint} returned ${malformed} non-object element(s) in the ${what} payload — dropped; re-run poll-pr-reviews.sh if the snapshot looks wrong, and inspect the response with 'gh api --paginate ${endpoint}' if it persists" >&2
+    echo "warning: ${endpoint} returned ${malformed} non-object element(s) in the ${what} payload — dropped; re-run poll-pr-reviews.sh if the snapshot looks wrong, and inspect the response with 'gh api --hostname github.com --paginate ${endpoint}' if it persists" >&2
   fi
   printf '%s' "$payload" | jq '[.[] | select(type == "object")]'
 }
@@ -199,7 +199,7 @@ toplevel_comments_by() {
 # mergeable}.
 fetch_merge_state() {
   local owner="$1" repo="$2" pr="$3"
-  gh pr view "$pr" --repo "${owner}/${repo}" --json mergeStateStatus,mergeable,headRefOid \
+  gh pr view "$pr" --repo "github.com/${owner}/${repo}" --json mergeStateStatus,mergeable,headRefOid \
     | jq -c '{status: .mergeStateStatus, mergeable: .mergeable, head_sha: .headRefOid}'
 }
 
@@ -232,7 +232,7 @@ fetch_requested_logins() {
     echo "error: pr-number must be a positive integer; got '${pr}'" >&2
     return 1
   fi
-  gh api graphql -f query="$REQUESTED_LOGINS_QUERY" -f owner="$owner" -f repo="$repo" -F pr="$pr" \
+  gh api --hostname github.com graphql -f query="$REQUESTED_LOGINS_QUERY" -f owner="$owner" -f repo="$repo" -F pr="$pr" \
     --jq '[.data.repository.pullRequest.reviewRequests.nodes[]?.requestedReviewer
            | (.login // .slug) | select(. != null) | ascii_downcase | sub("\\[bot\\]$"; "")]' \
     | jq -c '.'
@@ -261,7 +261,7 @@ main() {
 
   # gh pr checks exits 8 when no checks are configured — distinguish that from real errors.
   local checks_json checks_raw rc=0
-  checks_raw=$(gh pr checks "$pr_number" --repo "${owner}/${repo}" --json name,bucket 2>&1) || rc=$?
+  checks_raw=$(gh pr checks "$pr_number" --repo "github.com/${owner}/${repo}" --json name,bucket 2>&1) || rc=$?
   if [[ $rc -eq 0 ]]; then
     checks_json="$checks_raw"
   # Here-string, not `echo | grep -qi`: `-q` makes grep exit at the first
@@ -272,7 +272,7 @@ main() {
   elif [[ $rc -eq 8 ]] || grep -qi "no check" <<<"$checks_raw"; then
     checks_json='[]'
   else
-    echo "error: gh pr checks failed (rc=${rc}): ${checks_raw}" >&2
+    echo "error: gh pr checks ${pr_number} --repo github.com/${owner}/${repo} failed (rc=${rc}): ${checks_raw}" >&2
     exit 1
   fi
 
@@ -300,7 +300,7 @@ main() {
 
   local merge_state
   merge_state=$(fetch_merge_state "$owner" "$repo" "$pr_number") \
-    || { echo "error: failed to fetch merge state for ${owner}/${repo}#${pr_number} — run 'gh auth status' to verify auth, then retry 'gh pr view ${pr_number} --repo ${owner}/${repo} --json mergeStateStatus,mergeable,headRefOid' to inspect the failing call directly" >&2; exit 1; }
+    || { echo "error: failed to fetch merge state for ${owner}/${repo}#${pr_number} — run 'gh auth status --hostname github.com' to verify auth, then retry 'gh pr view ${pr_number} --repo github.com/${owner}/${repo} --json mergeStateStatus,mergeable,headRefOid' to inspect the failing call directly" >&2; exit 1; }
 
   # Head SHA binds every review verdict to the commit it reviewed. Refuse to
   # proceed without it: an empty head would mark every real review stale and
@@ -308,17 +308,17 @@ main() {
   local head_sha
   head_sha=$(printf '%s' "$merge_state" | jq -r '.head_sha // empty')
   if [[ -z "$head_sha" ]]; then
-    echo "error: 'gh pr view ${pr_number} --repo ${owner}/${repo}' returned no headRefOid — cannot bind review verdicts to the PR head; verify the PR number and 'gh auth status', then retry" >&2
+    echo "error: 'gh pr view ${pr_number} --repo github.com/${owner}/${repo}' returned no headRefOid — cannot bind review verdicts to the PR head; verify the PR number and 'gh auth status --hostname github.com', then retry" >&2
     exit 1
   fi
 
   local requested_logins codex_requested copilot_requested
   requested_logins=$(fetch_requested_logins "$owner" "$repo" "$pr_number") \
-    || { echo "error: failed to fetch pending review requests for ${owner}/${repo}#${pr_number} — run 'gh auth status' to verify auth, then inspect the PR's reviewRequests with 'gh api graphql' (the REST requested_reviewers endpoint omits bot reviewers)" >&2; exit 1; }
+    || { echo "error: failed to fetch pending review requests for ${owner}/${repo}#${pr_number} — run 'gh auth status --hostname github.com' to verify auth, then inspect the PR's reviewRequests with 'gh api --hostname github.com graphql' (the REST requested_reviewers endpoint omits bot reviewers)" >&2; exit 1; }
   codex_requested=$(requested_among "$requested_logins" "${CODEX_REVIEW_LOGINS[@]}") \
-    || { echo "error: could not match the policy reviewer against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
+    || { echo "error: could not match the policy reviewer against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api --hostname github.com graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
   copilot_requested=$(requested_among "$requested_logins" "$COPILOT_REVIEW_LOGIN") \
-    || { echo "error: could not match Copilot against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
+    || { echo "error: could not match Copilot against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api --hostname github.com graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
 
   local codex_review copilot_review codex_comments copilot_comments
   codex_review=$(latest_review_by   "$owner" "$repo" "$pr_number" "${CODEX_REVIEW_LOGINS[@]}") \

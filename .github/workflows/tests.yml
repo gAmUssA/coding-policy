@@ -4,7 +4,10 @@ name: Tests
 #   1. diagnostics  — shellcheck over every first-party shell script and
 #      pyright over first-party Python, at zero findings
 #      (rules/language-diagnostics.md). Runs first: static checks are fast
-#      and cheap (rules/code-formatting.md CI Integration).
+#      and cheap (rules/code-formatting.md CI Integration). Two repo checks
+#      run ahead of the engines in the same job: the rules/ byte budget
+#      (scripts/check-rules-budget.sh) and leftover merge-conflict markers
+#      in tracked files (scripts/check-conflict-markers.sh).
 #   2. lint         — `tessl plugin lint` (manifest + skill-frontmatter +
 #      structure validation), so a bad manifest is caught here, not when it
 #      breaks publish.yml after merge.
@@ -29,6 +32,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Rules stay within their byte budget
+        run: bash scripts/check-rules-budget.sh
+      - name: No leftover merge-conflict markers
+        run: bash scripts/check-conflict-markers.sh
       - uses: ./.github/actions/setup-diagnostics
       - name: Run language-diagnostics gate
         run: bash scripts/run-diagnostics.sh
