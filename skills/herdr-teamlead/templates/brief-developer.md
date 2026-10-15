@@ -82,9 +82,9 @@ Write `{{REPORT}}` covering:
 
 - What you implemented and why, decision by decision.
 - The branch name and every commit SHA.
-- A `## Gates` section: one line per gate, the real exit code of its final
-  run, `unknown` if it never finished. The lead's `check-gates` refuses a
-  missing line or a non-zero exit as not done:
+- For an implementation task, a `## Gates` section: one line per gate, the
+  real exit code of its final run, `unknown` if it never finished. The lead's
+  `check-gates` refuses a missing line or a non-zero exit as not done:
   `- <name> exit=<code> cmd=<exact command>`
 - Anything you chose not to do, and why.
 - Open questions for the reviewer.
