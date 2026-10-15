@@ -606,6 +606,30 @@ class ReaderVersionTest(unittest.TestCase):
             self.assertIn('"schema_version": 4', str(caught.exception))
 
 
+class AgentKindTypeTest(unittest.TestCase):
+    """A non-string kind is a config_error before any pin lookup (PR #54 Copilot)."""
+
+    def test_list_and_object_kinds_are_refused_by_both_readers(self):
+        for kind in (["codex"], {"name": "codex"}):
+            agents = copy.deepcopy(VALID["agents"])
+            agents[1]["kind"] = kind
+            payload = {"schema_version": 4, "agents": agents,
+                       "judge": {"agent": "codex", "model": "gpt-6-astra", "effort": "high"}}
+            for reader in (parse_config, parse_judge):
+                with self.subTest(kind=kind, reader=reader.__name__), self.assertRaises(ConfigError) as caught:
+                    reader(payload)
+                self.assertIn("agents[1].kind", str(caught.exception))
+                self.assertIn("claude, codex, grok", str(caught.exception))
+
+    def test_a_string_kind_still_parses(self):
+        payload = dict(copy.deepcopy(VALID), schema_version=4,
+                       judge={"agent": "codex", "model": "gpt-6-astra", "effort": "high"})
+        self.assertEqual(parse_config(payload)[1].kind, "codex")
+        judge = parse_judge(payload)
+        assert judge is not None
+        self.assertEqual(judge.agent, "codex")
+
+
 class JudgePinTest(unittest.TestCase):
     """The judge block meets the judgment floor of its agent's kind (#47)."""
 

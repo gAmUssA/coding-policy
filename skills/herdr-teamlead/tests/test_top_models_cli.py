@@ -77,6 +77,16 @@ class TopModelsPlanTest(unittest.TestCase):
         message = self.refusal(self.plan(_config(3, {"codex": ["gpt-7-nova"]})))
         self.assertIn('Set "schema_version": 4', message)
 
+    def test_a_non_string_kind_is_a_structured_config_error(self):
+        for kind in (["codex"], {"name": "codex"}):
+            config = _config(4)
+            config["agents"][0]["kind"] = kind
+            config["agents"][0].pop("tiers")
+            with self.subTest(kind=kind):
+                result = self.plan(config)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIn("agents[0].kind", self.refusal(result))
+
     def test_a_newer_config_version_is_refused(self):
         message = self.refusal(self.plan(_config(5, {"codex": ["gpt-7-nova"]})))
         self.assertIn("schema_version 5", message)

@@ -175,7 +175,8 @@ def validate_config_schema(payload, source="<memory>"):
     """Schema and field-gate validation every config.json reader runs first.
 
     Refuses a non-object, an unreadable (missing, older or newer) version,
-    and any version-gated field below its version. Returns the version.
+    a non-string agent kind, and any version-gated field below its version.
+    Returns the version.
     """
     if not isinstance(payload, dict):
         raise ConfigError(
@@ -201,6 +202,11 @@ def validate_config_schema(payload, source="<memory>"):
         )
     agents = payload.get("agents")
     for index, entry in enumerate(agents if isinstance(agents, list) else []):
+        if isinstance(entry, dict) and "kind" in entry and not isinstance(entry["kind"], str):
+            raise ConfigError(
+                "Config at {}: agents[{}].kind is a JSON {}; write it as a string naming the agent's CLI, "
+                "one of {}.".format(source, index, type(entry["kind"]).__name__, ", ".join(sorted(TOP_MODELS))),
+                {"source": source, "index": index, "field": "kind"})
         for field, gate in AGENT_FIELD_GATES:
             if isinstance(entry, dict) and field in entry and version < gate:
                 raise ConfigError(
