@@ -170,6 +170,8 @@ main() {
   ln -sf "$(command -v bash)" "$bin/bash" || die "c9 link bash failed"
   ln -sf "$(command -v touch)" "$bin/touch" || die "c9 link touch failed"
   ln -sf "$(command -v sleep)" "$bin/sleep" || die "c9 link sleep failed"
+  ln -sf "$(command -v ps)" "$bin/ps" || die "c9 link ps failed"
+  ln -sf "$(command -v awk)" "$bin/awk" || die "c9 link awk failed"
   run SESSION_START_HOOKS="mark.sh" PATH="$bin"
   if [[ $RC -eq 0 && -e "$TMP/c9-ran" ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("jq is not installed")' >/dev/null 2>&1; then
     pass; else fail "no jq (native): expected the child to run and a jq status, got RC=$RC OUT=$OUT"; fi

@@ -71,10 +71,34 @@ main() {
   return 124
 }
 
-# Is any process of the managed group still alive? The leader alone is not
-# enough: it can exit on SIGTERM while a descendant ignores it.
+# Is any process of the managed group still running? The leader alone is not
+# enough: it can exit on SIGTERM while a descendant ignores it. A defunct
+# (zombie) member does not count: it has already exited and holds no pipe,
+# and under a non-reaping parent it would otherwise keep the group "alive"
+# until the deadline. `ps -A -o pgid= -o stat=` reads states on macOS and
+# Linux procps alike; when ps cannot answer, any member counts as running, so
+# the deadline still holds.
 group_alive() {
-  kill -0 -- "-$PGID" 2>/dev/null
+  local table rc=0
+  kill -0 -- "-$PGID" 2>/dev/null || return 1
+  if ! table="$(ps -A -o pgid= -o stat=)"; then
+    warn_once "ps could not list process states — counting every group member as running"
+    return 0
+  fi
+  awk -v g="$PGID" '$1 == g && $2 !~ /^Z/ { found = 1 } END { exit !found }' <<<"$table" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) warn_once "awk failed (exit ${rc}) reading process states — counting every group member as running"; return 0 ;;
+  esac
+}
+
+#: Set once a degraded-liveness warning has been printed.
+WARNED=0
+warn_once() { # <message>
+  (( WARNED )) && return 0
+  WARNED=1
+  printf 'bounded-run: %s\n' "$1" >&2
 }
 
 # SIGTERM the group, wait up to <grace> seconds for every member, then SIGKILL

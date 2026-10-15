@@ -306,7 +306,7 @@ while True:
   local bin tool
   bin="$TMP/notimeout-bin"
   mkdir -p "$bin" || die "could not create $bin"
-  for tool in bash git jq cksum cut mkdir date env dirname sleep; do
+  for tool in bash git jq cksum cut mkdir date env dirname sleep ps awk; do
     ln -sf "$(command -v "$tool")" "$bin/$tool" || die "could not link $tool"
   done
   ( cd "$TMP/r1g" && env SYNC_STATE_DIR="$TMP/s1g" SYNC_FETCH_TIMEOUT="$FETCH_DEADLINE_SEC" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1g.out" 2>/dev/null ) &

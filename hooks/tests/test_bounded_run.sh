@@ -16,6 +16,16 @@
 #                           holds stdout past the deadline: 124, descendant killed.
 #   8. Group finishes    -> a leader exiting 3 whose descendant ends before the
 #                           deadline returns 3 after the descendant ends.
+#   9. Zombie member     -> the group's only other member is defunct under a
+#                           non-reaping parent: the leader's exit 3 comes back,
+#                           not 124. A python3 helper outside the group (same
+#                           session) forks a child that joins the runner's group
+#                           with setpgid and exits; the helper never reaps it.
+#                           (macOS kill -0 already skips zombies; Linux does not.)
+#  10. Liveness helper   -> group_alive against a fake `ps` (the process
+#                           boundary) on a live group: a group whose only member
+#                           reads Z is not running, one reading S is, and a
+#                           failing ps counts as running. Platform-independent.
 #
 # Run: bash hooks/tests/test_bounded_run.sh
 set -uo pipefail
@@ -110,6 +120,75 @@ main() {
   rc=0
   out="$(bash "$SCRIPT" 5 bash -c 'sleep 1 & exit 3' </dev/null 2>/dev/null)" || rc=$?
   if [[ $rc -eq 3 ]]; then pass; else fail "group finishes: expected the leader's exit 3, got rc=$rc"; fi
+
+  # 9. A zombie in the group must not hold the deadline open.
+  cat > "$TMP/zombie.py" <<'ZOMBIE'
+import os, subprocess, sys, time
+pgid_file, ready, confirmed = sys.argv[1:4]
+for _ in range(200):
+    if os.path.exists(pgid_file) and open(pgid_file).read().strip():
+        break
+    time.sleep(0.05)
+pgid = int(open(pgid_file).read())
+pid = os.fork()
+if pid == 0:
+    try:
+        os.setpgid(0, pgid)
+    finally:
+        os._exit(0)
+# The child exits and is never reaped, so it stays a zombie in the group.
+# Poll ps (os.waitid is missing from older macOS Pythons) until it shows Z.
+for _ in range(100):
+    rows = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "pgid=", "-o", "stat="],
+                          capture_output=True, text=True, check=True).stdout.splitlines()
+    if any(r.split()[:2] == [str(pid), str(pgid)] and r.split()[2].startswith("Z")
+           for r in rows if len(r.split()) >= 3):
+        open(confirmed, "w").close()
+        break
+    time.sleep(0.05)
+open(ready, "w").close()
+time.sleep(30)
+ZOMBIE
+  python3 "$TMP/zombie.py" "$TMP/c9.pgid" "$TMP/c9.ready" "$TMP/c9.zombie" &
+  local helper=$! hrc=0
+  rc=0
+  # shellcheck disable=SC2016 # expands inside the child shell, not here
+  bash "$SCRIPT" 5 bash -c 'echo $$ > "$1"; for i in $(seq 100); do [ -e "$2" ] && exit 3; sleep 0.05; done; exit 9' _ "$TMP/c9.pgid" "$TMP/c9.ready" </dev/null 2>/dev/null || rc=$?
+  if [[ -e "$TMP/c9.zombie" && $rc -eq 3 ]]; then
+    pass; else fail "zombie member: expected the leader's exit 3 with a confirmed zombie in the group, got rc=$rc zombie=$([[ -e "$TMP/c9.zombie" ]] && echo yes || echo no)"; fi
+  kill "$helper" || echo "warn: could not stop the zombie helper $helper" >&2
+  wait "$helper" || hrc=$?
+  # SIGTERM (143) is the helper's expected end.
+  [[ $hrc -eq 143 ]] || echo "warn: zombie helper ended with exit $hrc" >&2
+
+  # 10. group_alive reads states from ps. PGID is this harness's own group,
+  # so `kill -0 -- -PGID` succeeds; only the fake ps decides.
+  local mypg fakeps alive
+  mypg="$(ps -o pgid= -p $$)" || die "cannot read this harness's process group"
+  mypg="${mypg//[[:space:]]/}"
+  fakeps="$TMP/fakeps"
+  mkdir -p "$fakeps" || die "could not create $fakeps"
+  for state in Z S fail; do
+    if [[ "$state" == fail ]]; then
+      printf '#!/bin/sh\nexit 1\n' > "$fakeps/ps" || die "fake ps write failed"
+    else
+      printf '#!/bin/sh\necho " %s %s+"\necho " 999999 S"\n' "$mypg" "$state" > "$fakeps/ps" || die "fake ps write failed"
+    fi
+    chmod +x "$fakeps/ps" || die "fake ps chmod failed"
+    alive="$( (
+      set +e
+      # shellcheck source=/dev/null # the runner under test
+      source "$SCRIPT"
+      # shellcheck disable=SC2034 # read by the sourced group_alive
+      PGID="$mypg"
+      PATH="$fakeps:$PATH"
+      if group_alive 2>/dev/null; then echo yes; else echo no; fi
+    ) )"
+    case "$state:$alive" in
+      Z:no|S:yes|fail:yes) pass ;;
+      *) fail "liveness helper: a group reading '$state' should be $([[ $state == Z ]] && echo 'not running' || echo running), got alive=$alive" ;;
+    esac
+  done
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
