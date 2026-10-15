@@ -7,6 +7,12 @@
 #                           diagnostic, and a grandchild in the group is dead.
 #   3. TERM ignored      -> SIGKILL follows the grace period; exit 124.
 #   4. Usage errors      -> a non-positive or missing deadline exits 125.
+#   5. Group escalation  -> the leader exits on SIGTERM while a descendant
+#                           ignores it: the descendant is SIGKILLed anyway.
+#   6. Nested runners    -> an outer deadline that fires first stops the inner
+#                           runner, which reaps its own group: the innermost
+#                           process is dead and the outer's captured output
+#                           returns promptly.
 #
 # Run: bash hooks/tests/test_bounded_run.sh
 set -uo pipefail
@@ -52,6 +58,29 @@ main() {
   if [[ $rc -eq 125 ]]; then pass; else fail "usage: deadline 0 should exit 125, got $rc"; fi
   rc=0; bash "$SCRIPT" 5 2>/dev/null || rc=$?
   if [[ $rc -eq 125 ]]; then pass; else fail "usage: missing command should exit 125, got $rc"; fi
+
+  # 5. Leader dies on TERM, a descendant ignores TERM (ignored dispositions
+  # survive exec). The descendant sleeps 8s, so a missed escalation shows as
+  # a live process, never a hung suite.
+  rc=0
+  # shellcheck disable=SC2016 # expands inside the child shells, not here
+  bash "$SCRIPT" 1 bash -c 'bash -c "trap \"\" TERM; echo \$\$ > \"$1\"; exec sleep 8" _ "$1" & wait' _ "$TMP/ign.pid" </dev/null 2>/dev/null || rc=$?
+  local ign; ign="$(cat "$TMP/ign.pid")" || die "ignoring descendant pid not recorded"
+  if [[ $rc -eq 124 ]] && ! kill -0 "$ign" 2>/dev/null; then
+    pass; else fail "escalation: expected 124 and the TERM-ignoring descendant killed, got rc=$rc alive=$(kill -0 "$ign" 2>/dev/null && echo yes)"; fi
+  if kill -0 "$ign" 2>/dev/null; then kill -KILL "$ign" || echo "warn: could not stop $ign" >&2; fi
+
+  # 6. Nested runners, outer deadline first. Command substitution waits for
+  # every holder of stdout, so a surviving innermost process would hold it
+  # for its full 8s.
+  start=$SECONDS; rc=0
+  # shellcheck disable=SC2016 # expands inside the child shell, not here
+  out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 30 bash -c 'echo $$ > "$1"; exec sleep 8' _ "$TMP/inner.pid" </dev/null 2>/dev/null)" || rc=$?
+  elapsed=$(( SECONDS - start ))
+  local inner; inner="$(cat "$TMP/inner.pid")" || die "innermost pid not recorded"
+  if [[ $rc -eq 124 ]] && (( elapsed <= 5 )) && ! kill -0 "$inner" 2>/dev/null; then
+    pass; else fail "nested: expected 124 within 5s and the innermost process dead, got rc=$rc elapsed=$elapsed alive=$(kill -0 "$inner" 2>/dev/null && echo yes)"; fi
+  if kill -0 "$inner" 2>/dev/null; then kill -KILL "$inner" || echo "warn: could not stop $inner" >&2; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi

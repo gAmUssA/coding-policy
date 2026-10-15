@@ -20,50 +20,86 @@ set -euo pipefail
 
 #: Seconds between SIGTERM and SIGKILL once the deadline has passed.
 KILL_GRACE_SEC=2
-#: Seconds between liveness checks.
+#: Seconds between SIGTERM and SIGKILL when this runner is itself stopped.
+#: Below KILL_GRACE_SEC, so a runner nested inside another runner reaps its
+#: own group before the outer runner escalates to SIGKILL.
+TRAP_GRACE_SEC=1
+#: Seconds between liveness checks, and how many checks make one second.
 POLL_SEC=0.1
+POLLS_PER_SEC=10
+
+#: The managed process group; empty until the command starts.
+PGID=""
 
 main() {
   if (( $# < 2 )) || [[ ! "$1" =~ ^[1-9][0-9]*$ ]]; then
     printf 'bounded-run: usage: bounded-run.sh <seconds> <command> [args...]\n' >&2
     return 125
   fi
-  local budget="$1" pid rc=0 start
+  local budget="$1" rc=0 i
   shift
 
+  # A runner stopped from outside (an outer runner's deadline, a cancelled
+  # session) must not leave its group running with stdout open.
+  trap 'on_stop 143' TERM
+  trap 'on_stop 130' INT
+
   # Job control gives the background command its own process group (pgid ==
-  # its pid), so `kill -- -<pid>` reaches every descendant that stays in it.
-  start=$SECONDS
+  # its pid), so `kill -- -<pgid>` reaches every descendant that stays in it.
   set -m
   "$@" &
-  pid=$!
+  PGID=$!
   set +m
 
-  while kill -0 "$pid" 2>/dev/null; do
-    if (( SECONDS - start >= budget )); then
-      signal_group TERM "$pid"
-      local grace_start=$SECONDS
-      while kill -0 "$pid" 2>/dev/null && (( SECONDS - grace_start < KILL_GRACE_SEC )); do
-        sleep "$POLL_SEC"
-      done
-      if kill -0 "$pid" 2>/dev/null; then signal_group KILL "$pid"; fi
-      # The shell's own "Terminated" job report is replaced by the line below.
-      wait "$pid" 2>/dev/null || rc=$?
-      printf 'bounded-run: %s ran past its %ss deadline and was stopped — run it by hand to see where it waits\n' "$*" "$budget" >&2
-      return 124
+  for (( i = 0; i < budget * POLLS_PER_SEC; i++ )); do
+    if ! kill -0 "$PGID" 2>/dev/null; then
+      wait "$PGID" || rc=$?
+      return "$rc"
     fi
     sleep "$POLL_SEC"
   done
-  wait "$pid" || rc=$?
-  return "$rc"
+  if ! kill -0 "$PGID" 2>/dev/null; then
+    wait "$PGID" || rc=$?
+    return "$rc"
+  fi
+  stop_group "$KILL_GRACE_SEC"
+  printf 'bounded-run: %s ran past its %ss deadline and was stopped — run it by hand to see where it waits\n' "$*" "$budget" >&2
+  return 124
 }
 
-# Signal the command's process group. A group that already exited is the
+# Is any process of the managed group still alive? The leader alone is not
+# enough: it can exit on SIGTERM while a descendant ignores it.
+group_alive() {
+  kill -0 -- "-$PGID" 2>/dev/null
+}
+
+# SIGTERM the group, wait up to <grace> seconds for every member, then SIGKILL
+# whatever is left, and reap the leader.
+stop_group() { # <grace-seconds>
+  local i
+  signal_group TERM
+  for (( i = 0; i < $1 * POLLS_PER_SEC; i++ )); do
+    group_alive || break
+    sleep "$POLL_SEC"
+  done
+  if group_alive; then signal_group KILL; fi
+  # The shell's own "Terminated" job report is replaced by the caller's line.
+  wait "$PGID" 2>/dev/null || return 0
+  return 0
+}
+
+on_stop() { # <exit-code>
+  trap - TERM INT
+  if [[ -n "$PGID" ]]; then stop_group "$TRAP_GRACE_SEC"; fi
+  exit "$1"
+}
+
+# Signal the managed process group. A group that already exited is the
 # expected race, not a failure.
-signal_group() { # <signal> <pgid>
-  if ! kill "-$1" -- "-$2" 2>/dev/null; then
-    kill -0 "$2" 2>/dev/null || return 0
-    printf 'bounded-run: could not send SIG%s to process group %s\n' "$1" "$2" >&2
+signal_group() { # <signal>
+  if ! kill "-$1" -- "-$PGID" 2>/dev/null; then
+    group_alive || return 0
+    printf 'bounded-run: could not send SIG%s to process group %s\n' "$1" "$PGID" >&2
   fi
   return 0
 }
