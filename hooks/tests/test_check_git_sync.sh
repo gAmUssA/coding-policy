@@ -12,12 +12,26 @@
 # (rules/error-handling.md aggregate-reporting carve-out).
 #
 # Covers:
-#   1. Behind        -> emits marker additionalContext naming the branch + "behind".
+#   1. Behind        -> a clean lead on the default branch is fast-forwarded and
+#                       the status says so; local main equals origin/main after.
+#   1a. Behind+dirty / off-default -> reported "behind" with the reason, not moved.
+#   1b. Worker       -> HERDR_ENV in a linked worktree: no fetch (origin/main
+#                       ref unchanged), no throttle stamp, do-not-sync notice.
+#   1c. Lead in Herdr -> the main checkout with HERDR_ENV set still fetches + ffs.
+#   1d. Portable     -> SESSION_START_MODE=portable in a linked worktree: no
+#                       fetch, "not verified"; in the main checkout: fetch, but
+#                       report "behind" rather than fast-forward.
+#   1e. Repo hooks   -> reference-transaction / post-merge hooks never run
+#                       during the fetch or the fast-forward.
+#   1f. ssh bound    -> ConnectTimeout reaches the ssh command git would use
+#                       (GIT_SSH_COMMAND, and core.sshCommand when unset).
+#   1g. HTTP bound   -> with no timeout/gtimeout on PATH, a stalled HTTP remote
+#                       still ends the fetch ("not verified") within the guard.
 #   2. Up to date    -> emits a marker "in sync" status, exit 0.
 #   3. Throttle      -> with a fixed injected clock: a call inside the window
 #                       skips the fetch and reports "not verified" (never a
 #                       definitive "in sync"/"behind" against the stale ref); a
-#                       call past the window fetches and fires "behind".
+#                       call past the window fetches and fast-forwards.
 #   4. Not a repo    -> silent no-op, exit 0.
 #   5. No origin     -> silent no-op, exit 0.
 #   6. Fetch failure -> marker "not verified" (never a false "in sync" against a
@@ -39,7 +53,17 @@ unset TEST_SUMMARY_TOKEN
 
 die() { echo "fatal: $*" >&2; exit 2; }
 
-cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
+cleanup() {
+  if [[ -n "${STALL_PID:-}" ]] && ! kill "$STALL_PID" 2>/dev/null; then
+    echo "warn: stall server $STALL_PID already gone" >&2
+  fi
+  [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2
+  return 0
+}
+
+#: Seconds the HTTP-stall case waits for the hook before killing it. The hook's
+#: own bound under test is SYNC_FETCH_TIMEOUT=2.
+STALL_GUARD_SEC=20
 
 g() { git "$@"; }
 
@@ -79,6 +103,7 @@ main() {
   [[ -f "$SCRIPT" && -r "$SCRIPT" ]] || die "hook not found/readable at $SCRIPT"
   command -v jq  >/dev/null 2>&1 || die "jq required for these tests"
   command -v git >/dev/null 2>&1 || die "git required for these tests"
+  command -v python3 >/dev/null 2>&1 || die "python3 required for these tests"
 
   TMP="$(mktemp -d -t git-sync-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
@@ -89,34 +114,161 @@ main() {
   export HOME="$TMP/home"
   mkdir -p "$HOME" || die "could not create isolated HOME at $HOME"
   export GIT_CONFIG_NOSYSTEM=1
+  # The operator's session may itself run under Herdr or with a custom ssh;
+  # every case sets these explicitly.
+  unset HERDR_ENV SESSION_START_MODE GIT_SSH_COMMAND GIT_SSH
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
   FAIL=0; PASS=0
 
-  # 1. behind -> notice. Clone (up to date), then move origin ahead by one
-  #    commit; the hook fetches and reports behind by 1.
+  # 1. behind, clean, on main -> fast-forwarded, and main really moved.
   mk_origin o1
   clone_from "$BARE" "$TMP/r1"
   commit_push "$SEED" "c2"
   run "$TMP/r1" "$TMP/s1"
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Session-start status") and test("behind") and test("main")' >/dev/null 2>&1; then
-    pass; else fail "behind: expected marker notice, got RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Session-start status") and test("fast-forwarded") and test("main")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1" rev-parse main)" == "$(git -C "$TMP/r1" rev-parse origin/main)" ]]; then
+    pass; else fail "behind: expected fast-forward to origin/main, got RC=$RC OUT=$OUT"; fi
 
-  # 1b. Behind, but read from a linked worktree with HERDR_ENV set -- a Herdr
-  # worker. The shared checkout is the lead's (rules/agent-team-operation.md
-  # Workers), so the notice must report the drift WITHOUT telling
-  # the worker to fetch or fast-forward it.
-  git -C "$TMP/r1" worktree add -q "$TMP/r1-wt" -b feat/worker >/dev/null 2>&1 \
-    || die "r1 worktree add failed"
-  run "$TMP/r1-wt" "$TMP/s1b" HERDR_ENV=1
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Herdr worker session") and test("Do not sync") and (test("fast-forward") | not)' >/dev/null 2>&1; then
+  # 1a. behind with a tracked change -> reported, not moved.
+  mk_origin o1a
+  clone_from "$BARE" "$TMP/r1a"
+  commit_push "$SEED" "c2"
+  printf 'wip\n' >> "$TMP/r1a/f" || die "write r1a/f failed"
+  local before1a; before1a="$(git -C "$TMP/r1a" rev-parse main)" || die "r1a rev-parse failed"
+  run "$TMP/r1a" "$TMP/s1a"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("behind") and test("uncommitted changes") and (test("fast-forwarded") | not)' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1a" rev-parse main)" == "$before1a" ]]; then
+    pass; else fail "behind+dirty: expected a report and an unmoved main, got RC=$RC OUT=$OUT"; fi
+
+  # 1a2. behind while a feature branch is checked out -> reported, not moved.
+  mk_origin o1a2
+  clone_from "$BARE" "$TMP/r1a2"
+  g -C "$TMP/r1a2" checkout -q -b feat/x || die "r1a2 checkout failed"
+  commit_push "$SEED" "c2"
+  local before1a2; before1a2="$(git -C "$TMP/r1a2" rev-parse main)" || die "r1a2 rev-parse failed"
+  run "$TMP/r1a2" "$TMP/s1a2"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("behind") and test("not the checked-out branch")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1a2" rev-parse main)" == "$before1a2" ]]; then
+    pass; else fail "off-default: expected a report and an unmoved main, got RC=$RC OUT=$OUT"; fi
+
+  # 1b. A Herdr worker (HERDR_ENV set, linked worktree) never fetches: origin
+  # moves, the worker's run leaves refs/remotes/origin/main where it was, writes
+  # no throttle stamp, and tells the worker not to sync the shared checkout
+  # (rules/agent-team-operation.md Workers).
+  mk_origin o1b
+  clone_from "$BARE" "$TMP/r1b"
+  git -C "$TMP/r1b" worktree add -q "$TMP/r1b-wt" -b feat/worker >/dev/null 2>&1 \
+    || die "r1b worktree add failed"
+  commit_push "$SEED" "c2"
+  local ref1b; ref1b="$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" || die "r1b rev-parse failed"
+  run "$TMP/r1b-wt" "$TMP/s1b" HERDR_ENV=1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Herdr worker session") and test("Do not sync") and test("as last fetched") and (test("fast-forwarded") | not)' >/dev/null 2>&1; then
     pass; else fail "worker session: expected a no-sync notice, got RC=$RC OUT=$OUT"; fi
+  if [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1b" && ! -e "$TMP/s1b" ]]; then
+    pass; else fail "worker session: expected no fetch and no throttle stamp"; fi
 
   # 1c. The same drift from the MAIN checkout with HERDR_ENV set is the lead:
-  # the suppression keys on the linked worktree, not on Herdr alone.
-  run "$TMP/r1" "$TMP/s1c" HERDR_ENV=1
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forward")' >/dev/null 2>&1; then
-    pass; else fail "lead session: expected the sync instruction, got RC=$RC OUT=$OUT"; fi
+  # it fetches and fast-forwards.
+  run "$TMP/r1b" "$TMP/s1c" HERDR_ENV=1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
+    pass; else fail "lead session: expected a fast-forward, got RC=$RC OUT=$OUT"; fi
+
+  # 1d. Portable mode (tessl stripped HERDR_ENV). A linked worktree may be a
+  # worker's: no fetch, "not verified". The main checkout fetches but only
+  # reports, never fast-forwards.
+  mk_origin o1d
+  clone_from "$BARE" "$TMP/r1d"
+  git -C "$TMP/r1d" worktree add -q "$TMP/r1d-wt" -b feat/maybe-worker >/dev/null 2>&1 \
+    || die "r1d worktree add failed"
+  commit_push "$SEED" "c2"
+  local ref1d; ref1d="$(git -C "$TMP/r1d" rev-parse refs/remotes/origin/main)" || die "r1d rev-parse failed"
+  run "$TMP/r1d-wt" "$TMP/s1d" SESSION_START_MODE=portable
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified") and test("tessl")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1d" rev-parse refs/remotes/origin/main)" == "$ref1d" ]]; then
+    pass; else fail "portable worktree: expected 'not verified' and no fetch, got RC=$RC OUT=$OUT"; fi
+  local before1d; before1d="$(git -C "$TMP/r1d" rev-parse main)" || die "r1d rev-parse failed"
+  run "$TMP/r1d" "$TMP/s1d2" SESSION_START_MODE=portable
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("behind") and test("tessl") and (test("fast-forwarded") | not)' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1d" rev-parse main)" == "$before1d" ]]; then
+    pass; else fail "portable main checkout: expected a behind report and an unmoved main, got RC=$RC OUT=$OUT"; fi
+
+  # 1e. Repo hooks never run: the fetch updates refs (reference-transaction)
+  # and the fast-forward is a merge (post-merge). Each hook drops a marker.
+  mk_origin o1e
+  clone_from "$BARE" "$TMP/r1e"
+  commit_push "$SEED" "c2"
+  local hk
+  for hk in reference-transaction post-merge; do
+    printf '#!/bin/sh\ntouch "%s/ran-%s"\n' "$TMP" "$hk" > "$TMP/r1e/.git/hooks/$hk" || die "write $hk hook failed"
+    chmod +x "$TMP/r1e/.git/hooks/$hk" || die "chmod $hk hook failed"
+  done
+  run "$TMP/r1e" "$TMP/s1e"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1 \
+     && [[ ! -e "$TMP/ran-reference-transaction" && ! -e "$TMP/ran-post-merge" ]]; then
+    pass; else fail "repo hooks: expected fetch + fast-forward with no repo hook run, got RC=$RC OUT=$OUT"; fi
+
+  # 1f. The ssh connect bound extends the ssh command git would use. A recording
+  # "ssh" logs its argv and fails, so the fetch fails ("not verified").
+  mk_origin o1f
+  clone_from "$BARE" "$TMP/r1f"
+  g -C "$TMP/r1f" remote set-url origin "ssh://fake.invalid/repo.git" || die "r1f set-url failed"
+  # shellcheck disable=SC2016 # the $* and $0 belong to the generated script
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$0.log"\nexit 255\n' > "$TMP/fake-ssh" || die "write fake-ssh failed"
+  chmod +x "$TMP/fake-ssh" || die "chmod fake-ssh failed"
+  run "$TMP/r1f" "$TMP/s1f" GIT_SSH_COMMAND="$TMP/fake-ssh"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1 \
+     && grep -q 'ConnectTimeout=' "$TMP/fake-ssh.log"; then
+    pass; else fail "ssh bound (GIT_SSH_COMMAND): expected ConnectTimeout on the ssh argv, got RC=$RC OUT=$OUT"; fi
+  rm -f "$TMP/fake-ssh.log" || die "could not reset fake-ssh.log"
+  g -C "$TMP/r1f" config core.sshCommand "$TMP/fake-ssh" || die "r1f config failed"
+  run "$TMP/r1f" "$TMP/s1f2" GIT_SSH_COMMAND=
+  if [[ $RC -eq 0 ]] && [[ -f "$TMP/fake-ssh.log" ]] && grep -q 'ConnectTimeout=' "$TMP/fake-ssh.log"; then
+    pass; else fail "ssh bound (core.sshCommand): expected the configured ssh with ConnectTimeout, got RC=$RC OUT=$OUT"; fi
+
+  # 1g. HTTP stall with no timeout/gtimeout on PATH: a server that accepts and
+  # never answers. git's low-speed abort must end the fetch; the harness kills
+  # the hook after STALL_GUARD_SEC and fails the case if it is still running.
+  mk_origin o1g
+  clone_from "$BARE" "$TMP/r1g"
+  python3 -c '
+import socket, sys, time
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(8)
+open(sys.argv[1], "w").write(str(s.getsockname()[1]))
+held = []
+while True:
+    c, _ = s.accept(); held.append(c)
+' "$TMP/stall.port" &
+  STALL_PID=$!
+  local i port=""
+  for (( i = 0; i < 50; i++ )); do
+    [[ -s "$TMP/stall.port" ]] && { port="$(cat "$TMP/stall.port")"; break; }
+    sleep 0.1
+  done
+  [[ -n "$port" ]] || die "stall server did not start"
+  g -C "$TMP/r1g" remote set-url origin "http://127.0.0.1:${port}/repo.git" || die "r1g set-url failed"
+  local bin tool
+  bin="$TMP/notimeout-bin"
+  mkdir -p "$bin" || die "could not create $bin"
+  for tool in bash git jq cksum cut mkdir date env; do
+    ln -sf "$(command -v "$tool")" "$bin/$tool" || die "could not link $tool"
+  done
+  ( cd "$TMP/r1g" && env SYNC_STATE_DIR="$TMP/s1g" SYNC_FETCH_TIMEOUT=2 PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1g.out" 2>/dev/null ) &
+  local hook_pid=$! done1g=0
+  for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
+    if ! kill -0 "$hook_pid" 2>/dev/null; then done1g=1; break; fi
+    sleep 0.1
+  done
+  if (( ! done1g )); then
+    kill "$hook_pid" || echo "warn: could not kill the stalled hook $hook_pid" >&2
+  fi
+  wait "$hook_pid"
+  OUT="$(cat "$TMP/r1g.out")"
+  if (( done1g )) && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
+    pass; else fail "http bound: expected the stalled fetch to end within ${STALL_GUARD_SEC}s as 'not verified', got done=$done1g OUT=$OUT"; fi
+  kill "$STALL_PID" || echo "warn: could not stop the stall server $STALL_PID" >&2
+  wait "$STALL_PID"
+  STALL_PID=""
 
   # 2. up to date -> marker "in sync" status.
   mk_origin o2
@@ -151,8 +303,8 @@ main() {
   run "$TMP/r3" "$TMP/s3" SYNC_NOW=2000060               # +60s: throttled -> no fetch -> not verified
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Session-start status") and test("not verified") and (test("in sync") | not) and (test("behind") | not)' >/dev/null 2>&1; then
     pass; else fail "throttle active: inside window should report 'not verified' (not 'in sync'/'behind'), got OUT=$OUT"; fi
-  run "$TMP/r3" "$TMP/s3" SYNC_NOW=2003601               # +>1h: fetch -> behind -> fires
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("behind")' >/dev/null 2>&1; then
+  run "$TMP/r3" "$TMP/s3" SYNC_NOW=2003601               # +>1h: fetch -> behind -> fast-forwarded
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
     pass; else fail "throttle expired: past window should fetch and fire, got OUT=$OUT"; fi
 
   # 4. not a repo -> silent no-op.
@@ -213,7 +365,7 @@ main() {
   mkdir -p "$stampdir9" || die "could not create $stampdir9"
   printf '2 %s\n' 2000000 > "$stampdir9/sync-$key9" || die "could not seed future stamp"
   run "$TMP/r9" "$stampdir9" SYNC_NOW=2000060            # within window, but future schema
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("behind")' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
     pass; else fail "future stamp: expected fire (not throttled), got RC=$RC OUT=$OUT"; fi
   sv9=""; read -r sv9 _ < "$stampdir9/sync-$key9" || sv9=""
   if [[ "$sv9" == "2" ]]; then pass; else fail "future stamp: expected preserved version 2, got '$sv9'"; fi

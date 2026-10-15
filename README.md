@@ -72,8 +72,8 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | Hook | Event | Description |
 |------|-------|-------------|
 | [check-policy-freshness](hooks/check-policy-freshness.sh) | SessionStart | Warns (throttled once a day) when installed Tessl plugins are behind the registry. Informative only. |
-| [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo) and warns when the local default branch is behind or diverged. Informative only. |
-| [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Warns when `tessl.json` pins a `gamussa/*` dependency instead of `latest`. Informative only. |
+| [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo, repo hooks off, time-bounded without `timeout`) and fast-forwards a clean checked-out default branch that is strictly behind; reports every other drift. A Herdr worker never fetches. Never blocks. |
+| [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Runs `tessl update --yes` in a consumer with `gamussa/*` dependencies and reports each one's version transition; flags a `gamussa/*` pin that is not `latest`. Never blocks. |
 | [beans-prime](hooks/beans-prime.sh) | SessionStart | In a repo with `.beans.yml`, loads the `beans prime` usage guide as context; warns when the CLI is missing. Silent elsewhere. Informative only. |
 | [herdr-team-status](hooks/herdr-team-status.sh) | SessionStart | Names the live Herdr team: each named worker, its kind, and its lifecycle state. Silent outside Herdr. Informative only. |
 | [stop-handoff-hygiene](hooks/stop-handoff-hygiene.sh) | Stop (Claude Code + Codex) | Blocks the handoff once on leftover merged branches, spent worktrees (clean and holding nothing the default branch lacks, pushed or not), or shellcheck (warning and above) / pyright findings in the changed set (venv-aware). Dirty, unmerged, locked, and detached worktrees, a dirty tree, and shellcheck info/style notes are reported, not blocked. |
