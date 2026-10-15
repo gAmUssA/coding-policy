@@ -23,11 +23,10 @@ unchanged. Its canonical state path is the expanded, resolved path selected by
 `--state` or the existing default; separate state files have separate histories.
 
 `skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use.
-`config.json` is operator-owned and takes `rules/stateful-artifacts.md`
-Migration Policy's operator-authored configuration exception: teamlead never
-writes it, `teamlead/config.py` reads every documented version (1 to 4) and
-upgrades older ones in memory only, and a gated field in an older-version file
-is refused with the version to set. Version gates:
+`config.json` is operator-owned under `rules/stateful-artifacts.md` Migration
+Policy's operator-authored configuration exception. Readable versions are 1 to
+4; every reader runs `validate_config_schema` in `teamlead/config.py` first.
+Version gates:
 
 | Field | Needs `schema_version` |
 | ----- | ---------------------- |
