@@ -46,7 +46,19 @@ workers authenticating as one subscription declare the same value, `measure`
 copies it onto each record (snapshot `schema_version` 3), and `plan` charges a seat's cost against every
 worker in that window. An agent that declares none has a window to itself.
 
+The optional top-level `top_models` key maps a supported kind (`claude`,
+`codex`, `grok`) to a non-empty array of distinct model ids. The ids extend,
+never replace, that kind's built-in judgment pins (`TOP_MODELS` in
+`skills/herdr-teamlead/teamlead/tiers.py`). Every config schema version
+accepts it; an unknown kind, an empty array, a non-id entry, or a duplicate is
+refused. Readers: config parsing (tier tables and each agent's effective
+pins), tier selection, and the `judge` check. Contract:
+`skills/herdr-teamlead/references/model-tiers.md`.
+
 The optional top-level `judge` key pins the judge agent, model, and effort.
+When its agent is configured, the model and effort must meet that kind's
+judgment pins (`top_models` included) at high effort or above; `preflight`
+and every judge reader refuse a judge below them.
 Plan schema 6 echoes them in a `judge` object, with `mode` — the seat's
 declared `adjudication` or `diagnosis` — beside them; a plan without that seat
 omits the object. Writer: `plan`, from its own `--judge-mode`. Readers:

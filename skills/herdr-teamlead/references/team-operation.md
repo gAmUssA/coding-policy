@@ -119,6 +119,7 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - `window_group` names the usage window an agent shares with other agents
 - A seat's cost reduces the projected headroom of every worker sharing its `window_group`
 - The `judge` block names the seat's agent, and the model and effort its worker is launched with
+- The judge's model and effort meet the judgment-round pins and effort floor of its agent's kind, `top_models` included
 - The planner seats the judge on the named agent and echoes the tier in its plan
 - The model and effort are the worker's launch flags, applied by starting that worker before the dispatch
 - Prove the requested model and effort from returned launch argv or the live foreground process argv
@@ -134,7 +135,9 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 ## Round Tiers
 
 - A worker's `tiers` table maps round types to model, effort, and cost data
-- Judgment rounds use the pinned top model; no per-round override lowers it
+- Judgment rounds use a pinned top model at high effort or above; no per-round override lowers it
+- The pinned top models per kind are the built-in set in `skills/herdr-teamlead/teamlead/tiers.py` plus the ids in config.json's optional `top_models` block
+- `top_models` ids extend the built-in set for their kind, never replace it
 - Apply mechanical eligibility and risk escalation through `skills/herdr-teamlead/teamlead/tiers.py`
 - A tier switch requires a worker relaunch at a cleared-round boundary
 - Retained fixes never change model or raise effort; preserve a verified compatible higher effort
