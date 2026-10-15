@@ -43,8 +43,8 @@
       "max_score": 15
     },
     {
-      "name": "gh pr create command present",
-      "description": "`pr-draft.md` contains the text `gh pr create` as part of a command",
+      "name": "gh pr create bound to origin",
+      "description": "`pr-draft.md` contains a `gh pr create` command carrying `--repo github.com/acme-data/pipeline-utils` (or `-R github.com/acme-data/pipeline-utils`), the host-qualified repository the branch's `origin` names. A `gh pr create` without `--repo`/`-R`, or with the hostless `acme-data/pipeline-utils`, scores 0: gh would pick its default repository, or GH_HOST could redirect it. Source: skills/release/SKILL.md Steps 1-2; docs/adr/0008-origin-binds-github-operations.md",
       "max_score": 5
     }
   ]
