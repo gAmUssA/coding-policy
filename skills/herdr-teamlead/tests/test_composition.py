@@ -232,5 +232,38 @@ class EligibilityTest(unittest.TestCase):
         self.assertEqual(constraints["familiarity"]["advisor"], {})
 
 
+class ModelFamilyHintTest(unittest.TestCase):
+    """The family hint marks verifiers sharing a contributor's model kind."""
+
+    def agents(self):
+        return [SimpleNamespace(name="author", kind="claude", capabilities=()),
+                SimpleNamespace(name="sibling", kind="claude", capabilities=()),
+                SimpleNamespace(name="zeta", kind="codex", capabilities=())]
+
+    def history(self):
+        return [{"task": "onboarding", "role": "developer", "agent": "author", "status": "applied"}]
+
+    def test_verifiers_sharing_a_contributor_family_are_marked_never_excluded(self):
+        result = selection_constraints(["reviewer", "tester"], self.agents(), {}, self.history(), "onboarding")
+        for role in ("reviewer", "tester"):
+            with self.subTest(role=role):
+                self.assertEqual(result["same_family"][role], {"author": 1, "sibling": 1, "zeta": 0})
+                self.assertEqual(result["exclude"][role], ["author"])
+        self.assertTrue(any("model family other than claude" in line for line in result["rationale"]))
+
+    def test_no_contributor_history_or_other_roles_carry_no_hint(self):
+        empty = selection_constraints(["reviewer"], self.agents(), {}, [], "onboarding")
+        self.assertEqual(empty["same_family"], {"reviewer": {}})
+        self.assertFalse(any("model family" in line for line in empty["rationale"]))
+        developer = selection_constraints(["developer"], self.agents(), {}, self.history(), "onboarding")
+        self.assertEqual(developer["same_family"], {"developer": {}})
+
+    def test_the_hint_reorders_an_equal_headroom_plan(self):
+        constraints = selection_constraints(["reviewer"], self.agents(), {}, self.history(), "onboarding")
+        result = plan(["reviewer"], snapshot(author=90, sibling=50, zeta=50), exclude=constraints["exclude"],
+                      same_family=constraints["same_family"])
+        self.assertEqual(result["assignments"], {"reviewer": "zeta"})
+
+
 if __name__ == "__main__":
     unittest.main()

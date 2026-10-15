@@ -755,6 +755,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
             rounds=rounds,
             requirements=requirements,
             familiarity=constraints["familiarity"],
+            same_family=constraints["same_family"],
             selection_rationale=constraints["rationale"],
             roster=[agent.name for agent in agents],
             operator_exclude=operator_excludes,

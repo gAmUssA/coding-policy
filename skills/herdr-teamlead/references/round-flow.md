@@ -21,7 +21,8 @@ Compatible expertise may share a responsibility. Consultations with the same
 canonical responsibility use separate dispatches, each with its own engagement.
 
 The owner planner applies capability and contribution eligibility before
-affordable task familiarity and measured headroom. Step 3 in the skill names
+affordable task familiarity and measured headroom; a verifier's model family
+breaks headroom ties. Step 3 in the skill names
 the executable contract. Use measured costs to improve calibration; preserve
 the pinned judge and the developer's early-fix reservation.
 

@@ -87,7 +87,7 @@ def _contributor(row, assessment=None):
 
 
 def selection_constraints(roles, agents, requirements, history, task, dispatches=(), assessments=(), candidate_names=None):
-    """Return hard exclusions and a dispatch-familiarity hint, without I/O.
+    """Return hard exclusions, a dispatch-familiarity hint and a model-family hint, without I/O.
 
     Callers merge exclusions with explicit author exclusions and use the same
     result before planning and before an unsent apply. Same-task possible
@@ -113,12 +113,21 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
             contributors.add(row.get("agent"))
     by_name = {agent.name: agent for agent in agents}
     names = sorted(by_name if candidate_names is None else set(candidate_names))
+    kinds = {name: getattr(agent, "kind", None) for name, agent in by_name.items()}
+    contributor_kinds = sorted({kinds[name] for name in contributors if kinds.get(name)})
     excluded = {role: [] for role in roles}
     familiarity = {role: {} for role in roles}
+    # A soft preference, never an exclusion: a verifier on another model
+    # family shares fewer blind spots with the task's contributors.
+    same_family = {role: {} for role in roles}
     rationale = []
     for role in roles:
         requirement = normalized.get(role)
         independent = role in {"reviewer", "tester"} or requirement is not None and requirement["independent"]
+        if role in {"reviewer", "tester"} and contributor_kinds:
+            same_family[role] = {name: int(kinds.get(name) in contributor_kinds) for name in names}
+            rationale.append("{} prefers a model family other than {} (the task's contributors) as a tie-break after headroom; never an exclusion.".format(
+                role, ", ".join(contributor_kinds)))
         for name in names:
             agent = by_name.get(name)
             # With no configured agents at all there is no config to be
@@ -148,4 +157,4 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
                 role, requirement["specialty"], requirement["engagement"]))
         if independent and task:
             rationale.append("{} independence also requires the lead's exclusions for external authors and contributions missing task/proposal provenance.".format(role))
-    return {"exclude": excluded, "familiarity": familiarity, "rationale": rationale}
+    return {"exclude": excluded, "familiarity": familiarity, "same_family": same_family, "rationale": rationale}
