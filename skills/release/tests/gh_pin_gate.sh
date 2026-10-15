@@ -16,6 +16,11 @@
 #   gh_hints_pinned <text>
 #     Fails unless every gh command the text tells the operator to run
 #     names github.com, and the text carries at least one such command.
+#
+# Sourcing applies `set -euo pipefail` to the sourcing shell; an aggregate
+# harness that runs without `-e` restores it with `set +e` right after.
+
+set -euo pipefail
 
 export GH_HOST="ghe.example.invalid"
 

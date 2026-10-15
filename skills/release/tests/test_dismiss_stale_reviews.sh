@@ -23,6 +23,9 @@ unset TEST_SUMMARY_TOKEN
 # shellcheck source=skills/release/tests/gh_pin_gate.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
   || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
 
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/dismiss-stale-reviews.sh"
 [[ -r "$SCRIPT" ]] || { echo "fatal: dismiss-stale-reviews.sh not readable at $SCRIPT" >&2; exit 2; }

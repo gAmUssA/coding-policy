@@ -32,6 +32,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$(cd "$HERE/.." && pwd)/publish-outcome.sh"
 # shellcheck source=skills/release/tests/gh_pin_gate.sh
 source "$HERE/gh_pin_gate.sh" || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+# gh_pin_gate.sh turns on -e; this harness counts failures itself and runs
+# without it (rules/error-handling.md aggregate-reporting carve-out).
+set +e
 [[ -r "$SCRIPT" ]] || { echo "fatal: publish-outcome.sh not found at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required" >&2; exit 2; }
 
