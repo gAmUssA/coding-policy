@@ -75,7 +75,8 @@ if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Ses
 #    25h later (past the 24h window) fires again.
 d="$TMP/c3"
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1000000            # fires, stamps 1000000
-[[ -n "$OUT" ]] || fail "throttle setup: first call should have fired"
+# The throttle assertions below depend on this stamp: abort, never tally.
+[[ -n "$OUT" ]] || { echo "fatal: throttle setup: first call should have fired, got RC=$RC" >&2; exit 2; }
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1003600            # +1h, inside 24h window
 if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "throttle active: call inside window should be silent, got OUT=$OUT"; fi
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1090000            # +25h, past window
@@ -87,7 +88,9 @@ if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext' >/dev/null
 d="$TMP/c3b"
 mkdir -p "$TMP/projA" "$TMP/projB" || { echo "fatal: mkdir projA/projB failed" >&2; exit 2; }
 RUN_CWD="$TMP/projA" run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1000000
-[[ -n "$OUT" ]] || fail "per-directory setup: first call in A should have fired"
+# The A-throttled assertion below depends on this stamp, so a missing first
+# fire aborts rather than tallies (aggregate-reporting carve-out).
+[[ -n "$OUT" ]] || { echo "fatal: per-directory setup: first call in A should have fired, got RC=$RC" >&2; exit 2; }
 RUN_CWD="$TMP/projB" run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1003600
 if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("0.3.139")' >/dev/null 2>&1; then
   pass; else fail "per-directory: B inside A's window should still fire, got OUT=$OUT"; fi
