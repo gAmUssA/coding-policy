@@ -523,6 +523,38 @@ class RecoveryCommandTests(fixture.CliCase):
         self.assertEqual(len(self.saved()["assignments"]), 1)
         self.assertEqual(self.runner.calls, [])
 
+    def test_a_pre_upgrade_pending_tiered_dispatch_reconciles_into_a_readable_ledger(self):
+        # A schema-6 dispatch interrupted mid-send saved its tier, with the
+        # retired qualification summary, in context_before_send. Confirming it
+        # after the upgrade must not write that summary into a schema-7 row.
+        self.register()
+        args = self.apply_args("developer", None, "--dispatch-id", "interrupted")
+        client = self.fresh_client("old", "started-session")
+        self.runner.raises["agent prompt grok"] = KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.invoke(args, client)
+        legacy = self.saved()
+        argv = ["grok", "--model", "grok-4.6", "--reasoning-effort", "high"]
+        tier = {"kind": "grok", "model": "grok-4.6", "effort": "high", "launch_args": [],
+                "verified": {"source": "launch_argv", "model": "grok-4.6", "effort": "high", "pane_id": "w1:p2", "argv": argv}}
+        legacy["schema_version"] = 6
+        for row in legacy["assignments"]:
+            row["schema_version"] = 6
+        pending = legacy["recovery"]["dispatches"][0]
+        pending["context_before_send"]["tier"] = {**tier, "qualification": {"schema_version": 1, "role": "developer"}}
+        self.state.write_text(json.dumps(legacy))
+        data = {"dispatch": "interrupted:developer", "outcome": "applied", "reason": "Original report proves delivery and completion",
+                "authorization": AUTH, "evidence": str(self.evidence)}
+        code, _, err = self.owner("reconcile", data, self._client({"grok": "idle"}, sessions={"grok": "later-observation"}))
+        self.assertEqual(code, 0, err)
+        reloaded = self.saved()
+        self.assertEqual(reloaded["schema_version"], 7)
+        self.assertEqual(reloaded["assignments"][-1]["tier"], tier)
+        code, out, err = self.invoke(["state"])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("starting from an empty ledger", err)
+        self.assertEqual(json.loads(out)["assignments"][-1]["tier"], tier)
+
     def test_pane_label_interruption_keeps_confirmed_delivery_and_retry_is_read_only(self):
         self.register()
         client = self.fresh_client("old", "new")

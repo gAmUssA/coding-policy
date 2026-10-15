@@ -626,7 +626,12 @@ Only the owner migrates, and it reads a version in one of three directions.
   `reviewer_scope: unknown` for reviewers, null for other roles. Migration never
   assumes an older reviewer only verified work. State and assignment `6 → 7`
   drop the retired validation battery's `tier.qualification` summary, which
-  nothing reads, and change nothing else. Unexpected newer fields in an
+  nothing reads, and change nothing else. Recovery dispatch evidence
+  (`context_before_send.tier`, `result.tier`) keeps its original bytes:
+  it is audit evidence under the recovery store's own version. Reconciling
+  a pre-upgrade dispatch promotes a copy of its saved tier without the
+  retired field (`without_retired_fields` in
+  `skills/herdr-teamlead/teamlead/tiers.py`). Unexpected newer fields in an
   older document or row refuse migration. Snapshot `2 → 3` independently adds
   empty `tier_billing` maps, preserving window groups and readings. Each row is migrated even in
   a document already at the current version.

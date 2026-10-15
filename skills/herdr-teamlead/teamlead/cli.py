@@ -41,7 +41,7 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import MissingTierError, parse_launch_args, parse_tiers, select_tier
+from .tiers import MissingTierError, parse_launch_args, parse_tiers, select_tier, without_retired_fields
 from .launch import start_worker, verify_running
 from .state import (
     add_assignment,
@@ -1193,7 +1193,7 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
                 recovered = {"role": result["role"], "agent": name, "task": result["task"],
                              "fix_round": result["fix_round"], "status": "applied", "at": at,
                              "cleared": context.get("cleared"), "clear_reason": context.get("clear_reason", "unknown"),
-                             "context_session": None, "tier": context.get("tier"),
+                             "context_session": None, "tier": without_retired_fields(context.get("tier")),
                              "recovered": True, "dispatch_id": result["id"]}
                 if result.get("requirements") is not None:
                     recovered["requirements"] = result["requirements"]

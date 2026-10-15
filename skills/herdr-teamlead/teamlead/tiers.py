@@ -123,6 +123,17 @@ RESUME_REFUSALS = {
 SESSION_UUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\Z")
 
 
+def without_retired_fields(tier):
+    """A copy of a recorded tier minus retired-contract fields; None stays None.
+
+    Pre-upgrade dispatch evidence keeps its original bytes; only the copy
+    promoted into a current assignment row loses the retired fields.
+    """
+    if not isinstance(tier, dict):
+        return tier
+    return {key: value for key, value in tier.items() if key not in RETIRED_TIER_FIELDS}
+
+
 class MissingTierError(UsageError):
     """A candidate lacks a required row; other candidates may still qualify."""
 

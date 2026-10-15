@@ -46,7 +46,7 @@ Options considered:
 5. **Prefer another model family as a tie-break.** For reviewer and tester seats, the planner breaks a headroom tie in favour of a worker whose kind differs from every recorded contributor's. This comes after headroom and before rotation and name, and it never excludes a worker.
 6. **Keep existing configs and ledgers compatible:**
    - a tier row's `qualification` field is accepted and ignored (`RETIRED_TIER_FIELDS`), and `plan --preview-tiers` is a no-op; there is no config schema bump;
-   - the owner-managed state ledger moves to schema 7, whose rows never carry a `qualification` summary. The owner's 6 → 7 migration drops it, a current row carrying it is refused as unowned, and a newer ledger is left untouched (`skills/herdr-teamlead/teamlead/state.py`, `skills/herdr-teamlead/state-schema.md`).
+   - the owner-managed state ledger moves to schema 7, whose rows never carry a `qualification` summary. The owner's 6 → 7 migration drops it, a current row carrying it is refused as unowned, and a newer ledger is left untouched. Recovery dispatch evidence keeps its original bytes, and a reconciled pre-upgrade dispatch is promoted from a copy of its tier without the retired field (`skills/herdr-teamlead/teamlead/state.py`, `skills/herdr-teamlead/state-schema.md`).
 
 ## Consequences
 
