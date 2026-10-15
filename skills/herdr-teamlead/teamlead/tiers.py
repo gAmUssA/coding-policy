@@ -356,7 +356,6 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
         len(set(risks)) >= XHIGH_MIN_RISKS
         or _nonnegative_int(context, "input_bytes") > XHIGH_CONTEXT_BYTES
         or context.get("prior_high_miss") is True
-        or round_type == "hostile_verify"
     )
     if needs_xhigh:
         # High risk also excludes a lower build/fix model, not only low effort.

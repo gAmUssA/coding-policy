@@ -66,7 +66,7 @@
         },
         "hostile_verify": {
           "model": "opus-5",
-          "effort": "xhigh",
+          "effort": "high",
           "multiplier": 1.0
         },
         "recheck": {
@@ -157,7 +157,7 @@
         },
         "hostile_verify": {
           "model": "gpt-5.6-sol",
-          "effort": "xhigh",
+          "effort": "high",
           "multiplier": 1.0
         },
         "recheck": {

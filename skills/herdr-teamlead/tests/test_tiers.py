@@ -123,13 +123,27 @@ class SelectionTest(unittest.TestCase):
             self.assertEqual(tier["round"], requested)
             self.assertEqual(tier["tier_row"], "review" if context or fix_round else "build")
 
-    def test_risk_and_hostile_verification_select_top_xhigh(self):
+    def test_recorded_risk_evidence_selects_top_xhigh(self):
         for context in ({"risk_flags": ["network", "persistence"]}, {"input_bytes": 250001}, {"prior_high_miss": True}):
             with self.subTest(context=context):
                 tier = select_tier(agent(), "developer", context=context)
                 self.assertEqual((tier["model"], tier["effort"]), ("opus-5", "xhigh"))
-        self.assertEqual(select_tier(agent("codex"), "tester")["effort"], "xhigh")
-        self.assertEqual(select_tier(agent("grok"), "tester")["effort"], "high")
+
+    def test_a_tester_round_escalates_on_evidence_not_on_its_name(self):
+        # hostile_verify is the tester's default round: its name is not
+        # evidence, so the configured row's effort is the floor.
+        for kind in ("claude", "codex", "grok"):
+            with self.subTest(kind=kind):
+                tier = select_tier(agent(kind), "tester")
+                self.assertEqual((tier["round"], tier["effort"]), ("hostile_verify", "high"))
+
+    def test_a_tester_round_still_escalates_when_the_evidence_says_so(self):
+        for context in ({"risk_flags": ["network", "persistence"]}, {"input_bytes": 250001},
+                        {"prior_high_miss": True}):
+            for kind, expected in (("claude", "xhigh"), ("codex", "xhigh"), ("grok", "high")):
+                with self.subTest(context=context, kind=kind):
+                    tier = select_tier(agent(kind), "tester", context=context)
+                    self.assertEqual((tier["round"], tier["effort"]), ("hostile_verify", expected))
 
     def test_mechanical_requires_whole_predicate(self):
         context = mechanical_context()
