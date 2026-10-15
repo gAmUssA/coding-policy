@@ -25,6 +25,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from teamlead.assign import (
+    retained_developer_tier,
     pane_label,
     apply as _apply,
     assignment_text,
@@ -153,6 +154,35 @@ def runner_with(statuses, footers=None, composer_screens=None):
             else composer_reads(name)
         )
     return runner
+
+
+def _verified(model, effort):
+    return {"kind": "codex", "model": model, "effort": effort, "multiplier": 3.0,
+            "verified": {"source": "launch_argv", "model": model, "effort": effort}}
+
+
+class RetainedEffortTest(unittest.TestCase):
+    """A retained fix keeps a verified effort at or above the request (#54 review)."""
+
+    def test_a_verified_ultra_session_retains_an_ultra_request(self):
+        tier = retained_developer_tier(_verified("gpt-6.1-sol", "ultra"), {"model": "gpt-6.1-sol", "effort": "ultra"})
+        self.assertEqual(tier["effort"], "ultra")
+
+    def test_a_session_below_an_ultra_request_is_refused(self):
+        for effort in ("high", "xhigh", "max"):
+            with self.subTest(effort=effort), self.assertRaisesRegex(UsageError, "raise effort"):
+                retained_developer_tier(_verified("gpt-6.1-sol", effort), {"model": "gpt-6.1-sol", "effort": "ultra"})
+
+    def test_a_higher_verified_effort_is_kept_with_its_cost(self):
+        tier = retained_developer_tier(_verified("gpt-6.1-sol", "ultra"),
+                                       {"model": "gpt-6.1-sol", "effort": "xhigh", "multiplier": 1.0})
+        self.assertEqual((tier["effort"], tier["multiplier"]), ("ultra", 3.0))
+
+    def test_a_model_switch_or_unverified_session_is_refused(self):
+        for previous in (_verified("gpt-6-astra", "ultra"), {"model": "gpt-6.1-sol", "effort": "ultra"}, None,
+                         _verified("gpt-6.1-sol", "turbo")):
+            with self.subTest(previous=previous), self.assertRaises(UsageError):
+                retained_developer_tier(previous, {"model": "gpt-6.1-sol", "effort": "high"})
 
 
 class PromptTextTest(unittest.TestCase):

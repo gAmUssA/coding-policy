@@ -121,7 +121,7 @@ class RecoveryCommandTests(fixture.CliCase):
         save_state(self.state, state)
         self.register()
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+        config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
         self.config.write_text(json.dumps(config))
         # The consultation precedes the judge dispatch that rules on it (#408).
         self.record_investigation()
@@ -217,7 +217,7 @@ class RecoveryCommandTests(fixture.CliCase):
         save_state(self.state, state)
         self.register()
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+        config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
         self.config.write_text(json.dumps(config))
         self.briefs["judge"] = self.tmp / "judge-brief.md"
         self.briefs["judge"].write_text("# judge\n")
@@ -283,7 +283,7 @@ class RecoveryCommandTests(fixture.CliCase):
         # still be exempt from the assessment requirement.
         self.register()
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+        config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
         self.config.write_text(json.dumps(config))
         self.briefs["judge"] = self.tmp / "judge-brief.md"
         self.briefs["judge"].write_text("# judge\n")
@@ -299,7 +299,7 @@ class RecoveryCommandTests(fixture.CliCase):
         def plan_with(mode):
             path = self.tmp / ("plan-" + mode + ".json")
             path.write_text(json.dumps({"schema_version": 6, "assignments": {"judge": "claude"},
-                "judge": {"agent": "claude", "model": "claude-opus-4-6", "effort": "high", "mode": mode}}))
+                "judge": {"agent": "claude", "model": "claude-opus-5", "effort": "high", "mode": mode}}))
             return ["apply", "--assignments", str(path), "--common", str(self.common),
                     "--brief", "judge=" + str(self.briefs["judge"]), "--task", TASK, "--now", AT,
                     "--composer-settle", "0", "--dry-run"]
@@ -421,7 +421,7 @@ class RecoveryCommandTests(fixture.CliCase):
                          "BOUND: 1 — one attempt per open finding\nASSESSMENT: " + self.investigation() + "\n"
                          "EVIDENCE: rounds 1-5\nUNVERIFIED: none\n")
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "grok", "model": "grok-4", "effort": "high"}
+        config["judge"] = {"agent": "grok", "model": "grok-4.6", "effort": "high"}
         self.config.write_text(json.dumps(config))
         # Past the unspent-bound check, the pinned judge from config.json is
         # the one whose completed assignment the diagnosis needs.

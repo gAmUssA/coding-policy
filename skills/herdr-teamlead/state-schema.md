@@ -22,13 +22,22 @@ The retrospective sidecar also leaves `state.json` and assignment versions
 unchanged. Its canonical state path is the expanded, resolved path selected by
 `--state` or the existing default; separate state files have separate histories.
 
-`skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use. Config schema 3
-adds per-agent `capabilities`; schemas 1 and 2 remain readable without rewriting
-the operator-owned file. Missing capabilities mean an empty list, never inferred
+`skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use.
+`config.json` is operator-owned under `rules/stateful-artifacts.md` Migration
+Policy's operator-authored configuration exception. Readable versions are 1 to
+4; every reader runs `validate_config_schema` in `skills/herdr-teamlead/teamlead/config.py` first.
+Version gates:
+
+| Field | Needs `schema_version` |
+| ----- | ---------------------- |
+| per-agent `tiers` | 2 |
+| per-agent `capabilities` | 3 |
+| top-level `top_models` | 4 |
+
+Every other field, including per-agent `launch_args`, parses at every version. Missing capabilities mean an empty list, never inferred
 expertise. Capability entries are unique lowercase identifiers validated by
 `teamlead/config.py` (`parse_capabilities`). Declare them from available skills,
 tools and inspected evidence. The example leaves every capability list empty.
-Config schema 2 added per-agent `tiers` and `launch_args`.
 See `skills/herdr-teamlead/references/model-tiers.md` for billing evidence. A missing config is refused with the exact `cp` command to run. The
 optional `idle_markers` / `working_markers` per-agent keys carry the footer
 signatures the stale-state probe reads; an agent with neither is never probed.
@@ -46,12 +55,30 @@ workers authenticating as one subscription declare the same value, `measure`
 copies it onto each record (snapshot `schema_version` 3), and `plan` charges a seat's cost against every
 worker in that window. An agent that declares none has a window to itself.
 
+The optional top-level `top_models` key maps a supported kind (`claude`,
+`codex`, `grok`) to a non-empty array of distinct model ids. The ids extend,
+never replace, that kind's built-in judgment pins (`TOP_MODELS` in
+`skills/herdr-teamlead/teamlead/tiers.py`). It requires config schema 4; an
+unknown kind, an empty array, a non-id entry, or a duplicate is
+refused. Readers: config parsing (tier tables and each agent's effective
+pins), tier selection, and the `judge` check. Contract:
+`skills/herdr-teamlead/references/model-tiers.md`.
+
 The optional top-level `judge` key pins the judge agent, model, and effort.
+When its agent is configured, the model and effort must meet that kind's
+judgment pins (`top_models` included) at high effort or above; `preflight`
+and every judge reader refuse a judge below them. A configured judge agent of
+a kind with no pins is refused; a judge naming an undeclared agent is left to
+the planner, which cannot seat it.
 Plan schema 6 echoes them in a `judge` object, with `mode` — the seat's
 declared `adjudication` or `diagnosis` — beside them; a plan without that seat
 omits the object. Writer: `plan`, from its own `--judge-mode`. Readers:
 `start-judge` and `apply`, which use the recorded mode and refuse a supplied
-one that differs from it. A version-5 plan carries no `mode`; its readers
+one that differs from it. Before any Herdr contact, `start-judge` reads the
+current config and refuses a plan whose judge agent, model, effort, `--kind` or
+normalized `launch_args` differs from the configured judge block and its
+agent, or whose pair misses the effective judgment floor; re-plan after a
+config change. The worker launches with the current config's `launch_args`. A version-5 plan carries no `mode`; its readers
 refuse the start rather than defaulting one, since the choice decides which
 pre-dispatch gate the seat is held to. Model and effort become explicit launch flags. Legacy `banner_pattern`
 values are ignored: proof comes from launch or live process argv. The planner

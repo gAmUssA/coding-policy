@@ -13,10 +13,12 @@ from pathlib import Path
 
 from .errors import ConfigError, TeamLeadError
 from .herdr import SLASH_DELIVERIES, SLASH_DELIVERY_PASTE
-from .tiers import parse_launch_args, parse_tiers
+from .tiers import EFFORTS, TOP_MODELS, judgment_refusal, parse_launch_args, parse_tiers, parse_top_models, top_models_for, effort_at_or_above, JUDGMENT_EFFORT_FLOOR
 
-CONFIG_SCHEMA_VERSION = 3
-READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3})
+CONFIG_SCHEMA_VERSION = 4
+READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3, 4})
+#: The first config schema that may carry a top-level `top_models` block.
+TOP_MODELS_CONFIG_VERSION = 4
 CAPABILITY_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 REQUIRED_AGENT_FIELDS = ("name", "kind", "usage_prompt", "usage_marker", "usage_read_source", "clear_prompt")
@@ -61,9 +63,10 @@ class Agent:
         "tiers",
         "launch_args",
         "capabilities",
+        "top_models",
     )
 
-    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=()):
+    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=(), top_models=None):
         self.name = name
         self.kind = kind
         self.usage_prompt = usage_prompt
@@ -94,6 +97,10 @@ class Agent:
         self.tiers = tiers or {}
         self.launch_args = tuple(launch_args)
         self.capabilities = tuple(capabilities)
+        # Effective judgment pins for this agent's kind: the built-in set
+        # plus the config's `top_models` additions. Not part of as_dict: it
+        # is config-wide, never an agent field.
+        self.top_models = frozenset(top_models) if top_models is not None else TOP_MODELS.get(kind, frozenset())
         # "paste" (agent prompt) or "type" (pane send-text plus Enter).
         self.slash_delivery = slash_delivery
         # The prompt glyph that marks the composer row, so teamlead can see
@@ -160,11 +167,16 @@ def _missing_config_error(path):
     )
 
 
-def parse_config(payload, source="<memory>"):
-    """Validate an already-decoded config mapping and return a list of Agents.
+#: Per-agent fields gated on a config schema version, and that version.
+AGENT_FIELD_GATES = (("tiers", 2), ("capabilities", 3))
 
-    Pure apart from the `source` string used in error messages, so tests build
-    configs inline instead of writing files.
+
+def validate_config_schema(payload, source="<memory>"):
+    """Schema and field-gate validation every config.json reader runs first.
+
+    Refuses a non-object, an unreadable (missing, older or newer) version,
+    a non-string agent kind, and any version-gated field below its version.
+    Returns the version.
     """
     if not isinstance(payload, dict):
         raise ConfigError(
@@ -172,7 +184,6 @@ def parse_config(payload, source="<memory>"):
             "`agents` - see config.example.json.".format(source),
             {"source": source},
         )
-
     version = payload.get("schema_version")
     if isinstance(version, bool) or not isinstance(version, int) or version not in READABLE_CONFIG_VERSIONS:
         raise ConfigError(
@@ -182,6 +193,37 @@ def parse_config(payload, source="<memory>"):
             ),
             {"source": source, "found": version, "expected": CONFIG_SCHEMA_VERSION},
         )
+    if "top_models" in payload and version < TOP_MODELS_CONFIG_VERSION:
+        raise ConfigError(
+            "Config at {} carries `top_models` under schema_version {!r}; `top_models` needs config "
+            "schema_version {}. Set \"schema_version\": {} in that file; nothing else in it needs to "
+            "change.".format(source, version, TOP_MODELS_CONFIG_VERSION, TOP_MODELS_CONFIG_VERSION),
+            {"source": source, "found": version, "expected": TOP_MODELS_CONFIG_VERSION, "field": "top_models"},
+        )
+    agents = payload.get("agents")
+    for index, entry in enumerate(agents if isinstance(agents, list) else []):
+        if isinstance(entry, dict) and "kind" in entry and not isinstance(entry["kind"], str):
+            raise ConfigError(
+                "Config at {}: agents[{}].kind is a JSON {}; write it as a string naming the agent's CLI, "
+                "one of {}.".format(source, index, type(entry["kind"]).__name__, ", ".join(sorted(TOP_MODELS))),
+                {"source": source, "index": index, "field": "kind"})
+        for field, gate in AGENT_FIELD_GATES:
+            if isinstance(entry, dict) and field in entry and version < gate:
+                raise ConfigError(
+                    "Config at {}: agents[{}] declares `{}`, which needs config schema_version {}; "
+                    "set \"schema_version\" to {} or later in that file.".format(source, index, field, gate, gate),
+                    {"source": source, "index": index, "found": version, "expected": gate, "field": field})
+    return version
+
+
+def parse_config(payload, source="<memory>"):
+    """Validate an already-decoded config mapping and return a list of Agents.
+
+    Pure apart from the `source` string used in error messages, so tests build
+    configs inline instead of writing files.
+    """
+    validate_config_schema(payload, source)
+    extra_top_models = _config_top_models(payload, source)
 
     raw_agents = payload.get("agents")
     if not isinstance(raw_agents, list) or not raw_agents:
@@ -220,10 +262,6 @@ def parse_config(payload, source="<memory>"):
                 {"source": source, "index": index, "usage_read_source": read_source},
             )
         name = entry["name"]
-        if "tiers" in entry and version < 2:
-            raise ConfigError("Tier tables need config schema_version 2; upgrade the operator-owned config.", {"source": source})
-        if "capabilities" in entry and version < 3:
-            raise ConfigError("Capability declarations need config schema_version 3; upgrade the operator-owned config without changing its existing launch or tier settings.", {"source": source})
         capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(
@@ -325,7 +363,9 @@ def parse_config(payload, source="<memory>"):
                 composer_ignore_dim=ignore_dim,
                 model_label=model_label,
                 window_group=window_group,
-                tiers=parse_tiers(entry.get("tiers"), entry["kind"]),
+                tiers=parse_tiers(entry.get("tiers"), entry["kind"],
+                                  top_models_for(entry["kind"], extra_top_models), name),
+                top_models=top_models_for(entry["kind"], extra_top_models),
                 launch_args=parse_launch_args(entry.get("launch_args", []), entry["kind"]),
                 capabilities=capabilities,
                 slash_enter_count=enters,
@@ -380,10 +420,9 @@ def load_config(path):
     return parse_config(_read_config(path), source=str(path))
 
 
-#: Reasoning-effort levels `claude --effort` accepts. A tier may name no
-#: effort at all: claude-haiku-4-5 takes no effort flag, and a model that
-#: does not accept one must not be forced to carry a value here.
-VALID_JUDGE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+#: Reasoning-effort levels any supported CLI accepts. A judge whose agent is
+#: configured must also meet that kind's judgment floor (parse_judge).
+VALID_JUDGE_EFFORTS = frozenset().union(*EFFORTS.values())
 
 
 class Judge:
@@ -404,12 +443,7 @@ def parse_judge(payload, source="<memory>"):
     judges, so the model lives in config where swapping the top tier is a
     one-line edit rather than a code change and a republish.
     """
-    if not isinstance(payload, dict):
-        raise ConfigError(
-            "Config at {} must be a JSON object with `schema_version` and "
-            "`agents` - see config.example.json.".format(source),
-            {"source": source},
-        )
+    validate_config_schema(payload, source)
     raw = payload.get("judge")
     if raw is None:
         return None
@@ -452,12 +486,48 @@ def parse_judge(payload, source="<memory>"):
             ),
             {"source": source, "effort": effort},
         )
+    _check_judge_pin(payload, raw["agent"], raw["model"], effort, source)
     # Legacy banner_pattern is ignored: a screen cannot prove launch flags.
     return Judge(
         agent=raw["agent"],
         model=raw["model"],
         effort=effort,
     )
+
+
+def _config_top_models(payload, source):
+    """The validated `top_models` block; validate_config_schema gates its version."""
+    if "top_models" not in payload:
+        return {}
+    return parse_top_models(payload["top_models"], source)
+
+
+def _check_judge_pin(payload, agent, model, effort, source):
+    """Hold the judge to its agent kind's judgment pins and effort floor.
+
+    The judge seat is the most capable model available, so it meets the same
+    floor as a judgment round. A configured agent of a kind with no pins is
+    refused. A judge whose agent is not configured cannot be seated, and its
+    kind is unknown: that block is left to the planner.
+    """
+    entries = payload.get("agents")
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("name") == agent] \
+        if isinstance(entries, list) else []
+    extra = _config_top_models(payload, source)
+    if not matches:
+        return
+    kind = matches[0].get("kind")
+    if kind not in TOP_MODELS:
+        raise ConfigError(
+            "Config at {}: the `judge` seat's agent {!r} has kind {!r}, which has no judgment pins or effort "
+            "floor; move the judge to an agent of kind {}.".format(
+                source, agent, kind, ", ".join(sorted(TOP_MODELS))),
+            {"source": source, "agent": agent, "kind": kind, "round": "judge"},
+        )
+    pins = top_models_for(kind, extra)
+    if model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR) or effort not in EFFORTS[kind]:
+        raise judgment_refusal("Config at {}: the `judge` seat on agent {!r}".format(source, agent),
+                               kind, model, effort or None, pins, {"source": source, "agent": agent, "round": "judge"})
 
 
 def load_judge(path):
@@ -482,12 +552,7 @@ def parse_role_costs(payload, source="<memory>"):
     own defaults, one role at a time. Validation lives here rather than in the
     planner so the message names the file the operator has to edit.
     """
-    if not isinstance(payload, dict):
-        raise ConfigError(
-            "Config at {} must be a JSON object with `schema_version` and "
-            "`agents` - see config.example.json.".format(source),
-            {"source": source},
-        )
+    validate_config_schema(payload, source)
     costs = payload.get("role_costs")
     if costs is None:
         return {}

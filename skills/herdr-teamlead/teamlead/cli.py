@@ -25,7 +25,7 @@ from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
 from . import attention, composition, engagement, gates, historical, memory, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
-from .errors import PlanError, StateError, TeamLeadError, UsageError
+from .errors import ConfigError, PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
     DEFAULT_MARKER_TIMEOUT_MS,
     DEFAULT_SETTLE_TIMEOUT_MS,
@@ -41,7 +41,7 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import MissingTierError, parse_launch_args, parse_tiers, select_tier, without_retired_fields
+from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
 from .launch import start_worker, verify_running
 from .state import (
     add_assignment,
@@ -1219,6 +1219,52 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     return result, None
 
 
+def _require_current_judge(args, tier):
+    """The plan's judge tier must be the current config's pinned judge.
+
+    Reads config.json before any Herdr contact: the judge block and its
+    agent's kind and launch options must match the plan's agent, model,
+    effort, --kind and launch_args, and the pair must meet the effective
+    judgment floor (`top_models` included). Returns the configured agent the
+    worker is launched from.
+    """
+    path = _config_path(args)
+    agents = {agent.name: agent for agent in load_config(path)}
+    judge = load_judge(path)
+    if judge is None:
+        raise ConfigError("Config at {} has no `judge` block; declare the pinned judge there, then re-run "
+                          "plan --roles judge.".format(path), {"source": str(path)})
+    agent = agents.get(judge.agent)
+    if agent is None:
+        raise ConfigError("Config at {}: the `judge` seat names agent {!r}, which `agents` does not declare; "
+                          "add that agent, then re-run plan --roles judge.".format(path, judge.agent),
+                          {"source": str(path), "agent": judge.agent})
+    planned = {"agent": tier.get("agent"), "model": tier.get("model"), "effort": tier.get("effort") or None,
+               "kind": args.kind}
+    current = {"agent": judge.agent, "model": judge.model, "effort": judge.effort or None, "kind": agent.kind}
+    if planned != current:
+        raise ConfigError("Plan judge tier {} differs from the current config's judge {} at {}; re-run "
+                          "plan --roles judge and pass the configured agent kind.".format(
+                              json.dumps(planned, sort_keys=True), json.dumps(current, sort_keys=True), path),
+                          {"source": str(path), "planned": planned, "current": current})
+    effort = current["effort"]
+    if (judge.model not in agent.top_models or effort not in EFFORTS.get(agent.kind, frozenset())
+            or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR)):
+        raise judgment_refusal("Config at {}: the `judge` seat on agent {!r}".format(path, judge.agent),
+                               agent.kind, judge.model, effort, agent.top_models,
+                               {"source": str(path), "agent": judge.agent, "round": "judge"})
+    # Normalized: YOLO spellings and equivalent permission pairs compare equal.
+    planned_args = worker_launch_args(agent.kind, parse_launch_args(tier.get("launch_args", []), agent.kind))
+    current_args = worker_launch_args(agent.kind, agent.launch_args)
+    if planned_args != current_args:
+        raise ConfigError("Plan judge launch_args {} differ from agent {!r}'s current launch_args {} at {}; "
+                          "re-run plan --roles judge.".format(json.dumps(planned_args), agent.name,
+                                                              json.dumps(current_args), path),
+                          {"source": str(path), "agent": agent.name, "planned_launch_args": planned_args,
+                           "current_launch_args": current_args})
+    return agent
+
+
 def cmd_start_judge(args, client=None, warn=None, trace=None):
     document = _load_assignments(args.assignments, document=True)
     tier = document.get("judge") if isinstance(document, dict) else None
@@ -1229,9 +1275,11 @@ def cmd_start_judge(args, client=None, warn=None, trace=None):
     # The plan carries the mode the lead declared; the flag overrides it, and
     # neither present is a refusal rather than a default (#425).
     judge_mode = recovery.require_judge_mode(_judge_mode_for(args, document))
+    configured = _require_current_judge(args, tier)
     parsed = parse_tiers({"build": {"model": tier.get("model"), "effort": tier.get("effort")}}, args.kind)["build"]
-    agent = SimpleNamespace(name=tier["agent"], kind=args.kind, idle_markers=(), working_markers=(),
-                            launch_args=parse_launch_args(tier.get("launch_args", []), args.kind))
+    # Launched from the current config; _require_current_judge proved the plan matches it.
+    agent = SimpleNamespace(name=configured.name, kind=configured.kind, idle_markers=(), working_markers=(),
+                            launch_args=configured.launch_args)
     client = client if client is not None else _client(args, trace=trace)
     state_path = _state_path(args)
     state = retrospective_runtime.read_history(state_path)
@@ -1314,6 +1362,7 @@ def cmd_preflight(args, client=None, warn=None, trace=None):
     """Gather every pre-planning fact; a stop verdict still exits 0."""
     preflight.validate(args)
     load_config(_config_path(args))
+    load_judge(_config_path(args))
     at = args.now or now_iso()
     measure_args = SimpleNamespace(**vars(args))
     measure_args.agents = None

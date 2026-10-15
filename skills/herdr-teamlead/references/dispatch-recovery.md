@@ -120,7 +120,8 @@ Proceed to Step 9 with the roles that were dispatched.
 
 Resolve the plugin root for each call as in the skill's command blocks, then
 use `bash "$CP/skills/herdr-teamlead/teamlead.sh"` for the commands below,
-with the same `--state FILE` throughout. Every owner
+with the same `--state FILE` throughout, and the round's same `--config FILE`
+when it planned on a non-default config. Every owner
 mutation takes `--record FILE` containing a JSON object and optional `--now`.
 Success prints the recorded object on stdout, exit 0. Exit 1 prints an
 actionable JSON error on stderr; resolve that cause before proceeding. Do not

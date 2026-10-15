@@ -10,7 +10,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teamlead.errors import ConfigError, HerdrError, UsageError
-from teamlead.tiers import TOP_MODELS, MissingTierError, launch_flags, mechanical_allowed, parse_tiers, select_tier as _select_tier, verify_argv, verify_worker_permissions, worker_launch_args
+from teamlead.tiers import TOP_MODELS, MissingTierError, launch_flags, mechanical_allowed, parse_tiers, parse_top_models, select_tier as _select_tier, top_models_for, verify_argv, verify_worker_permissions, worker_launch_args
 
 
 def select_tier(*args, **kwargs):
@@ -83,6 +83,87 @@ class TierConfigTest(unittest.TestCase):
         for multiplier in (0, -1, True, "0.5", float("nan"), float("inf")):
             with self.subTest(multiplier=multiplier), self.assertRaises(ConfigError):
                 parse_tiers({"build": {"model": "opus-5", "effort": "high", "multiplier": multiplier}}, "claude")
+
+
+class TopModelPinsTest(unittest.TestCase):
+    """Judgment pins: current CLI models built in, operator ids extend them (#47)."""
+
+    def test_current_cli_models_are_built_in_judgment_pins(self):
+        for kind, model in (("codex", "gpt-6-astra"), ("codex", "gpt-6.1-sol"), ("codex", "gpt-5.6-sol"),
+                            ("claude", "opus-5-5"), ("claude", "claude-fable-5-1"), ("claude", "claude-opus-5-5"),
+                            ("claude", "opus-5"), ("claude", "claude-opus-5"), ("grok", "grok-4.6")):
+            with self.subTest(kind=kind, model=model):
+                self.assertEqual(parse_tiers({"architect": {"model": model, "effort": "high"}}, kind)["architect"]["model"], model)
+        for kind, model in (("codex", "gpt-6-luna"), ("codex", "gpt-5.3-codex-spark"), ("claude", "sonnet-5"),
+                            ("claude", "fable-5-1"), ("codex", "claude-fable-5-1")):
+            with self.subTest(kind=kind, model=model), self.assertRaises(ConfigError):
+                parse_tiers({"architect": {"model": model, "effort": "high"}}, kind)
+
+    def test_codex_accepts_the_cli_max_and_ultra_efforts(self):
+        for effort in ("max", "ultra"):
+            with self.subTest(effort=effort):
+                self.assertEqual(parse_tiers({"review": {"model": "gpt-6-astra", "effort": effort}}, "codex")["review"]["effort"], effort)
+        for entry in ({"model": "gpt-6-astra", "effort": "turbo"}, {"model": "gpt-6-astra", "effort": "minimal"}):
+            with self.subTest(entry=entry), self.assertRaises(ConfigError):
+                parse_tiers({"build": entry}, "codex")
+        with self.assertRaises(ConfigError):
+            parse_tiers({"review": {"model": "gpt-6-astra", "effort": "medium"}}, "codex")
+
+    def test_high_risk_never_lowers_an_ultra_row(self):
+        worker = SimpleNamespace(name="codex", kind="codex", tiers=parse_tiers({
+            "build": {"model": "gpt-6.1-sol", "effort": "ultra"},
+            "review": {"model": "gpt-6.1-sol", "effort": "xhigh"},
+        }, "codex"))
+        tier = select_tier(worker, "developer", context={"prior_high_miss": True})
+        self.assertEqual((tier["tier_row"], tier["effort"]), ("build", "ultra"))
+
+    def test_configured_ids_extend_never_replace_the_defaults(self):
+        extra = parse_top_models({"codex": ["gpt-7-nova"]})
+        self.assertEqual(extra, {"codex": frozenset({"gpt-7-nova"})})
+        self.assertEqual(top_models_for("codex", extra), TOP_MODELS["codex"] | {"gpt-7-nova"})
+        self.assertEqual(top_models_for("claude", extra), TOP_MODELS["claude"])
+        row = {"review": {"model": "gpt-7-nova", "effort": "high"}}
+        with self.assertRaises(ConfigError):
+            parse_tiers(row, "codex")
+        self.assertEqual(parse_tiers(row, "codex", top_models=top_models_for("codex", extra))["review"]["model"], "gpt-7-nova")
+        self.assertEqual(parse_tiers({"review": {"model": "gpt-5.6-sol", "effort": "high"}}, "codex",
+                                     top_models=top_models_for("codex", extra))["review"]["model"], "gpt-5.6-sol")
+        with self.assertRaises(ConfigError):
+            parse_tiers({"review": {"model": "gpt-7-nova", "effort": "high"}}, "claude",
+                        top_models=top_models_for("claude", extra))
+
+    def test_the_top_models_block_is_validated_strictly(self):
+        self.assertEqual(parse_top_models({"claude": ["fable-5-1"], "grok": ["grok-5"]}),
+                         {"claude": frozenset({"fable-5-1"}), "grok": frozenset({"grok-5"})})
+        self.assertEqual(parse_top_models({"codex": ["gpt-6-astra"]}), {"codex": frozenset({"gpt-6-astra"})})
+        for raw in (None, [], "gpt-7", {"agy": ["gemini-3.1-pro"]}, {"codex": []}, {"codex": "gpt-7"},
+                    {"codex": [7]}, {"codex": [""]}, {"codex": ["-m"]}, {"codex": ["gpt 7"]},
+                    {"codex": ["gpt-7", "gpt-7"]}):
+            with self.subTest(raw=raw), self.assertRaises(ConfigError) as caught:
+                parse_top_models(raw)
+            self.assertIn("top_models", str(caught.exception))
+
+    def test_a_refused_judgment_row_names_agent_round_model_effort_and_the_fix(self):
+        with self.assertRaises(ConfigError) as caught:
+            parse_tiers({"architect": {"model": "gpt-7-nova", "effort": "high"}}, "codex",
+                        top_models=top_models_for("codex", {"codex": frozenset({"gpt-7-mini"})}), agent="codex-b")
+        message = str(caught.exception)
+        for fragment in ("'codex-b'", "'architect'", "'gpt-7-nova'", "'high'", "gpt-6-astra", "gpt-6.1-sol",
+                         "gpt-7-mini", "ultra", "top_models.codex", "config.json"):
+            self.assertIn(fragment, message)
+        self.assertEqual(caught.exception.details["agent"], "codex-b")
+        with self.assertRaises(ConfigError) as low:
+            parse_tiers({"review": {"model": "opus-5", "effort": "medium"}}, "claude", agent="claude")
+        self.assertIn("'medium'", str(low.exception))
+        self.assertIn("high, xhigh, max", str(low.exception))
+
+    def test_high_risk_switch_honours_configured_pins(self):
+        tiers = {"build": {"model": "gpt-7-nova", "effort": "xhigh"}, "review": {"model": "gpt-6-astra", "effort": "high"}}
+        pinned = SimpleNamespace(name="codex", kind="codex", tiers=parse_tiers(tiers, "codex"),
+                                 top_models=top_models_for("codex", {"codex": frozenset({"gpt-7-nova"})}))
+        self.assertEqual(select_tier(pinned, "developer", context={"prior_high_miss": True})["tier_row"], "build")
+        unpinned = SimpleNamespace(name="codex", kind="codex", tiers=parse_tiers(tiers, "codex"))
+        self.assertEqual(select_tier(unpinned, "developer", context={"prior_high_miss": True})["tier_row"], "review")
 
 
 class SelectionTest(unittest.TestCase):

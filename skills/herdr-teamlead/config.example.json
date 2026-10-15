@@ -1,10 +1,13 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "role_costs": {
     "developer": 12,
     "tester": 10,
     "reviewer": 5,
     "judge": 15
+  },
+  "top_models": {
+    "codex": ["gpt-6-astra", "gpt-6.1-sol"]
   },
   "judge": {
     "agent": "judge",

@@ -179,7 +179,7 @@ class ParseConfigTest(unittest.TestCase):
         self.assertEqual(by_name["grok"].dialog_next_tab_keys, ("tab",))
 
     def test_wrong_schema_version_is_rejected(self):
-        payload = dict(VALID, schema_version=4)
+        payload = dict(VALID, schema_version=5)
         with self.assertRaises(ConfigError) as caught:
             parse_config(payload)
         self.assertIn("schema_version", str(caught.exception))
@@ -404,6 +404,7 @@ class ParseJudgeTest(unittest.TestCase):
     def test_a_full_block_parses(self):
         judge = parse_judge(
             {
+                "schema_version": 1,
                 "judge": {
                     "agent": "judge",
                     "model": "claude-fable-5-1",
@@ -425,6 +426,7 @@ class ParseJudgeTest(unittest.TestCase):
         # name a model and no level without failing validation.
         judge = parse_judge(
             {
+                "schema_version": 1,
                 "judge": {
                     "agent": "judge",
                     "model": "claude-haiku-4-5",
@@ -439,6 +441,7 @@ class ParseJudgeTest(unittest.TestCase):
         with self.assertRaises(ConfigError) as caught:
             parse_judge(
                 {
+                    "schema_version": 1,
                     "judge": {
                         "agent": "j",
                         "model": "m",
@@ -451,12 +454,12 @@ class ParseJudgeTest(unittest.TestCase):
 
     def test_a_missing_agent_is_refused(self):
         with self.assertRaises(ConfigError) as caught:
-            parse_judge({"judge": {"model": "m", "banner_pattern": "^x"}})
+            parse_judge({"schema_version": 1, "judge": {"model": "m", "banner_pattern": "^x"}})
         self.assertIn("judge.agent", str(caught.exception))
 
     def test_a_non_object_block_is_refused(self):
         with self.assertRaises(ConfigError) as caught:
-            parse_judge({"judge": ["judge"]})
+            parse_judge({"schema_version": 1, "judge": ["judge"]})
         self.assertIn("`judge` is a JSON list", str(caught.exception))
 
     def test_the_shipped_example_pins_the_judge(self):
@@ -464,6 +467,240 @@ class ParseJudgeTest(unittest.TestCase):
         assert judge is not None
         self.assertEqual(judge.agent, "judge")
         self.assertEqual(judge.effort, "max")
+
+
+def _tiered_payload(top_models=None, judge=None, review_model="gpt-7-nova"):
+    """A config whose codex worker pins `review_model` for review.
+
+    Schema 2, or schema 4 when `top_models` is given (the block needs 4).
+    """
+    payload = copy.deepcopy(VALID)
+    payload["schema_version"] = 4 if top_models is not None else 2
+    payload["agents"][1]["tiers"] = {"review": {"model": review_model, "effort": "high"}}
+    payload["agents"].append(dict(copy.deepcopy(VALID["agents"][0]), name="judge"))
+    if top_models is not None:
+        payload["top_models"] = top_models
+    if judge is not None:
+        payload["judge"] = judge
+    return payload
+
+
+class TopModelsConfigTest(unittest.TestCase):
+    """`top_models` extends the built-in judgment pins for every reader (#47)."""
+
+    def test_configured_ids_admit_a_judgment_row_and_reach_the_agent(self):
+        agents = parse_config(_tiered_payload(top_models={"codex": ["gpt-7-nova"]}))
+        codex = agents[1]
+        self.assertEqual(codex.tiers["review"]["model"], "gpt-7-nova")
+        self.assertIn("gpt-7-nova", codex.top_models)
+        self.assertIn("gpt-6-astra", codex.top_models)
+        self.assertNotIn("gpt-7-nova", agents[0].top_models)
+
+    def test_without_configured_ids_the_row_is_refused_with_the_fix(self):
+        with self.assertRaises(ConfigError) as caught:
+            parse_config(_tiered_payload())
+        message = str(caught.exception)
+        for fragment in ("'codex'", "'review'", "'gpt-7-nova'", "top_models.codex", "gpt-6-astra"):
+            self.assertIn(fragment, message)
+
+    def test_an_invalid_block_is_refused_even_without_tiers(self):
+        for raw in ({"agy": ["x"]}, {"codex": []}, {"codex": ["a", "a"]}, ["gpt-7-nova"]):
+            payload = copy.deepcopy(VALID)
+            payload["schema_version"] = 4
+            payload["top_models"] = raw
+            with self.subTest(raw=raw), self.assertRaises(ConfigError) as caught:
+                parse_config(payload)
+            self.assertIn("top_models", str(caught.exception))
+
+    def test_a_config_without_the_block_keeps_parsing(self):
+        for version in (1, 2, 3, 4):
+            with self.subTest(version=version):
+                self.assertEqual(len(parse_config(dict(VALID, schema_version=version))), 2)
+
+    def test_the_block_needs_config_schema_4(self):
+        for version in (1, 2, 3):
+            payload = dict(copy.deepcopy(VALID), schema_version=version, top_models={"codex": ["gpt-7-nova"]})
+            with self.subTest(version=version):
+                with self.assertRaises(ConfigError) as caught:
+                    parse_config(payload)
+                self.assertIn("schema_version 4", str(caught.exception))
+                self.assertIn("top_models", str(caught.exception))
+                with self.assertRaises(ConfigError) as judged:
+                    parse_judge(dict(payload, judge={"agent": "claude", "model": "opus-5", "effort": "high"}))
+                self.assertIn("schema_version 4", str(judged.exception))
+        payload = dict(copy.deepcopy(VALID), schema_version=4, top_models={"codex": ["gpt-7-nova"]})
+        self.assertIn("gpt-7-nova", parse_config(payload)[1].top_models)
+        judge = parse_judge(dict(payload, judge={"agent": "claude", "model": "opus-5", "effort": "high"}))
+        assert judge is not None
+        self.assertEqual(judge.model, "opus-5")
+
+    def test_the_shipped_example_extends_the_pins(self):
+        example = _example_config()
+        self.assertEqual(example["schema_version"], 4)
+        self.assertIn("top_models", example)
+        agents = parse_config(example)
+        self.assertTrue(all(agent.top_models for agent in agents if agent.kind in ("claude", "codex", "grok")))
+
+
+class VersionGateTest(unittest.TestCase):
+    """Operator-authored config: each version-gated field names the version to set."""
+
+    def test_each_gated_field_in_an_older_file_names_the_version_to_set(self):
+        tiers = {"build": {"model": "sonnet-5", "effort": "high"}}
+        for field, value, gate in (("tiers", tiers, 2), ("capabilities", ["ux"], 3)):
+            for version in range(1, gate):
+                payload = _agent_payload(**{field: value})
+                payload["schema_version"] = version
+                with self.subTest(field=field, version=version), self.assertRaises(ConfigError) as caught:
+                    parse_config(payload)
+                self.assertIn('set "schema_version" to {}'.format(gate), str(caught.exception))
+            payload = _agent_payload(**{field: value})
+            payload["schema_version"] = gate
+            self.assertEqual(len(parse_config(payload)), 1)
+        payload = dict(copy.deepcopy(VALID), schema_version=3, top_models={"codex": ["gpt-7-nova"]})
+        with self.assertRaises(ConfigError) as caught:
+            parse_config(payload)
+        self.assertIn('Set "schema_version": 4', str(caught.exception))
+
+    def test_ungated_fields_parse_at_every_version(self):
+        for version in (1, 2, 3, 4):
+            payload = _agent_payload(launch_args=["--dangerously-skip-permissions"], window_group="pool")
+            payload["schema_version"] = version
+            with self.subTest(version=version):
+                self.assertEqual(parse_config(payload)[0].launch_args, ("--dangerously-skip-permissions",))
+
+
+class ReaderVersionTest(unittest.TestCase):
+    """Every config.json reader refuses a newer schema before reading fields."""
+
+    def _payload(self, version):
+        return dict(copy.deepcopy(VALID), schema_version=version, role_costs={"developer": 12},
+                    judge={"agent": "claude", "model": "claude-opus-5", "effort": "max"})
+
+    def test_each_reader_refuses_a_newer_version_and_reads_the_current_one(self):
+        readers = (("parse_config", parse_config), ("parse_judge", parse_judge), ("parse_role_costs", parse_role_costs))
+        for name, reader in readers:
+            with self.subTest(reader=name):
+                with self.assertRaises(ConfigError) as caught:
+                    reader(self._payload(5))
+                self.assertIn("schema_version 5", str(caught.exception))
+                self.assertTrue(reader(self._payload(4)))
+
+    def test_each_loader_refuses_a_newer_version_and_reads_the_current_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            for name, loader in (("load_config", load_config), ("load_judge", load_judge),
+                                 ("load_role_costs", load_role_costs)):
+                with self.subTest(loader=name):
+                    path.write_text(json.dumps(self._payload(5)), encoding="utf-8")
+                    with self.assertRaises(ConfigError):
+                        loader(path)
+                    path.write_text(json.dumps(self._payload(4)), encoding="utf-8")
+                    self.assertTrue(loader(path))
+
+    def test_each_reader_refuses_an_under_versioned_gated_field(self):
+        payload = dict(self._payload(3), top_models={"codex": ["gpt-7-nova"]})
+        for reader in (parse_config, parse_judge, parse_role_costs):
+            with self.subTest(reader=reader.__name__), self.assertRaises(ConfigError) as caught:
+                reader(payload)
+            self.assertIn('"schema_version": 4', str(caught.exception))
+
+
+class AgentKindTypeTest(unittest.TestCase):
+    """A non-string kind is a config_error before any pin lookup (PR #54 Copilot)."""
+
+    def test_list_and_object_kinds_are_refused_by_both_readers(self):
+        for kind in (["codex"], {"name": "codex"}):
+            agents = copy.deepcopy(VALID["agents"])
+            agents[1]["kind"] = kind
+            payload = {"schema_version": 4, "agents": agents,
+                       "judge": {"agent": "codex", "model": "gpt-6-astra", "effort": "high"}}
+            for reader in (parse_config, parse_judge):
+                with self.subTest(kind=kind, reader=reader.__name__), self.assertRaises(ConfigError) as caught:
+                    reader(payload)
+                self.assertIn("agents[1].kind", str(caught.exception))
+                self.assertIn("claude, codex, grok", str(caught.exception))
+
+    def test_a_string_kind_still_parses(self):
+        payload = dict(copy.deepcopy(VALID), schema_version=4,
+                       judge={"agent": "codex", "model": "gpt-6-astra", "effort": "high"})
+        self.assertEqual(parse_config(payload)[1].kind, "codex")
+        judge = parse_judge(payload)
+        assert judge is not None
+        self.assertEqual(judge.agent, "codex")
+
+
+class JudgePinTest(unittest.TestCase):
+    """The judge block meets the judgment floor of its agent's kind (#47)."""
+
+    def _judge(self, model, effort=None, top_models=None):
+        block = {"agent": "judge", "model": model}
+        if effort is not None:
+            block["effort"] = effort
+        return parse_judge(_tiered_payload(top_models=top_models, judge=block, review_model="gpt-6-astra"))
+
+    def test_current_top_models_at_high_or_above_are_valid(self):
+        for model, effort in (("claude-opus-5", "max"), ("claude-fable-5-1", "max"), ("opus-5-5", "high"),
+                              ("claude-opus-5-5", "xhigh")):
+            with self.subTest(model=model):
+                judge = self._judge(model, effort)
+                assert judge is not None
+                self.assertEqual((judge.model, judge.effort), (model, effort))
+
+    def test_a_lower_model_or_effort_is_refused_with_the_fix(self):
+        for model, effort in (("sonnet-5", "max"), ("claude-opus-5", "medium"), ("claude-opus-5", None),
+                              ("claude-haiku-4-5", None), ("gpt-6-astra", "high")):
+            with self.subTest(model=model, effort=effort), self.assertRaises(ConfigError) as caught:
+                self._judge(model, effort)
+            message = str(caught.exception)
+            for fragment in ("judge", repr(model), "top_models.claude", "claude-fable-5-1"):
+                self.assertIn(fragment, message)
+
+    def test_configured_ids_extend_the_judge_pin(self):
+        with self.assertRaises(ConfigError):
+            self._judge("claude-fable-6", "max")
+        judge = self._judge("claude-fable-6", "max", top_models={"claude": ["claude-fable-6"]})
+        assert judge is not None
+        self.assertEqual(judge.model, "claude-fable-6")
+
+    def test_a_codex_judge_takes_its_own_kinds_efforts(self):
+        payload = _tiered_payload(review_model="gpt-6-astra",
+                                  judge={"agent": "codex", "model": "gpt-6.1-sol", "effort": "ultra"})
+        judge = parse_judge(payload)
+        assert judge is not None
+        self.assertEqual(judge.effort, "ultra")
+        payload["judge"]["effort"] = "medium"
+        with self.assertRaises(ConfigError):
+            parse_judge(payload)
+
+    def test_a_configured_judge_agent_of_an_unpinned_kind_is_refused(self):
+        payload = _tiered_payload(review_model="gpt-6-astra",
+                                  judge={"agent": "judge", "model": "gemini-3.1-pro", "effort": "high"})
+        for kind in ("agy", None):
+            entry = next(entry for entry in payload["agents"] if entry["name"] == "judge")
+            if kind is None:
+                entry.pop("kind", None)
+            else:
+                entry["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaises(ConfigError) as caught:
+                parse_judge(payload)
+            message = str(caught.exception)
+            self.assertIn("'judge'", message)
+            self.assertIn("claude, codex, grok", message)
+        absent = _tiered_payload(review_model="gpt-6-astra",
+                                 judge={"agent": "elsewhere", "model": "gemini-3.1-pro", "effort": "high"})
+        judge = parse_judge(absent)
+        assert judge is not None
+        self.assertEqual(judge.agent, "elsewhere")
+
+    def test_the_load_path_validates_the_judge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps(_tiered_payload(review_model="gpt-6-astra",
+                                                       judge={"agent": "judge", "model": "sonnet-5", "effort": "max"})),
+                            encoding="utf-8")
+            with self.assertRaises(ConfigError):
+                load_judge(path)
 
 
 class WindowGroupTest(unittest.TestCase):
@@ -494,13 +731,13 @@ class JudgeArgvConfigTest(unittest.TestCase):
     """Launch proof does not depend on an operator-supplied banner regex."""
 
     def test_a_missing_pattern_is_valid(self):
-        judge = parse_judge({"judge": {"agent": "j", "model": "opus-5", "effort": "high"}})
+        judge = parse_judge({"schema_version": 1, "judge": {"agent": "j", "model": "opus-5", "effort": "high"}})
         assert judge is not None
         self.assertEqual(judge.model, "opus-5")
 
     def test_legacy_patterns_never_change_the_tier(self):
         for pattern in ("Claude Code", "^a[", "^Claude Code"):
-            judge = parse_judge({"judge": {"agent": "j", "model": "opus-5", "effort": "high", "banner_pattern": pattern}})
+            judge = parse_judge({"schema_version": 1, "judge": {"agent": "j", "model": "opus-5", "effort": "high", "banner_pattern": pattern}})
             assert judge is not None
             self.assertEqual((judge.model, judge.effort), ("opus-5", "high"))
 

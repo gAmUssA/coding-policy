@@ -3,7 +3,8 @@
 ## Configuration and supported workers
 
 `config.example.json` is the operator-owned tier table. Config schema 2 adds
-per-agent `tiers` and `launch_args`; schema 1 remains readable without tiers.
+per-agent `tiers`; schema 1 remains readable without tiers. The full version
+gate list is in `skills/herdr-teamlead/state-schema.md`.
 The utility never rewrites the operator's config. Copy the example into a new
 file, preserve local agent names and UI options, then validate it with
 `teamlead.sh plan` before replacing a working configuration.
@@ -24,6 +25,33 @@ Omit `effort` for a model that accepts no effort control. Omit
 live measurement. A `qualification` field left from the retired validation
 battery is accepted and ignored (`RETIRED_TIER_FIELDS` in
 `skills/herdr-teamlead/teamlead/tiers.py`); delete it at the next config edit.
+
+Judgment rounds accept only a pinned top model for the agent's kind at high
+effort or above. The built-in pins are `TOP_MODELS` in
+`skills/herdr-teamlead/teamlead/tiers.py`. The optional top-level
+`top_models` block in config.json adds ids per kind without waiting for a
+plugin release:
+
+```json
+{
+  "top_models": {
+    "codex": ["gpt-6-astra", "gpt-6.1-sol"],
+    "claude": ["claude-fable-5-1"]
+  }
+}
+```
+
+The ids extend the built-in set for that kind; they never replace it, so a
+built-in pin stays valid whatever the block lists. Keys are the supported
+kinds (`claude`, `codex`, `grok`); each value is a non-empty array of distinct
+model ids. Listing an id that is already built in is accepted. The block
+requires config `schema_version` 4; an older-version config carrying it is
+refused with the instruction to set 4. The same pins
+apply to every judgment round, to risk escalation's top-model check, and to
+the `judge` block, whose model and effort must meet its agent kind's pins and
+floor. `start-judge` re-reads that block and refuses a plan whose judge tier
+or agent kind no longer matches it. A refused row names the agent, the round, the model and effort, the
+accepted values, and `top_models` as the fix.
 
 Accepted round names, role mappings, model pins, effort enums, mechanical
 eligibility, risk escalation, and supported launch options are the constants
@@ -68,7 +96,9 @@ same-session restoration in `skills/herdr-teamlead/references/dispatch-recovery.
 operator expressly requires YOLO for that retained developer.
 
 Recheck model availability and CLI flag spellings when upgrading a worker's
-CLI or changing a model pin.
+CLI or changing a model pin. Codex's `max` and `ultra` efforts follow the
+reasoning levels codex-cli lists for its top models; recheck them on a Codex
+CLI upgrade.
 
 ## Planning and dispatch
 
@@ -215,9 +245,9 @@ about provider billing. Do not copy test evidence into a live configuration.
 
 ## Model fit without a battery
 
-No trial battery gates a tier. Judgment rounds stay pinned to the top model
+No trial battery gates a tier. Judgment rounds stay pinned to a top model
 at high effort or above, every other round's output is independently reviewed
-and tested, and the judge seat keeps its own pin. Launch-argv proof still
+and tested, and the judge seat meets the same pins. Launch-argv proof still
 binds every tiered dispatch to its configured model and effort.
 
 The operator owns billing inputs inside config.json; these readers never write

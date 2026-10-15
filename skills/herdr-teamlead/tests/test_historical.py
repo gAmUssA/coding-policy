@@ -263,7 +263,7 @@ class HistoricalCommandsTest(fixture.CliCase):
                 add_assignment(state, COMPLETED, "judge", "claude", task=TASK)
                 save_state(self.state, state)
                 config = json.loads(self.config.read_text())
-                config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+                config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
                 self.config.write_text(json.dumps(config))
                 code, _, err = self.owner("import-correction", {**self.attempt(5), "occurred_at": occurred_at})
                 self.assertEqual(code, 0, err)
@@ -453,7 +453,7 @@ class HistoricalCommandsTest(fixture.CliCase):
         add_assignment(state, "2026-03-01T15:00:00+00:00", "judge", "claude", task=TASK)
         save_state(self.state, state)
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+        config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
         self.config.write_text(json.dumps(config))
         judge = self.tmp / "judge.md"
         judge.write_text("RULING: amend — correct F1\nACTION: Fix the remaining parser case\n")

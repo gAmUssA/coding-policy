@@ -106,12 +106,12 @@ class SupervisionCliTest(fixture.CliCase):
         self.briefs["judge"].write_text("Resolve the recorded disputed finding read-only.")
         self.reports["judge"] = str(self.tmp / "judge-report.md")
         config = json.loads(self.config.read_text())
-        config["judge"] = {"agent": "claude", "model": "claude-opus-4-6", "effort": "high"}
+        config["judge"] = {"agent": "claude", "model": "claude-opus-5", "effort": "high"}
         self.config.write_text(json.dumps(config))
         client = self._client({"claude": "idle"}, sessions={"claude": "judge-native"})
         self.runner.set("pane process-info --pane w2:p1", json.dumps({"result": {"process_info": {
             "pane_id": "w2:p1", "foreground_processes": [{"name": "claude", "pid": 200,
-            "argv": ["claude", "--dangerously-skip-permissions", "--model", "claude-opus-4-6", "--effort", "high"]}]}}}))
+            "argv": ["claude", "--dangerously-skip-permissions", "--model", "claude-opus-5", "--effort", "high"]}]}}}))
         code, _, err = self.invoke(self.apply_arguments({"judge": "claude"}, no_clear=True), client)
         self.assertEqual(code, 0, err)
         member = self.saved()["members"][0]

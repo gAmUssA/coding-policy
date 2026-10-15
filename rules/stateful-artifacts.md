@@ -29,6 +29,16 @@ alwaysApply: true
 - Non-owner reader skills must not migrate
 - On an older record, a reader treats it as read-only "no usable prior state" — the next owner-skill run upgrades it
 - On a record newer than it accepts, a reader is lagging, not awaiting migration — treat it as "no usable prior state" and update the reader to accept the new version (see Cross-Pipeline Schema Bumps when writer and readers deploy through separate pipelines)
+- Narrow exception for operator-authored configuration.
+- Preconditions (all required):
+  1. No skill writes the file
+  2. The operator authors every change
+  3. The owner skill's reader accepts every schema version it ever documented
+  4. The reader upgrades older records in memory only
+  5. A field gated on a newer version, found in an older-version file, is refused with an actionable message naming the version to set
+  6. The owner's schema doc names the file operator-owned
+  7. The owner's schema doc lists the version that gates each field
+- Every other artifact migrates through its owner skill as above
 
 ## Rename / Removal
 

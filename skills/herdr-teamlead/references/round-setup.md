@@ -13,7 +13,7 @@ advisories. Final release verification is `full`.
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight [--config <config-file>] \
   --repo <repo-path> --slug <owner/repo> \
   [--base <recorded-base> [--head <pushed-head>] [--planned <planned.json>]]
 ```
@@ -137,7 +137,7 @@ requiring writes must report BLOCKED under COMMON's bounds before any write.
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" measure
+bash "$CP/skills/herdr-teamlead/teamlead.sh" measure [--config <config-file>]
 ```
 
 Sends each configured worker its own usage command and parses the reply. Emits
@@ -186,7 +186,7 @@ decisions file and the answers each trigger accepts are in
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" plan [--config <config-file>] \
   --roles <role[,role...]> [--requirements <requirements.json>] \
   [--exclude <role>=<agent>[,<agent>...]]... \
   [--round <role>=<round-type>] [--round-context <evidence.json>] \
