@@ -52,7 +52,7 @@ main() {
     return 0
   }
 
-  # Capture the CLI's stderr without a temp file. Codex kills a timed-out hook's
+  # Capture the CLI's stderr without a temp file. Codex stops a timed-out hook's
   # whole process group, and no trap runs on that kill, so any file made here
   # would be left behind. The inner group writes the CLI's stderr first, then
   # its exit code and stdout, each ended by a NUL, all onto one pipe.

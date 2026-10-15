@@ -41,7 +41,7 @@
 #                       variant) that rejects extra arguments still fetches.
 #   1g. HTTP bound   -> with no timeout/gtimeout on PATH, a stalled HTTP remote
 #                       still ends the fetch ("not verified", exit 0) within the guard.
-#   1h. ssh deadline -> an ssh that connects and then hangs is killed at the
+#   1h. ssh deadline -> an ssh that connects and then hangs is stopped at the
 #                       fetch deadline ("not verified", exit 0), with no timeout on PATH.
 #   1i. Nested deadline -> SESSION_START_CHILD_DEADLINE_SEC caps a 60s
 #                       SYNC_FETCH_TIMEOUT, so the hung fetch ends before the
@@ -357,7 +357,7 @@ main() {
   done
 
   # 1g. HTTP stall with no timeout/gtimeout on PATH: a server that accepts and
-  # never answers. git's low-speed abort must end the fetch; the harness kills
+  # never answers. git's low-speed abort must end the fetch; the harness stops
   # the hook after STALL_GUARD_SEC and fails the case if it is still running.
   mk_origin o1g
   clone_from "$BARE" "$TMP/r1g"
@@ -430,7 +430,7 @@ while True:
   [[ -r "$TMP/hang-ssh.pid" ]] && hang_pid="$(cat "$TMP/hang-ssh.pid")"
   if (( done1h )) && [[ $rc1h -eq 0 && -n "$hang_pid" ]] && ! kill -0 "$hang_pid" 2>/dev/null \
      && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
-    pass; else fail "ssh deadline: expected the hung ssh killed and 'not verified' with exit 0 within ${STALL_GUARD_SEC}s, got done=$done1h rc=$rc1h hang=$hang_pid OUT=$OUT"; fi
+    pass; else fail "ssh deadline: expected the hung ssh stopped and 'not verified' with exit 0 within ${STALL_GUARD_SEC}s, got done=$done1h rc=$rc1h hang=$hang_pid OUT=$OUT"; fi
   if [[ -n "$hang_pid" ]] && kill -0 "$hang_pid" 2>/dev/null; then
     kill "$hang_pid" || echo "warn: could not stop the hung ssh $hang_pid" >&2
   fi
