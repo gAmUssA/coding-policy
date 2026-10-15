@@ -17,8 +17,10 @@ from .billing import billing_window, effective_multiplier
 from .errors import ConfigError, HerdrError, UsageError
 
 
+#: A judgment pin moves only by a hand bump. Superseded ids stay listed so a
+#: config still naming them keeps parsing.
 TOP_MODELS = {
-    "claude": frozenset({"opus-5", "claude-opus-5"}),
+    "claude": frozenset({"opus-5", "claude-opus-5", "claude-opus-5-5"}),
     "codex": frozenset({"gpt-5.6-sol"}),
     "grok": frozenset({"grok-4.6"}),
 }

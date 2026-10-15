@@ -61,6 +61,18 @@ class TierConfigTest(unittest.TestCase):
                 with self.subTest(round_type=round_type, entry=entry), self.assertRaises(ConfigError):
                     parse_tiers({round_type: entry}, "claude")
 
+    def test_claude_judgment_pin_accepts_the_opus_5_5_successor_and_keeps_old_ids(self):
+        for model in ("claude-opus-5-5", "opus-5", "claude-opus-5"):
+            with self.subTest(model=model):
+                self.assertEqual(parse_tiers({"review": {"model": model, "effort": "high"}}, "claude")["review"]["model"], model)
+        for model in ("opus-6", "claude-opus-5-5-preview", "sonnet-5"):
+            with self.subTest(model=model), self.assertRaises(ConfigError):
+                parse_tiers({"review": {"model": model, "effort": "high"}}, "claude")
+        with self.assertRaises(ConfigError):
+            parse_tiers({"review": {"model": "claude-opus-5-5", "effort": "medium"}}, "claude")
+        with self.assertRaises(ConfigError):
+            parse_tiers({"review": {"model": "claude-opus-5-5", "effort": "high"}}, "codex")
+
     def test_dead_rounds_kinds_and_bad_costs_are_refused(self):
         with self.assertRaises(ConfigError):
             parse_tiers({"review": {"model": "gemini-3.1-pro", "effort": "high"}}, "agy")
