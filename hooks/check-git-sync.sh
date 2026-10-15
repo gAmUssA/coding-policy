@@ -215,20 +215,28 @@ fast_forward() { # <default-branch>
     FF_WHY="\`${db}\` is not the checked-out branch here"
     return 1
   fi
-  # A filter driver from repo-local config runs on checkout (smudge) and on an
+  # A filter driver from repository config runs on checkout (smudge) and on an
   # index refresh (clean), and git has no switch that turns filters off
   # without changing the checked-out bytes. Report instead of moving.
+  # Repository config is the `local` and `worktree` scopes, files they
+  # include among them; user and system scopes stay trusted.
   rc=0
-  out="$(safe_git config --local --get-regexp '^filter\..*\.(clean|smudge|process)$')" || rc=$?
-  if (( rc == 0 )); then
-    out="${out%%$'\n'*}"
-    FF_WHY="this repository's own config defines a filter command (${out%% *}), which a checkout would run"
-    return 1
-  elif (( rc != 1 )); then
-    warn "git config --local filter lookup failed (exit ${rc}) — ${db} was not fast-forwarded"
+  out="$(safe_git config --includes --show-scope --get-regexp '^filter\..*\.(clean|smudge|process)$')" || rc=$?
+  if (( rc > 1 )); then
+    warn "git config filter lookup failed (exit ${rc}) — ${db} was not fast-forwarded"
     FF_WHY="the filter-driver check failed"
     return 1
   fi
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      local$'\t'*|worktree$'\t'*)
+        line="${line#*$'\t'}"
+        FF_WHY="this repository's own config defines a filter command (${line%% *}), which a checkout would run"
+        return 1
+        ;;
+    esac
+  done <<<"$out"
   rc=0
   out="$(safe_git status --porcelain --untracked-files=no)" || rc=$?
   if (( rc != 0 )); then

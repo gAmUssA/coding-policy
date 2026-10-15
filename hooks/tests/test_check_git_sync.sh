@@ -31,6 +31,9 @@
 #                       during the status check or the fast-forward.
 #   1e4. Local filter -> a filter command in repo-local config refuses the
 #                       fast-forward; the filter never runs and main stays put.
+#   1e5. Included / worktree / global filter -> included and per-worktree
+#                       config refuse like local config; a global filter
+#                       fast-forwards.
 #   1f. ssh bound    -> ConnectTimeout reaches the plain default ssh only; a
 #                       custom ssh (GIT_SSH_COMMAND or core.sshCommand, simple
 #                       variant) that rejects extra arguments still fetches.
@@ -276,6 +279,40 @@ main() {
   if [[ $RC -eq 0 && ! -e "$TMP/ran-filter" && "$(git -C "$TMP/r1e4" rev-parse main)" == "$before1e4" ]] \
      && printf '%s' "$OUT" | jq -e '.additionalContext | test("left unmoved") and test("filter command")' >/dev/null 2>&1; then
     pass; else fail "local filter: expected a refused fast-forward with the filter never run, got RC=$RC ran=$([[ -e "$TMP/ran-filter" ]] && echo yes || echo no) OUT=$OUT"; fi
+
+  # 1e5. A filter in a file the repository config includes, or in the
+  # per-worktree config, is repository config too and refuses the same way.
+  # A filter from the user's own global config is trusted and fast-forwards.
+  local variant
+  for variant in include worktree global; do
+    mk_origin "o1e5$variant"
+    clone_from "$BARE" "$TMP/r1e5$variant"
+    printf '* filter=probe\n' > "$SEED/.gitattributes" || die "seed attributes write failed"
+    printf 'payload\n' > "$SEED/data" || die "seed data write failed"
+    g -C "$SEED" add .gitattributes data || die "seed add failed"
+    g -C "$SEED" commit -q -m "route through probe" || die "seed commit failed"
+    g -C "$SEED" push -q origin main || die "seed push failed"
+    rm -f "$TMP/ran-filter" || die "could not clear the filter marker"
+    printf '[filter "probe"]\n\tsmudge = %s\n\tclean = %s\n' "$TMP/filter-probe" "$TMP/filter-probe" \
+      > "$TMP/filter-$variant.cfg" || die "write $variant filter config failed"
+    local extra=()
+    case "$variant" in
+      include)  g -C "$TMP/r1e5$variant" config include.path "$TMP/filter-$variant.cfg" || die "r1e5 include config failed" ;;
+      worktree) g -C "$TMP/r1e5$variant" config extensions.worktreeConfig true || die "r1e5 worktreeConfig failed"
+                g -C "$TMP/r1e5$variant" config --worktree filter.probe.smudge "$TMP/filter-probe" || die "r1e5 worktree smudge failed"
+                g -C "$TMP/r1e5$variant" config --worktree filter.probe.clean "$TMP/filter-probe" || die "r1e5 worktree clean failed" ;;
+      global)   extra=(GIT_CONFIG_GLOBAL="$TMP/filter-$variant.cfg") ;;
+    esac
+    local before1e5; before1e5="$(git -C "$TMP/r1e5$variant" rev-parse main)" || die "r1e5 rev-parse failed"
+    run "$TMP/r1e5$variant" "$TMP/s1e5$variant" ${extra[@]+"${extra[@]}"}
+    if [[ "$variant" == global ]]; then
+      if [[ $RC -eq 0 && "$(git -C "$TMP/r1e5$variant" rev-parse main)" != "$before1e5" ]] \
+         && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
+        pass; else fail "global filter: expected a fast-forward, got RC=$RC OUT=$OUT"; fi
+    elif [[ $RC -eq 0 && ! -e "$TMP/ran-filter" && "$(git -C "$TMP/r1e5$variant" rev-parse main)" == "$before1e5" ]] \
+       && printf '%s' "$OUT" | jq -e '.additionalContext | test("left unmoved") and test("filter command")' >/dev/null 2>&1; then
+      pass; else fail "$variant filter: expected a refused fast-forward with the filter never run, got RC=$RC ran=$([[ -e "$TMP/ran-filter" ]] && echo yes || echo no) OUT=$OUT"; fi
+  done
 
   # 1f. The OpenSSH connect bound goes only to the plain default `ssh`. A
   # recording "ssh" first on PATH logs its argv and fails ("not verified").
