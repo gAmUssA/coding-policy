@@ -21,12 +21,18 @@
 #   1d. Portable     -> SESSION_START_MODE=portable in a linked worktree: no
 #                       fetch, "not verified"; in the main checkout: fetch, but
 #                       report "behind" rather than fast-forward.
-#   1e. Repo hooks   -> reference-transaction / post-merge hooks never run
-#                       during the fetch or the fast-forward.
+#   1e. Repo hooks   -> reference-transaction / post-index-change / post-merge
+#                       hooks never run during the fetch, the status check
+#                       (index refresh after a tracked file's mtime changes),
+#                       or the fast-forward.
+#   1e2. Ignored file -> origin starts tracking a path holding ignored local
+#                       data: no fast-forward, a report, and the data intact.
 #   1f. ssh bound    -> ConnectTimeout reaches the ssh command git would use
 #                       (GIT_SSH_COMMAND, and core.sshCommand when unset).
 #   1g. HTTP bound   -> with no timeout/gtimeout on PATH, a stalled HTTP remote
-#                       still ends the fetch ("not verified") within the guard.
+#                       still ends the fetch ("not verified", exit 0) within the guard.
+#   1h. ssh deadline -> an ssh that connects and then hangs is killed at the
+#                       fetch deadline ("not verified", exit 0), with no timeout on PATH.
 #   2. Up to date    -> emits a marker "in sync" status, exit 0.
 #   3. Throttle      -> with a fixed injected clock: a call inside the window
 #                       skips the fetch and reports "not verified" (never a
@@ -199,14 +205,32 @@ main() {
   clone_from "$BARE" "$TMP/r1e"
   commit_push "$SEED" "c2"
   local hk
-  for hk in reference-transaction post-merge; do
+  for hk in reference-transaction post-index-change post-merge; do
     printf '#!/bin/sh\ntouch "%s/ran-%s"\n' "$TMP" "$hk" > "$TMP/r1e/.git/hooks/$hk" || die "write $hk hook failed"
     chmod +x "$TMP/r1e/.git/hooks/$hk" || die "chmod $hk hook failed"
   done
+  # A new mtime on a tracked file makes `git status` refresh and write the index.
+  touch -t 202001010000 "$TMP/r1e/f" || die "touch r1e/f failed"
   run "$TMP/r1e" "$TMP/s1e"
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1 \
-     && [[ ! -e "$TMP/ran-reference-transaction" && ! -e "$TMP/ran-post-merge" ]]; then
+     && [[ ! -e "$TMP/ran-reference-transaction" && ! -e "$TMP/ran-post-index-change" && ! -e "$TMP/ran-post-merge" ]]; then
     pass; else fail "repo hooks: expected fetch + fast-forward with no repo hook run, got RC=$RC OUT=$OUT"; fi
+
+  # 1e2. Ignored local data where origin now tracks a file: git's default merge
+  # would overwrite it; the hook must refuse and leave the data intact.
+  mk_origin o1e2
+  clone_from "$BARE" "$TMP/r1e2"
+  printf 'precious\n' >> "$TMP/r1e2/.git/info/exclude" || die "r1e2 exclude failed"
+  printf 'local data\n' > "$TMP/r1e2/precious" || die "r1e2 precious write failed"
+  printf 'from origin\n' > "$SEED/precious" || die "seed precious write failed"
+  g -C "$SEED" add precious || die "seed add precious failed"
+  g -C "$SEED" commit -q -m "track precious" || die "seed commit failed"
+  g -C "$SEED" push -q origin main || die "seed push failed"
+  local before1e2; before1e2="$(git -C "$TMP/r1e2" rev-parse main)" || die "r1e2 rev-parse failed"
+  run "$TMP/r1e2" "$TMP/s1e2"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("left unmoved") and test("refused")' >/dev/null 2>&1 \
+     && [[ "$(cat "$TMP/r1e2/precious")" == "local data" && "$(git -C "$TMP/r1e2" rev-parse main)" == "$before1e2" ]]; then
+    pass; else fail "ignored file: expected a refused fast-forward and intact local data, got RC=$RC OUT=$OUT data=$(cat "$TMP/r1e2/precious")"; fi
 
   # 1f. The ssh connect bound extends the ssh command git would use. A recording
   # "ssh" logs its argv and fails, so the fetch fails ("not verified").
@@ -250,11 +274,11 @@ while True:
   local bin tool
   bin="$TMP/notimeout-bin"
   mkdir -p "$bin" || die "could not create $bin"
-  for tool in bash git jq cksum cut mkdir date env; do
+  for tool in bash git jq cksum cut mkdir date env dirname sleep; do
     ln -sf "$(command -v "$tool")" "$bin/$tool" || die "could not link $tool"
   done
   ( cd "$TMP/r1g" && env SYNC_STATE_DIR="$TMP/s1g" SYNC_FETCH_TIMEOUT=2 PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1g.out" 2>/dev/null ) &
-  local hook_pid=$! done1g=0
+  local hook_pid=$! done1g=0 rc1g=0
   for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
     if ! kill -0 "$hook_pid" 2>/dev/null; then done1g=1; break; fi
     sleep 0.1
@@ -262,13 +286,41 @@ while True:
   if (( ! done1g )); then
     kill "$hook_pid" || echo "warn: could not kill the stalled hook $hook_pid" >&2
   fi
-  wait "$hook_pid"
+  wait "$hook_pid" || rc1g=$?
   OUT="$(cat "$TMP/r1g.out")"
-  if (( done1g )) && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
-    pass; else fail "http bound: expected the stalled fetch to end within ${STALL_GUARD_SEC}s as 'not verified', got done=$done1g OUT=$OUT"; fi
+  if (( done1g )) && [[ $rc1g -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
+    pass; else fail "http bound: expected the stalled fetch to end within ${STALL_GUARD_SEC}s as 'not verified' with exit 0, got done=$done1g rc=$rc1g OUT=$OUT"; fi
   kill "$STALL_PID" || echo "warn: could not stop the stall server $STALL_PID" >&2
   wait "$STALL_PID"
   STALL_PID=""
+
+  # 1h. An ssh that connects and then never answers: ConnectTimeout cannot
+  # help, so only the fetch deadline ends it. Same no-timeout PATH as 1g.
+  mk_origin o1h
+  clone_from "$BARE" "$TMP/r1h"
+  g -C "$TMP/r1h" remote set-url origin "ssh://fake.invalid/repo.git" || die "r1h set-url failed"
+  # shellcheck disable=SC2016 # $$ and $0 belong to the generated script
+  printf '#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 60\n' > "$TMP/hang-ssh" || die "write hang-ssh failed"
+  chmod +x "$TMP/hang-ssh" || die "chmod hang-ssh failed"
+  ( cd "$TMP/r1h" && env SYNC_STATE_DIR="$TMP/s1h" SYNC_FETCH_TIMEOUT=2 GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1h.out" 2>/dev/null ) &
+  hook_pid=$!; local done1h=0 rc1h=0
+  for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
+    if ! kill -0 "$hook_pid" 2>/dev/null; then done1h=1; break; fi
+    sleep 0.1
+  done
+  if (( ! done1h )); then
+    kill "$hook_pid" || echo "warn: could not kill the stalled hook $hook_pid" >&2
+  fi
+  wait "$hook_pid" || rc1h=$?
+  OUT="$(cat "$TMP/r1h.out")"
+  local hang_pid=""
+  [[ -r "$TMP/hang-ssh.pid" ]] && hang_pid="$(cat "$TMP/hang-ssh.pid")"
+  if (( done1h )) && [[ $rc1h -eq 0 && -n "$hang_pid" ]] && ! kill -0 "$hang_pid" 2>/dev/null \
+     && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
+    pass; else fail "ssh deadline: expected the hung ssh killed and 'not verified' with exit 0 within ${STALL_GUARD_SEC}s, got done=$done1h rc=$rc1h hang=$hang_pid OUT=$OUT"; fi
+  if [[ -n "$hang_pid" ]] && kill -0 "$hang_pid" 2>/dev/null; then
+    kill "$hang_pid" || echo "warn: could not stop the hung ssh $hang_pid" >&2
+  fi
 
   # 2. up to date -> marker "in sync" status.
   mk_origin o2

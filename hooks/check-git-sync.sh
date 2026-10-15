@@ -23,15 +23,17 @@
 #     fetched. A session whose role cannot be proven (a failed probe with
 #     HERDR_ENV set, or a linked worktree under SESSION_START_MODE=portable,
 #     where tessl strips HERDR_ENV) neither fetches nor fast-forwards.
-#   - Repo hooks never run: every git call that can update refs or the work tree
-#     carries `-c core.hooksPath=/dev/null` (a ref update runs
-#     `reference-transaction`, a merge runs `post-merge`).
-#   - The fetch is time-bounded without depending on timeout/gtimeout: git's
-#     HTTP low-speed abort and ssh ConnectTimeout/ServerAlive bound it always,
-#     and timeout/gtimeout wraps it too when present.
+#   - Repo hooks never run: every git call that can update refs, the index, or
+#     the work tree carries `-c core.hooksPath=/dev/null` (a ref update runs
+#     `reference-transaction`, an index refresh `post-index-change`, a merge
+#     `post-merge`).
+#   - The fetch has a hard deadline without timeout/gtimeout: hooks/bounded-run.sh
+#     kills its whole process group at SYNC_FETCH_TIMEOUT. git's HTTP low-speed
+#     abort and ssh ConnectTimeout/ServerAlive end most stalls sooner.
 #   - Fast-forward only for a proven non-worker in native mode, on the default
 #     branch, with no tracked changes, strictly behind after a fresh fetch, via
-#     `merge --ff-only` (git refuses anything unsafe). Diverged, off-default,
+#     `merge --ff-only --no-overwrite-ignore` (git refuses anything unsafe,
+#     including an update that would replace an ignored local file). Diverged, off-default,
 #     dirty, and unverified sessions are reported only.
 #   - Never blocks (always exits 0), never exits 2.
 #
@@ -156,10 +158,10 @@ drift_counts() { # <default-branch>
 # abort a stalled HTTP transfer, and ssh ConnectTimeout/ServerAlive* abort a
 # stalled ssh one. The ssh options extend whichever ssh command git would have
 # used (GIT_SSH_COMMAND, then core.sshCommand), never replace it. A bare GIT_SSH
-# program takes no options, so it keeps only the HTTP and timeout bounds.
-# timeout/gtimeout wraps the whole fetch when present.
-build_fetch() { # <seconds>
-  local secs="$1" ssh_base="" rc=0
+# program takes no options, so it keeps only the HTTP and deadline bounds.
+# hooks/bounded-run.sh (beside this script) holds the whole fetch to <seconds>.
+build_fetch() { # <seconds> <hooks-dir>
+  local secs="$1" runner="$2/bounded-run.sh" ssh_base="" rc=0
   local -a envs=()
   FETCH_CMD=()
   if [[ -n "${GIT_SSH_COMMAND:-}" ]]; then
@@ -177,10 +179,10 @@ build_fetch() { # <seconds>
   if [[ -n "$ssh_base" ]]; then
     envs=(env "GIT_SSH_COMMAND=${ssh_base} -o ConnectTimeout=${secs} -o ServerAliveInterval=5 -o ServerAliveCountMax=2")
   fi
-  if command -v timeout >/dev/null 2>&1; then
-    FETCH_CMD=(timeout "$secs")
-  elif command -v gtimeout >/dev/null 2>&1; then
-    FETCH_CMD=(gtimeout "$secs")
+  if [[ -r "$runner" ]]; then
+    FETCH_CMD=(bash "$runner" "$secs")
+  else
+    warn "deadline runner ${runner} is missing — reinstall the plugin; this fetch has only git's own stall limits"
   fi
   FETCH_CMD+=(${envs[@]+"${envs[@]}"} git -c core.hooksPath=/dev/null -c http.lowSpeedLimit=1000 -c "http.lowSpeedTime=${secs}" fetch --quiet origin)
 }
@@ -188,9 +190,10 @@ build_fetch() { # <seconds>
 # Fast-forward the checked-out default branch to origin's, or say why not.
 #
 # Preconditions checked here: HEAD is the default branch and no tracked file
-# differs from HEAD. `merge --ff-only` then refuses a non-fast-forward and any
-# update that would overwrite an untracked file. Repo hooks are off
-# (`post-merge`). 0 = moved; 1 = not moved, FF_WHY names the reason.
+# differs from HEAD. `merge --ff-only --no-overwrite-ignore` then refuses a
+# non-fast-forward and any update that would overwrite an untracked or ignored
+# file. Repo hooks are off for the status (`post-index-change` on an index
+# refresh) and the merge (`post-merge`). 0 = moved; 1 = not moved, FF_WHY names the reason.
 fast_forward() { # <default-branch>
   local db="$1" current="" out rc=0
   FF_WHY=""
@@ -205,7 +208,7 @@ fast_forward() { # <default-branch>
     return 1
   fi
   rc=0
-  out="$(git status --porcelain --untracked-files=no)" || rc=$?
+  out="$(git -c core.hooksPath=/dev/null status --porcelain --untracked-files=no)" || rc=$?
   if (( rc != 0 )); then
     warn "git status failed (exit ${rc}) — ${db} was not fast-forwarded"
     FF_WHY="\`git status\` failed"
@@ -216,7 +219,7 @@ fast_forward() { # <default-branch>
     return 1
   fi
   rc=0
-  out="$(git -c core.hooksPath=/dev/null merge --ff-only --quiet "refs/remotes/origin/${db}" 2>&1)" || rc=$?
+  out="$(git -c core.hooksPath=/dev/null merge --ff-only --no-overwrite-ignore --quiet "refs/remotes/origin/${db}" 2>&1)" || rc=$?
   if (( rc != 0 )); then
     warn "fast-forward of ${db} refused (exit ${rc}): ${out//$'\n'/ }"
     FF_WHY="git refused the fast-forward (see the stderr warning)"
@@ -231,6 +234,11 @@ main() {
   local STATE_DIR="${SYNC_STATE_DIR:-${TMPDIR:-/tmp}/coding-policy-sync}"
   local rc db inside cand now top repo_key stamp sv ts should_fetch preserve_future fetch_failed ahead behind role ROLE_WHY FF_WHY
   local -a FETCH_CMD=()
+  local here
+  if ! here="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"; then
+    warn "cannot resolve this hook's directory — the fetch runs without its deadline runner"
+    here=""
+  fi
 
   # git is required to produce a signal; its absence is an expected environment
   # condition, not a failure — warn and no-op.
@@ -374,7 +382,7 @@ main() {
 
     # Zero or a non-number would switch the bound off; fall back to the default.
     [[ "$FETCH_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || FETCH_TIMEOUT=10
-    build_fetch "$FETCH_TIMEOUT"
+    build_fetch "$FETCH_TIMEOUT" "$here"
     # A fetch failure (offline, auth, timeout) is a no-op, not a broken session —
     # warn and let the unverified-sync branch below report it. Comparing against
     # a remote-tracking ref no fetch refreshed would risk a false "in sync"
