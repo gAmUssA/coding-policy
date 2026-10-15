@@ -48,7 +48,7 @@ assert_eq() {
 
 run() {
   local name="$1"; shift
-  DISMISS_LOG="$(mktemp)"
+  DISMISS_LOG="$(mktemp)" || { echo "fatal: mktemp failed — check that \$TMPDIR is writable" >&2; exit 2; }
   export DISMISS_LOG
   if "$@"; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -79,7 +79,7 @@ _gh_mock() {
 
   if [[ "$method" == "PUT" && "$path" == *"/dismissals" ]]; then
     local rid="${path%/dismissals}"; rid="${rid##*/}"
-    echo "$rid" >> "$DISMISS_LOG"
+    echo "$rid" >> "$DISMISS_LOG" || { echo "mock gh: cannot log the dismissal to $DISMISS_LOG" >&2; return 98; }
     echo '{}'
     return 0
   fi
@@ -212,10 +212,10 @@ t_login_is_glob_safe_against_cwd_files() {
     {"id":72,"state":"COMMENTED","commit_id":"bbb","submitted_at":"2026-01-02T00:00:00Z","user":{"login":"github-actions[bot]"}}
   ]'
   local decoy_dir out ids
-  decoy_dir=$(mktemp -d)
+  decoy_dir=$(mktemp -d) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
   # Files that `github-actions[bot]` and `copilot-...[bot]` would glob to.
-  : > "${decoy_dir}/github-actionsb"
-  : > "${decoy_dir}/copilot-pull-request-reviewero"
+  { : > "${decoy_dir}/github-actionsb" && : > "${decoy_dir}/copilot-pull-request-reviewero"; } \
+    || { echo "fatal: cannot write the decoy files in ${decoy_dir}" >&2; exit 2; }
   out=$(cd "$decoy_dir" && main "owner" "repo" "1") || { rm -rf "$decoy_dir"; return 1; }
   rm -rf "$decoy_dir"
   ids=$(jq -r '.dismissed | map(.review_id) | join(",")' <<<"$out")

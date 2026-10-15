@@ -147,7 +147,7 @@ _main_gh_mock() {
       return 1
     fi
     if [[ -n "${MUT_FAIL_ONCE:-}" && ! -f "${MUT_FAIL_FLAG:-/nonexistent}" ]]; then
-      : > "${MUT_FAIL_FLAG}"
+      : > "${MUT_FAIL_FLAG}" || { echo "mock gh: cannot write the fail-once flag ${MUT_FAIL_FLAG}" >&2; return 98; }
       echo "mock gh: requestReviews rejected the botId" >&2
       return 1
     fi
@@ -258,7 +258,7 @@ t_main_fails_when_copilot_absent() {
 # retried mutation's response.
 t_main_falls_back_on_rejected_pinned_id() {
   local out rc flag
-  flag=$(mktemp -u)
+  flag=$(mktemp -u) || { echo "fatal: mktemp -u failed — check that \$TMPDIR is writable" >&2; exit 2; }
   out=$(
     # shellcheck disable=SC2317  # gh() runs indirectly through the sourced main(); shellcheck cannot trace the call
     gh() { gh_pin_gate _main_gh_mock "$@"; }
@@ -292,7 +292,7 @@ t_mutation_runs_in_union_mode() {
           *)  shift ;;
         esac
       done
-      printf '%s' "$q" > "$query_file"
+      printf '%s' "$q" > "$query_file" || { echo "mock gh: cannot record the query to $query_file" >&2; return 98; }
       echo '[]'
     }
     request_with_bot_id "PR_kwDOX" "BOT_kgDOCnlnWA" >/dev/null

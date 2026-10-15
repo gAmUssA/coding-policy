@@ -89,7 +89,7 @@ TAG=v0.1.4
 WORKFLOW=publish.yml
 
 # Tempfiles tracking mock state across subshell boundaries.
-TMPDIR_TEST=$(mktemp -d -t resolve-pub-test.XXXXXX)
+TMPDIR_TEST=$(mktemp -d -t resolve-pub-test.XXXXXX) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
 # Named handler ending `return 0`, not a bare `trap 'rm -rf ...'`: the
 # EXIT trap's final command status becomes the process's exit status, so
 # a failed cleanup would turn an all-green run non-zero and flake CI
@@ -108,12 +108,12 @@ export MOCK_GH_ARGS_FILE="$TMPDIR_TEST/gh-args"
 export MOCK_SLEEP_CALLS_FILE="$TMPDIR_TEST/sleep-calls"
 export MOCK_GH_QUEUE_FILE="$TMPDIR_TEST/gh-queue"
 export FIXTURE_DIR="$TMPDIR_TEST/fixtures"
-mkdir -p "$FIXTURE_DIR"
+mkdir -p "$FIXTURE_DIR" || { echo "fatal: cannot create $FIXTURE_DIR — check that \$TMPDIR is writable" >&2; exit 2; }
 
 # --- Transport fixtures: raw `gh run list --json ...` arrays -----------------
 # Written in setup rather than checked in, per rules/testing-standards.md
 # Fixtures ("build test data programmatically in test setup").
-write_fixture() { cat > "$FIXTURE_DIR/$1"; }
+write_fixture() { cat > "$FIXTURE_DIR/$1" || { echo "fatal: cannot write fixture $FIXTURE_DIR/$1" >&2; exit 2; }; }
 
 write_fixture empty.json <<JSON
 []
@@ -203,8 +203,8 @@ run() {
 # invocation's arguments so tests can assert the ref actually requested.
 _gh_mock() {
   [[ "$1" == "run" && "$2" == "list" ]] || { echo "mock gh: unexpected invocation: $*" >&2; return 99; }
-  echo "call" >> "$MOCK_GH_CALLS_FILE"
-  echo "$*" >> "$MOCK_GH_ARGS_FILE"
+  { echo "call" >> "$MOCK_GH_CALLS_FILE" && echo "$*" >> "$MOCK_GH_ARGS_FILE"; } \
+    || { echo "mock gh: cannot record the call under $TMPDIR_TEST" >&2; return 98; }
 
   local branch="" workflow="" filter="" prev="" arg
   for arg in "$@"; do
@@ -239,14 +239,12 @@ gh() { gh_pin_gate _gh_mock "$@"; }
 # actually waiting. Tests sum these to verify the loop respects the
 # wall-clock budget.
 sleep() {
-  echo "$1" >> "$MOCK_SLEEP_CALLS_FILE"
+  echo "$1" >> "$MOCK_SLEEP_CALLS_FILE" || { echo "mock sleep: cannot record to $MOCK_SLEEP_CALLS_FILE" >&2; return 98; }
 }
 
 reset_mocks() {
-  : > "$MOCK_GH_CALLS_FILE"
-  : > "$MOCK_GH_ARGS_FILE"
-  : > "$MOCK_SLEEP_CALLS_FILE"
-  : > "$MOCK_GH_QUEUE_FILE"
+  { : > "$MOCK_GH_CALLS_FILE" && : > "$MOCK_GH_ARGS_FILE" && : > "$MOCK_SLEEP_CALLS_FILE" && : > "$MOCK_GH_QUEUE_FILE"; } \
+    || { echo "fatal: cannot reset the mock state files under $TMPDIR_TEST" >&2; exit 2; }
   export MOCK_GH_IGNORE_BRANCH=0
   # Reset env-driven knobs to known-good values. Tests that exercise
   # invalid values override these immediately before invoking main()
@@ -262,7 +260,7 @@ reset_mocks() {
 
 queue_fixtures() {
   for r in "$@"; do
-    echo "$r" >> "$MOCK_GH_QUEUE_FILE"
+    echo "$r" >> "$MOCK_GH_QUEUE_FILE" || { echo "fatal: cannot queue fixture $r" >&2; exit 2; }
   done
 }
 
@@ -345,7 +343,7 @@ test_cli_quoted_ref_without_system_jq() {
   for tool in wc tr; do
     ln -s "$(command -v "$tool")" "$bin/$tool" || return 1
   done
-  cat > "$bin/gh" <<'MOCK'
+  cat > "$bin/gh" <<'MOCK' || return 1
 #!/bin/bash
 set -euo pipefail
 filter=""

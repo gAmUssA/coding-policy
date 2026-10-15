@@ -109,7 +109,8 @@ main() {
   expect_rc 2 "no origin"
 
   # 8. not a checkout
-  mkdir -p "$TMP/plain"; run "$TMP/plain"
+  mkdir -p "$TMP/plain" || { echo "fatal: cannot create $TMP/plain — check that \$TMPDIR is writable" >&2; exit 2; }
+  run "$TMP/plain"
   expect_rc 2 "not a checkout"
 
   # 9. remediation never prints the existing URL, which can carry credentials

@@ -169,11 +169,11 @@ _gh_mock() {
 }
 gh() { gh_pin_gate _gh_mock "$@"; }
 
-set_mode() { echo "$1" > "$MOCK_MODE_FILE"; }
-set_run() { echo "$1" > "$MOCK_RUN_FILE"; }
+set_mode() { echo "$1" > "$MOCK_MODE_FILE" || { echo "fatal: cannot write $MOCK_MODE_FILE" >&2; exit 2; }; }
+set_run() { echo "$1" > "$MOCK_RUN_FILE" || { echo "fatal: cannot write $MOCK_RUN_FILE" >&2; exit 2; }; }
 # Default every case to a successful run so a release-side fixture
 # exercises conjunct 2; cases about conjunct 1 override it.
-set_body() { cat > "$MOCK_BODY_FILE"; set_mode ok; set_run success; }
+set_body() { cat > "$MOCK_BODY_FILE" || { echo "fatal: cannot write $MOCK_BODY_FILE" >&2; exit 2; }; set_mode ok; set_run success; }
 
 ok_of() { echo "$1" | jq -r 'if has("ok") then (.ok|tostring) else empty end'; }
 reason_of() { echo "$1" | jq -r 'if has("reason") then .reason else empty end'; }

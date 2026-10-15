@@ -44,14 +44,27 @@ pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  FAIL: $1" >&2; }
 cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
 
+# fatal <what>: a setup step failed — stop the suite, never count it.
+fatal() { echo "fatal: $1 — check that \$TMPDIR is writable and git works, then rerun" >&2; exit 2; }
+
+# write <path> <format> [args...]: write one fixture file or stop the suite.
+write() {
+  local path="$1"; shift
+  # shellcheck disable=SC2059  # the format is the caller's fixture template
+  printf "$@" > "$path" || fatal "cannot write fixture ${path}"
+}
+
+# mkd <dir>: create a fixture directory or stop the suite.
+mkd() { mkdir -p "$1" || fatal "cannot create ${1}"; }
+
 # repo <dir>: init an empty repo.
 repo() {
-  if ! { mkdir -p "$1" && git -C "$1" init -q; }; then echo "fatal: git init $1" >&2; exit 2; fi
+  if ! { mkdir -p "$1" && git -C "$1" init -q; }; then fatal "cannot init a git repo at $1"; fi
 }
 
 # track <dir>: stage every file so git ls-files sees it.
 track() {
-  git -C "$1" add -A || { echo "fatal: git add in $1" >&2; exit 2; }
+  git -C "$1" add -A || fatal "cannot stage the fixture in $1"
 }
 
 # run <dir|""> -> OUT, ERR, RC
@@ -65,45 +78,45 @@ main() {
   trap cleanup EXIT
 
   # 1. setext underline only
-  repo "$TMP/1"; printf 'Title\n%s\n\ntext\n' "$EQ" > "$TMP/1/README.md"; track "$TMP/1"
+  repo "$TMP/1"; write "$TMP/1/README.md" 'Title\n%s\n\ntext\n' "$EQ"; track "$TMP/1"
   run "$TMP/1"
   if [[ $RC -eq 0 ]] && jq -e '.clean == true and .markers == []' <<<"$OUT" >/dev/null; then pass
   else fail "setext: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 2. full diff3 conflict
   repo "$TMP/2"
-  printf 'a\n%s HEAD\nours\n%s base\nbase\n%s\ntheirs\n%s feat/x\nz\n' "$LT" "$BAR" "$EQ" "$GT" > "$TMP/2/f.md"; track "$TMP/2"
+  write "$TMP/2/f.md" 'a\n%s HEAD\nours\n%s base\nbase\n%s\ntheirs\n%s feat/x\nz\n' "$LT" "$BAR" "$EQ" "$GT"; track "$TMP/2"
   run "$TMP/2"
   if [[ $RC -eq 1 ]] && jq -e '.clean == false and ([.markers[].line] == [2,4,8]) and ([.markers[].path] | unique == ["f.md"])' <<<"$OUT" >/dev/null \
      && grep -q 'f.md:2, f.md:4, f.md:8' <<<"$ERR"; then pass
   else fail "diff3: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 3. lone end marker left in a CHANGELOG
-  repo "$TMP/3"; printf '# Changelog\n\n- entry\n%s main\n' "$GT" > "$TMP/3/CHANGELOG.md"; track "$TMP/3"
+  repo "$TMP/3"; write "$TMP/3/CHANGELOG.md" '# Changelog\n\n- entry\n%s main\n' "$GT"; track "$TMP/3"
   run "$TMP/3"
   if [[ $RC -eq 1 ]] && jq -e --arg t "$GT main" '.markers == [{"path":"CHANGELOG.md","line":4,"text":$t}]' <<<"$OUT" >/dev/null; then pass
   else fail "lone end marker: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 4. not git's marker format: eight chars, glued text, indented
-  repo "$TMP/4"; printf '%s<\n%sfoo\n  %s HEAD\n' "$LT" "$GT" "$LT" > "$TMP/4/f.txt"; track "$TMP/4"
+  repo "$TMP/4"; write "$TMP/4/f.txt" '%s<\n%sfoo\n  %s HEAD\n' "$LT" "$GT" "$LT"; track "$TMP/4"
   run "$TMP/4"
   if [[ $RC -eq 0 ]] && jq -e '.clean == true' <<<"$OUT" >/dev/null; then pass
   else fail "near-misses: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 5. untracked file
-  repo "$TMP/5"; printf 'ok\n' > "$TMP/5/a.md"; track "$TMP/5"; printf '%s HEAD\n' "$LT" > "$TMP/5/untracked.md"
+  repo "$TMP/5"; write "$TMP/5/a.md" 'ok\n'; track "$TMP/5"; write "$TMP/5/untracked.md" '%s HEAD\n' "$LT"
   run "$TMP/5"
   if [[ $RC -eq 0 ]] && jq -e '.clean == true' <<<"$OUT" >/dev/null; then pass
   else fail "untracked: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 6. binary file
-  repo "$TMP/6"; printf '\000bin\n%s HEAD\n' "$LT" > "$TMP/6/blob.bin"; track "$TMP/6"
+  repo "$TMP/6"; write "$TMP/6/blob.bin" '\000bin\n%s HEAD\n' "$LT"; track "$TMP/6"
   run "$TMP/6"
   if [[ $RC -eq 0 ]] && jq -e '.clean == true' <<<"$OUT" >/dev/null; then pass
   else fail "binary: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 7. path with a space
-  repo "$TMP/7"; mkdir -p "$TMP/7/my dir"; printf '%s\n' "$BAR" > "$TMP/7/my dir/n.md"; track "$TMP/7"
+  repo "$TMP/7"; mkd "$TMP/7/my dir"; write "$TMP/7/my dir/n.md" '%s\n' "$BAR"; track "$TMP/7"
   run "$TMP/7"
   if [[ $RC -eq 1 ]] && jq -e '.markers[0].path == "my dir/n.md" and .markers[0].line == 1' <<<"$OUT" >/dev/null; then pass
   else fail "space path: RC=$RC OUT=$OUT ERR=$ERR"; fi
@@ -111,14 +124,14 @@ main() {
   # 7b. path with a newline: git grep -z keeps it inside the NUL-delimited
   # path field, so it must not split the record. The newline path is the
   # second hit, so it follows another hit's text in the stream.
-  repo "$TMP/7b"; printf 'clean\n%s HEAD\n' "$LT" > "$TMP/7b/0.md"; printf '%s here\n' "$GT" > "$TMP/7b/a"$'\n'"b.md"; track "$TMP/7b"
+  repo "$TMP/7b"; write "$TMP/7b/0.md" 'clean\n%s HEAD\n' "$LT"; write "$TMP/7b/a"$'\n'"b.md" '%s here\n' "$GT"; track "$TMP/7b"
   run "$TMP/7b"
   if [[ $RC -eq 1 ]] && jq -e --arg p $'a\nb.md' --arg t "$GT here" --arg t0 "$LT HEAD" \
        '.markers == [{"path":"0.md","line":2,"text":$t0},{"path":$p,"line":1,"text":$t}]' <<<"$OUT" >/dev/null; then pass
   else fail "newline path: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 8. not a git checkout
-  mkdir -p "$TMP/8"
+  mkd "$TMP/8"
   run "$TMP/8"
   if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q 'not a git checkout' <<<"$ERR"; then pass
   else fail "not a checkout: RC=$RC OUT=$OUT ERR=$ERR"; fi

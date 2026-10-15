@@ -51,9 +51,11 @@ mkrepo() { # <dir>
     && git -C "$1" remote add origin https://github.com/testowner/testrepo.git
 }
 mkmount() { # <dir> : fixture plugin mount with every template
-  local t="$1/skills/onboard-repo/templates"; mkdir -p "$t" \
-    && for f in review-codex.yml.md copilot-instructions.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh; do
-         printf '# %s\n' "$f" > "$t/$f"; done
+  local t="$1/skills/onboard-repo/templates" f
+  mkdir -p "$t" || die "could not create the fixture mount at $t"
+  for f in review-codex.yml.md copilot-instructions.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh; do
+    printf '# %s\n' "$f" > "$t/$f" || die "could not write the fixture template $t/$f"
+  done
 }
 # run <repo> [extra env...] [-- args...] -> OUT, RC
 run() {
@@ -66,8 +68,8 @@ main() {
   TMP="$(mktemp -d)" || { echo "fatal: mktemp" >&2; exit 2; }
   trap cleanup EXIT
 
-  STUBBIN="$TMP/bin"; mkdir -p "$STUBBIN"
-  cat > "$STUBBIN/gh" <<'STUB'
+  STUBBIN="$TMP/bin"; mkdir -p "$STUBBIN" || die "could not create the stub dir $STUBBIN"
+  cat > "$STUBBIN/gh" <<'STUB' || die "could not write the gh stub at $STUBBIN/gh"
 #!/usr/bin/env bash
 # Pinned to github.com, so GH_HOST can never redirect the auth check.
 if [[ "$1 $2" == "auth status" ]]; then [[ "$3 $4" == "--hostname github.com" ]] || exit 97; [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1; exit 0; fi
@@ -119,7 +121,9 @@ STUB
   if [[ $RC -eq 1 ]] && has_failure templates-present && grep -q 'tessl install gamussa/coding-policy' <<<"$OUT"; then pass; else fail "templates: RC=$RC OUT=$OUT"; fi
 
   # 6. install mode, target present
-  mkrepo "$TMP/r6"; mkdir -p "$TMP/r6/.github/workflows"; printf 'x\n' > "$TMP/r6/.github/workflows/review-codex.yml"
+  mkrepo "$TMP/r6"
+  mkdir -p "$TMP/r6/.github/workflows" || die "could not create $TMP/r6/.github/workflows"
+  printf 'x\n' > "$TMP/r6/.github/workflows/review-codex.yml" || die "could not write the fixture workflow in $TMP/r6"
   run "$TMP/r6"
   if [[ $RC -eq 1 ]] && has_failure targets-absent && grep -q -- '--override' <<<"$OUT"; then pass; else fail "target present: RC=$RC OUT=$OUT"; fi
 
@@ -128,12 +132,14 @@ STUB
   if [[ $RC -eq 1 ]] && has_failure targets-clean; then pass; else fail "override dirty: RC=$RC OUT=$OUT"; fi
 
   # 8. override, committed target -> ok
-  git -C "$TMP/r6" add -A && git -C "$TMP/r6" -c user.email=t@t -c user.name=t commit -q -m add
+  { git -C "$TMP/r6" add -A && git -C "$TMP/r6" -c user.email=t@t -c user.name=t commit -q -m add; } \
+    || die "could not commit the fixture target in $TMP/r6"
   OUT="$(cd "$TMP/r6" && env "PATH=$STUBBIN:$PATH" CODEX_AUTH_FILE="$AUTH_OK" PLUGIN_MOUNT="$MOUNT" bash "$SCRIPT" --override 2>/dev/null)"; RC=$?
   if [[ $RC -eq 0 ]] && jq -e '.ok == true and .override == true' <<<"$OUT" >/dev/null 2>&1; then pass; else fail "override clean: RC=$RC OUT=$OUT"; fi
 
   # 9. not a git repo
-  mkdir -p "$TMP/r9"; run "$TMP/r9"
+  mkdir -p "$TMP/r9" || die "could not create $TMP/r9"
+  run "$TMP/r9"
   if [[ $RC -eq 1 ]] && has_failure in-git-worktree; then pass; else fail "not repo: RC=$RC OUT=$OUT"; fi
 
   # 10. bad argument

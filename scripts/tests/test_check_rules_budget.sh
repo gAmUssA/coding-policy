@@ -80,7 +80,8 @@ main() {
   else fail "order: OUT=$OUT"; fi
 
   # 5. no rule files
-  mkdir -p "$TMP/empty"; bytes "$TMP/empty/x.txt" 10
+  mkdir -p "$TMP/empty" || { echo "fatal: cannot create $TMP/empty — check that \$TMPDIR is writable" >&2; exit 2; }
+  bytes "$TMP/empty/x.txt" 10
   run 2000 "$TMP/empty"
   if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q 'no \*.md rule files' <<<"$ERR"; then pass
   else fail "no files: RC=$RC OUT=$OUT ERR=$ERR"; fi

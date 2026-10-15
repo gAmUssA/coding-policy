@@ -24,6 +24,8 @@ set +e  # relax errexit in the harness; each main() runs under its own set -e
 pass=0; fail=0
 ok()  { printf 'ok   - %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf 'FAIL - %s\n' "$1"; fail=$((fail+1)); }
+# fatal <what>: a setup step failed — stop the suite, never count it.
+fatal() { echo "fatal: $1 — check that \$TMPDIR is writable, then rerun" >&2; exit 2; }
 
 # Mock gh: capture the /reviews POST payload (arrives on stdin via --input -).
 # With MOCK_422_ON_APPROVE=1, an APPROVE submit fails HTTP 422 (as github-actions[bot]
@@ -35,7 +37,7 @@ gh() {
     # Pinned to github.com, so GH_HOST can never redirect the review post.
     [[ "${2:-} ${3:-}" == "--hostname github.com" ]] || { echo "mock gh: review post not pinned to github.com: $*" >&2; return 97; }
     local payload; payload=$(cat)
-    printf '%s' "$payload" > "$GH_CAPTURE"
+    printf '%s' "$payload" > "$GH_CAPTURE" || { echo "mock gh: cannot capture the payload to $GH_CAPTURE" >&2; return 98; }
     local ev; ev=$(jq -r '.event' <<<"$payload")
     if [[ "$MOCK_422_ON_APPROVE" == "1" && "$ev" == "APPROVE" ]]; then
       echo "gh: Unprocessable Entity (HTTP 422)" >&2
@@ -52,7 +54,7 @@ run_main() { ( set -euo pipefail; main "$@" ); }
 t_pass() {
   local dir; dir=$(mktemp -d) || { bad "pass: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. All rules pass.","findings":[]}' > "$dir/final.json"
+  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. All rules pass.","findings":[]}' > "$dir/final.json" || fatal "cannot write $dir/final.json"
   local out; out=$(run_main owner repo 5 "$dir/final.json")
   local rc=$?
   [[ $rc -eq 0 ]]                                              || { bad "pass: exit 0 (rc=$rc)"; rm -rf "$dir"; return; }
@@ -75,7 +77,7 @@ t_pass() {
 t_pass_422_fallback() {
   local dir; dir=$(mktemp -d) || { bad "fallback: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=1
-  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. Clean.","findings":[]}' > "$dir/final.json"
+  printf '{"summary":"Policy loaded: 23 rule files from gamussa/coding-policy. Clean.","findings":[]}' > "$dir/final.json" || fatal "cannot write $dir/final.json"
   local out; out=$(run_main owner repo 5 "$dir/final.json" 2>/dev/null)
   local rc=$?
   MOCK_422_ON_APPROVE=0
@@ -88,9 +90,9 @@ t_pass_422_fallback() {
 
 # --- a blocking finding -> REQUEST_CHANGES, findings in a Blocking section ---
 t_blocking() {
-  local dir; dir=$(mktemp -d)
+  local dir; dir=$(mktemp -d) || fatal "mktemp -d failed"
   GH_CAPTURE="$dir/payload.json"
-  cat > "$dir/final.json" <<'JSON'
+  cat > "$dir/final.json" <<'JSON' || fatal "cannot write $dir/final.json"
 {"summary":"Policy loaded: 23 rule files from rules/. One violation.",
  "findings":[{"path":"skills/x/run.sh","line":3,"rule":"error-handling","severity":"blocking","message":"missing set -euo pipefail; add it at the top"}]}
 JSON
@@ -109,9 +111,9 @@ JSON
 
 # --- advisory-only findings -> COMMENT (never gates), Advisory section ---
 t_advisory_only() {
-  local dir; dir=$(mktemp -d)
+  local dir; dir=$(mktemp -d) || fatal "mktemp -d failed"
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  cat > "$dir/final.json" <<'JSON'
+  cat > "$dir/final.json" <<'JSON' || fatal "cannot write $dir/final.json"
 {"summary":"Policy loaded: 23 rule files from rules/. Style nit only.",
  "findings":[{"path":"rules/foo.md","line":8,"rule":"context-artifacts","severity":"advisory","message":"em-dash clause attaches a rationale; drop it"}]}
 JSON
@@ -131,9 +133,9 @@ JSON
 
 # --- mixed blocking + advisory -> REQUEST_CHANGES, both sections present ---
 t_mixed() {
-  local dir; dir=$(mktemp -d)
+  local dir; dir=$(mktemp -d) || fatal "mktemp -d failed"
   GH_CAPTURE="$dir/payload.json"
-  cat > "$dir/final.json" <<'JSON'
+  cat > "$dir/final.json" <<'JSON' || fatal "cannot write $dir/final.json"
 {"summary":"Policy loaded: 23 rule files from rules/. Mixed.",
  "findings":[
    {"path":"a.sh","line":1,"rule":"no-secrets","severity":"blocking","message":"hardcoded token; move to env"},
@@ -153,9 +155,9 @@ JSON
 
 # --- missing severity is treated as blocking (fail-safe) ---
 t_missing_severity_blocks() {
-  local dir; dir=$(mktemp -d)
+  local dir; dir=$(mktemp -d) || fatal "mktemp -d failed"
   GH_CAPTURE="$dir/payload.json"
-  cat > "$dir/final.json" <<'JSON'
+  cat > "$dir/final.json" <<'JSON' || fatal "cannot write $dir/final.json"
 {"summary":"Policy loaded: 23 rule files from rules/. Unclassified finding.",
  "findings":[{"path":"x.sh","line":1,"rule":"error-handling","message":"no severity field"}]}
 JSON
@@ -177,7 +179,7 @@ t_missing_file() {
 # --- invalid JSON -> exit 1 ---
 t_invalid_json() {
   local dir; dir=$(mktemp -d) || { bad "invalid_json: mktemp -d failed"; return; }
-  printf 'not json at all' > "$dir/final.json"
+  printf 'not json at all' > "$dir/final.json" || fatal "cannot write $dir/final.json"
   local rc=0; run_main owner repo 1 "$dir/final.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 1 ]]; then ok "invalid JSON -> exit 1"; else bad "invalid JSON -> exit 1 (rc=$rc)"; fi
   rm -rf "$dir"

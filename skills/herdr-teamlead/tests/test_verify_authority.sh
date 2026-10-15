@@ -52,7 +52,9 @@ fi
 [[ "${1:-}" == "api" ]] || { echo '{"error":"unsupported"}' >&2; exit 2; }
 [[ "${2:-} ${3:-}" == "--hostname github.com" ]] || { echo "fake gh: api call not pinned to github.com: $*" >&2; exit 97; }
 set -- "$1" "${@:4}"
-[[ -n "${FAKE_ARGV_FILE:-}" ]] && printf '%s\n' "$*" >> "$FAKE_ARGV_FILE"
+if [[ -n "${FAKE_ARGV_FILE:-}" ]]; then
+  printf '%s\n' "$*" >> "$FAKE_ARGV_FILE" || { echo "fake gh: cannot record argv to $FAKE_ARGV_FILE" >&2; exit 2; }
+fi
 case "${2:-}" in
   user)
     [[ -n "${FAKE_USER_ERR:-}" ]] && { printf 'gh: auth required\n' >&2; exit 1; }

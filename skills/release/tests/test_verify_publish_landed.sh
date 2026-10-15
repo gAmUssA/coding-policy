@@ -400,7 +400,7 @@ t_missing_jq_emits_json_AND_stderr() {
   local path
   path=$(no_jq_path) || return 0  # SKIP returns 0 to avoid noisy fail
   local out err_file rc=0 err
-  err_file=$(mktemp)
+  err_file=$(mktemp) || { echo "fatal: mktemp failed — check that \$TMPDIR is writable" >&2; exit 2; }
   out=$(env -i PATH="$path" HOME="$HOME" "$SCRIPT" gamussa coding-policy "0.3.31" "12345" acme widgets 2>"$err_file") || rc=$?
   err=$(cat "$err_file"); rm -f "$err_file"
   assert_eq "exit code" "2" "$rc" || return 1
