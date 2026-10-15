@@ -1,8 +1,8 @@
 """Round-tier policy and exact launch-argument verification for #324.
 
 The table is operator-owned configuration, never a per-dispatch model
-override. Judgment rounds cannot lower the pinned model or effort. Cheap
-mechanical work requires the research predicate in full. Model availability
+override. Judgment rounds cannot lower the pinned model or effort. A
+developer's cheap mechanical round requires the research predicate in full. Model availability
 and subscription attribution are separate: see billing.py for the latter.
 
 Only installed, documented CLI kinds have launch adapters. Antigravity's
@@ -31,14 +31,25 @@ EFFORTS = {
 }
 NO_EFFORT_MODELS = frozenset({"claude-haiku-4-5", "haiku-4.5"})
 JUDGMENT_ROUNDS = frozenset({
-    "architect", "reconciliation", "test_plan", "critic", "review",
+    "architect", "reconciliation", "critic", "review",
     "hostile_verify", "recheck", "release_adjudication", "lead",
 })
-ROUNDS = JUDGMENT_ROUNDS | {"build", "fix", "mechanical", "release_mechanics"}
+#: Non-judgment rounds carry no top-model floor. `consultation` gathers
+#: evidence and decides nothing; `test_plan` prepares and passes nothing.
+ROUNDS = JUDGMENT_ROUNDS | {"build", "fix", "mechanical", "release_mechanics", "consultation", "test_plan"}
+#: Each seat defaults to the cheapest round its contract allows. A judgment
+#: round is requested explicitly with `--round ROLE=ROUND`.
 DEFAULT_ROUNDS = {
     "developer": "build", "tester": "hostile_verify", "reviewer": "review",
-    "release": "release_adjudication", "architect": "architect",
+    "release": "release_mechanics", "architect": "architect",
     "critic": "critic", "lead": "lead",
+    "advisor": "consultation", "investigator": "consultation",
+}
+#: A default round whose row a worker's table lacks falls back to the row
+#: that role defaulted to before, when that row exists, so an existing table
+#: keeps dispatching unchanged until the operator adds the cheaper row.
+LEGACY_DEFAULT_ROUNDS = {
+    "release": "release_adjudication",
     "advisor": "architect", "investigator": "reconciliation",
 }
 ROLE_ROUNDS = {
@@ -48,8 +59,8 @@ ROLE_ROUNDS = {
     "release": frozenset({"release_adjudication", "release_mechanics"}),
     "architect": frozenset({"architect", "reconciliation"}),
     "critic": frozenset({"critic"}), "lead": frozenset({"lead"}),
-    "advisor": frozenset({"architect"}),
-    "investigator": frozenset({"reconciliation"}),
+    "advisor": frozenset({"consultation", "architect"}),
+    "investigator": frozenset({"consultation", "reconciliation"}),
 }
 MECHANICAL_TASKS = frozenset({
     "rebase", "restack", "apply_exact_patch", "docs_only", "check_rerun",
@@ -336,6 +347,9 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     # Selection preserves the true cumulative number for authorized recovery.
     if fix_round is not None and (type(fix_round) is not int or fix_round < 1):
         raise UsageError("Fix round must be a positive integer; preserve the task counter.", {})
+    legacy = LEGACY_DEFAULT_ROUNDS.get(role)
+    if round_type is None and legacy in agent.tiers and DEFAULT_ROUNDS[role] not in agent.tiers:
+        round_type = legacy
     round_type = round_type or ("fix" if role == "developer" and fix_round else DEFAULT_ROUNDS.get(role))
     if not isinstance(round_type, str) or round_type not in ROLE_ROUNDS.get(role, frozenset()):
         raise UsageError("Round {!r} cannot perform role {!r}; choose its documented round type.".format(round_type, role), {})
@@ -347,7 +361,9 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     if chosen_round not in agent.tiers:
         raise MissingTierError("Agent {} has no {!r} tier; add the required row before planning.".format(agent.name, chosen_round), {})
     tier = dict(agent.tiers[chosen_round])
-    if round_type in {"mechanical", "release_mechanics"} and not mechanical_allowed(context):
+    # Only a developer's mechanical round needs the predicate. A release
+    # round's loud failure is the release skill's own gates.
+    if round_type == "mechanical" and not mechanical_allowed(context):
         raise UsageError("Mechanical eligibility is unproven or an escape condition fired; use a judgment round with a fresh brief.", {})
     risks = context.get("risk_flags", [])
     if not isinstance(risks, list) or any(not isinstance(flag, str) or not flag for flag in risks):

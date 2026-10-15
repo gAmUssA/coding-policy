@@ -50,7 +50,7 @@
           "multiplier": 1.0
         },
         "test_plan": {
-          "model": "opus-5",
+          "model": "sonnet-5",
           "effort": "high",
           "multiplier": 1.0
         },
@@ -102,6 +102,11 @@
           "model": "sonnet-5",
           "effort": "medium",
           "multiplier": 1.0
+        },
+        "consultation": {
+          "model": "sonnet-5",
+          "effort": "high",
+          "multiplier": 1.0
         }
       },
       "launch_args": [
@@ -142,7 +147,7 @@
         },
         "test_plan": {
           "model": "gpt-5.6-sol",
-          "effort": "high",
+          "effort": "medium",
           "multiplier": 1.0
         },
         "critic": {
@@ -193,6 +198,11 @@
         "release_mechanics": {
           "model": "gpt-5.3-codex-spark",
           "effort": "low",
+          "multiplier": 1.0
+        },
+        "consultation": {
+          "model": "gpt-5.6-sol",
+          "effort": "medium",
           "multiplier": 1.0
         }
       },
@@ -241,7 +251,7 @@
         },
         "test_plan": {
           "model": "grok-4.6",
-          "effort": "high",
+          "effort": "medium",
           "multiplier": 1.0
         },
         "critic": {
@@ -292,6 +302,11 @@
         "release_mechanics": {
           "model": "grok-4.6",
           "effort": "low",
+          "multiplier": 1.0
+        },
+        "consultation": {
+          "model": "grok-4.6",
+          "effort": "medium",
           "multiplier": 1.0
         }
       },

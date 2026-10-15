@@ -73,8 +73,30 @@ CLI or changing a model pin.
 ## Planning and dispatch
 
 `plan --round ROLE=ROUND` selects a configured round type. Without it, the
-role's default applies. `--round-context FILE` reads a JSON object keyed by
-assigned role. A mechanical context has this shape:
+role's default applies: the cheapest round its contract allows
+(`DEFAULT_ROUNDS` in `skills/herdr-teamlead/teamlead/tiers.py`). Request the
+judgment round explicitly when the work must settle something:
+
+- `--round investigator=reconciliation` for the exhausted-allowance diagnosis
+  input, or after a recorded prior High miss
+- `--round advisor=architect` when `detect-triggers` fired `security`, or for
+  the trust-boundary assessment
+- `--round release=release_adjudication` when the release worker must
+  interpret a dispute; an ordinary dispute still goes to the judge
+
+`consultation` and `test_plan` are non-judgment rounds and may name a non-top
+model. The example's rows for them are a starting point, not a measured
+result. A table without the cheaper default row falls back to the role's
+earlier judgment default when that row exists (`LEGACY_DEFAULT_ROUNDS`); copy
+the example's row to take the cheaper default. Risk evidence still escalates
+any round to the `review` row at xhigh.
+
+A tester round's floor is its configured row: the `hostile_verify` round name
+alone never raises effort. Escalation reads only the round context's risk
+flags, input size and prior-miss evidence.
+
+`--round-context FILE` reads a JSON object keyed by assigned role. A
+developer's mechanical context has this shape:
 
 ```json
 {
@@ -93,8 +115,10 @@ assigned role. A mechanical context has this shape:
 }
 ```
 
-These fields describe evidence the lead must establish from the task and its
-oracle. They are not permission to declare judgment mechanical. The numeric
+Only the developer's `mechanical` round requires this predicate. A
+`release_mechanics` round needs none; the release skill's own gates fail it
+loudly. These fields describe evidence the lead must establish from the task
+and its oracle. They are not permission to declare judgment mechanical. The numeric
 limits and escape conditions are owned by `tiers.py`, not by the lead.
 Additional context fields cover homogeneous enumerated edits, failed gates,
 prior High misses, and the named escape conditions. Supply `--fix-round` to
