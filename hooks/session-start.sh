@@ -23,9 +23,13 @@
 #           started because the total budget was spent, gets its own status
 #           line, and the list continues. The child sees its deadline as
 #           SESSION_START_CHILD_DEADLINE_SEC.
-#   stdout: one JSON object whose additionalContext joins every child's
-#           additionalContext with a blank line, in hooks/session-start-hooks.txt
-#           order. Nothing when no child reported. A child that exits non-zero or
+#   stdout: one JSON object whose additionalContext holds two parts, each in
+#           hooks/session-start-hooks.txt order and joined with a blank line:
+#           first every status (a child payload beginning with STATUS_MARKER),
+#           the block rules/hook-action-reporting.md relays; then every other
+#           child payload (agent instructions such as the beans guide), each
+#           under its own CONTEXT_HEADER line naming the hook, which ends the
+#           status block. Nothing when no child reported. A child that exits non-zero or
 #           prints something other than one additionalContext object becomes its
 #           own "Session-start status — hook <name> ..." line naming the command
 #           to rerun it, never dropped.
@@ -44,6 +48,11 @@ warn() { printf 'session-start: %s\n' "$1" >&2; }
 CHILD_BUDGET_SEC=45
 #: Seconds all children together may run.
 TOTAL_BUDGET_SEC=120
+
+#: A child payload starting with this is a status the agent relays to the user.
+STATUS_MARKER="Session-start status — "
+#: Opens each non-status payload, so it never reads as part of the status block.
+CONTEXT_HEADER="Agent context, not a session-start status — do not relay it to the user"
 
 #: Agents whose native SessionStart entry runs this script with the session's
 #: environment; the portable run defers to it.
@@ -80,7 +89,7 @@ main() {
   local total_budget="${SESSION_START_BUDGET_SEC:-$TOTAL_BUDGET_SEC}"
   local start budget left has_runner=0
   local -a runner=()
-  local -a hooks=() names=() codes=() outputs=() statuses=()
+  local -a hooks=() names=() codes=() outputs=() statuses=() contexts=()
 
   if [[ -n "${TESSL_AGENT:-}" ]]; then
     for agent in "${NATIVE_AGENTS[@]}"; do
@@ -169,16 +178,22 @@ main() {
     rc=0
     ctx="$(context_of "${outputs[i]}")" || rc=$?
     case "$rc" in
-      0) statuses+=("$ctx") ;;
+      0)
+        if [[ "$ctx" == "$STATUS_MARKER"* ]]; then
+          statuses+=("$ctx")
+        else
+          contexts+=("${CONTEXT_HEADER} (from ${name}):"$'\n'"${ctx}")
+        fi ;;
       1) statuses+=("Session-start status — hook ${name} printed something other than one additionalContext object; run \`bash ${here}/${name}\` from this repo to see it.") ;;
       *) statuses+=("Session-start status — session-start could not parse hook ${name}'s output: jq failed. Repair jq, then start a new session.") ;;
     esac
   done
 
-  (( ${#statuses[@]} > 0 )) || return 0
-  for (( i = 0; i < ${#statuses[@]}; i++ )); do
+  local -a parts=(${statuses[@]+"${statuses[@]}"} ${contexts[@]+"${contexts[@]}"})
+  (( ${#parts[@]} > 0 )) || return 0
+  for (( i = 0; i < ${#parts[@]}; i++ )); do
     (( i == 0 )) || joined+=$'\n\n'
-    joined+="${statuses[i]}"
+    joined+="${parts[i]}"
   done
   encode "$mode" "$joined" ||
     warn "jq could not encode the merged status — this session gets none; run \`bash ${here}/session-start.sh\` to see why"

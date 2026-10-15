@@ -31,6 +31,11 @@
 #                                   never claims "latest"; native mode updates.
 #  14. Child deadline env      -> each child sees its own deadline as
 #                                   SESSION_START_CHILD_DEADLINE_SEC.
+#  15. Status vs guide          -> a non-status context (the beans guide) listed
+#                                   before a status never enters the status
+#                                   block: statuses come first, the guide
+#                                   follows under its own not-a-status header,
+#                                   in both native and portable shape.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -43,6 +48,9 @@ unset TEST_SUMMARY_TOKEN
 
 die() { echo "fatal: $*" >&2; exit 2; }
 cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; return 0; }
+
+#: The aggregator's header line opening each non-status context.
+GUIDE_HEADER_PREFIX="Agent context, not a session-start status — do not relay it to the user"
 
 FAIL=0; PASS=0
 pass() { PASS=$((PASS+1)); }
@@ -96,9 +104,9 @@ main() {
   # 2. The native entry keeps the session's environment.
   mk_case c2
   # shellcheck disable=SC2016 # expands inside the generated child, not here
-  child env.sh 'jq -n --arg c "herdr=${HERDR_ENV-unset} mode=${SESSION_START_MODE-unset}" '"'"'{additionalContext: $c}'"'"
+  child env.sh 'jq -n --arg c "Session-start status — herdr=${HERDR_ENV-unset} mode=${SESSION_START_MODE-unset}" '"'"'{additionalContext: $c}'"'"
   run SESSION_START_HOOKS="env.sh" HERDR_ENV=1
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "herdr=1 mode=native"' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "Session-start status — herdr=1 mode=native"' >/dev/null 2>&1; then
     pass; else fail "native env: expected HERDR_ENV and native mode, got RC=$RC OUT=$OUT"; fi
 
   # 3. Under tessl for claude-code the native entry already ran: silent, no child.
@@ -111,9 +119,9 @@ main() {
   # 4. Under tessl for another agent: consensus payload, portable mode.
   mk_case c4
   # shellcheck disable=SC2016 # expands inside the generated child, not here
-  child env.sh 'jq -n --arg c "mode=${SESSION_START_MODE-unset}" '"'"'{additionalContext: $c}'"'"
+  child env.sh 'jq -n --arg c "Session-start status — mode=${SESSION_START_MODE-unset}" '"'"'{additionalContext: $c}'"'"
   run SESSION_START_HOOKS="env.sh" TESSL_AGENT=cursor
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext == "mode=portable" and (has("hookSpecificOutput") | not)' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext == "Session-start status — mode=portable" and (has("hookSpecificOutput") | not)' >/dev/null 2>&1; then
     pass; else fail "portable: expected consensus payload in portable mode, got RC=$RC OUT=$OUT"; fi
 
   # 5. A failing child is reported, never dropped.
@@ -140,11 +148,11 @@ main() {
 
   # 8. The list file sets the order; a missing list is a status, not silence.
   mk_case c8
-  ctx_child one.sh "1"
-  ctx_child two.sh "2"
+  ctx_child one.sh "Session-start status — 1"
+  ctx_child two.sh "Session-start status — 2"
   printf 'two.sh\n\none.sh\n' > "$CASE/session-start-hooks.txt" || die "c8 list write failed"
   run
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "2\n\n1"' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "Session-start status — 2\n\nSession-start status — 1"' >/dev/null 2>&1; then
     pass; else fail "list file: expected list order 2 then 1, got RC=$RC OUT=$OUT"; fi
   rm "$CASE/session-start-hooks.txt" || die "c8 list remove failed"
   run
@@ -217,10 +225,31 @@ main() {
   # 14. The child's deadline is exported to it.
   mk_case c14
   # shellcheck disable=SC2016 # expands inside the generated child, not here
-  child dl.sh 'jq -n --arg c "deadline=${SESSION_START_CHILD_DEADLINE_SEC-unset}" '"'"'{additionalContext: $c}'"'"
+  child dl.sh 'jq -n --arg c "Session-start status — deadline=${SESSION_START_CHILD_DEADLINE_SEC-unset}" '"'"'{additionalContext: $c}'"'"
   run SESSION_START_HOOKS="dl.sh" SESSION_START_CHILD_BUDGET_SEC=7
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "deadline=7"' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "Session-start status — deadline=7"' >/dev/null 2>&1; then
     pass; else fail "child deadline env: expected deadline=7, got RC=$RC OUT=$OUT"; fi
+
+  # 15. The beans guide is agent context, not a status: it must sit after
+  # every status, under a header that ends the relayable block.
+  mk_case c15
+  ctx_child guide.sh "BEANS-GUIDE line one
+BEANS-GUIDE line two"
+  ctx_child st.sh "Session-start status — git: in sync"
+  local mode15 path15
+  for mode15 in native portable; do
+    if [[ "$mode15" == native ]]; then
+      run SESSION_START_HOOKS="guide.sh st.sh"; path15='.hookSpecificOutput.additionalContext'
+    else
+      run SESSION_START_HOOKS="guide.sh st.sh" TESSL_AGENT=cursor; path15='.additionalContext'
+    fi
+    if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e --arg h "$GUIDE_HEADER_PREFIX" "$path15"' as $c
+        | ($c | index($h)) as $at
+        | $at != null
+        and ($c[:$at] | test("^Session-start status — git: in sync")) and ($c[:$at] | test("BEANS") | not)
+        and ($c[$at:] | test("guide.sh") and test("BEANS-GUIDE line one\nBEANS-GUIDE line two"))' >/dev/null 2>&1; then
+      pass; else fail "status vs guide ($mode15): expected statuses first and the guide under its own header, got RC=$RC OUT=$OUT"; fi
+  done
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"
