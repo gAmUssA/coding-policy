@@ -67,11 +67,19 @@ main() {
     *) echo "check-conflict-markers: git grep failed (exit ${rc}) in ${repo} — rerun it by hand to see git's error" >&2; return 2 ;;
   esac
 
-  # Each hit is "<path>NUL<line>NUL<text>\n"; the text keeps any later NUL.
+  # Each hit is "<path>NUL<line>NUL<text>\n". A path can hold a newline but
+  # never a NUL, and the text holds neither (-I skips binary files), so the
+  # stream splits on NUL first: tokens alternate path-or-(text\npath) with line
+  # numbers, and only the text that follows a line number is cut at its first
+  # newline. Splitting on newline first would tear a newline-bearing path.
   local json
   json=$(jq -R -s -c '
-    [split("\n")[] | select(length > 0) | split("\u0000")
-     | {path: .[0], line: (.[1] | tonumber), text: (.[2:] | join("\u0000"))}]
+    split("\u0000") as $t
+    | if ($t | length) % 2 != 1 or ($t[-1] | endswith("\n") | not) then error("unexpected git grep output") else . end
+    | [range(0; (($t | length) - 1) / 2) as $i
+       | {path: (if $i == 0 then $t[0] else ($t[2 * $i] | split("\n")[1:] | join("\n")) end),
+          line: ($t[2 * $i + 1] | tonumber),
+          text: ($t[2 * $i + 2] | split("\n")[0])}]
     | {clean: false, markers: .}' "$HITS_FILE") \
     || { echo "check-conflict-markers: could not parse git grep's output — rerun 'git grep -n -E \"${MARKER_RE}\"' by hand" >&2; return 2; }
   printf '%s\n' "$json"

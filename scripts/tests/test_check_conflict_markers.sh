@@ -13,6 +13,7 @@
 #   5. marker in an untracked file                  -> exit 0 (tracked files only)
 #   6. marker in a binary file                      -> exit 0 (binary skipped)
 #   7. path with a space                            -> reported intact
+#   7b. path with a newline                         -> reported intact, exit 1
 #   8. not a git checkout                           -> exit 2, empty stdout
 #   9. this repository                              -> exit 0
 #
@@ -106,6 +107,15 @@ main() {
   run "$TMP/7"
   if [[ $RC -eq 1 ]] && jq -e '.markers[0].path == "my dir/n.md" and .markers[0].line == 1' <<<"$OUT" >/dev/null; then pass
   else fail "space path: RC=$RC OUT=$OUT ERR=$ERR"; fi
+
+  # 7b. path with a newline: git grep -z keeps it inside the NUL-delimited
+  # path field, so it must not split the record. The newline path is the
+  # second hit, so it follows another hit's text in the stream.
+  repo "$TMP/7b"; printf 'clean\n%s HEAD\n' "$LT" > "$TMP/7b/0.md"; printf '%s here\n' "$GT" > "$TMP/7b/a"$'\n'"b.md"; track "$TMP/7b"
+  run "$TMP/7b"
+  if [[ $RC -eq 1 ]] && jq -e --arg p $'a\nb.md' --arg t "$GT here" --arg t0 "$LT HEAD" \
+       '.markers == [{"path":"0.md","line":2,"text":$t0},{"path":$p,"line":1,"text":$t}]' <<<"$OUT" >/dev/null; then pass
+  else fail "newline path: RC=$RC OUT=$OUT ERR=$ERR"; fi
 
   # 8. not a git checkout
   mkdir -p "$TMP/8"
