@@ -1,0 +1,18 @@
+{
+  "pr_number": 47,
+  "owner": "gamussa",
+  "repo": "my-tessl-plugin",
+  "branch": "feat/add-validation-hook",
+  "base_branch": "main",
+  "title": "feat(validation): add pre-publish validation hook",
+  "status": "ready",
+  "result": "ready",
+  "tessl_workspace": "gamussa",
+  "tessl_plugin": "my-tessl-plugin",
+  "notes": [
+    "Previous review cycle: github-actions[bot] posted CHANGES_REQUESTED on the first review pass.",
+    "After fixes were pushed, the bot re-reviewed as COMMENT (HTTP 422 prevents APPROVE).",
+    "The stale CHANGES_REQUESTED from the earlier cycle is still present and blocking merge.",
+    "This repo publishes to the Tessl registry on merge."
+  ]
+}

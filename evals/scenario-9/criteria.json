@@ -1,0 +1,51 @@
+{
+  "context": "Tests whether the agent applies the herdr-teamlead release gate (skills/herdr-teamlead/references/round-flow.md Release Gate and Reading a Report; SKILL.md Step 10) without the task listing its conditions or pointing at the traps: read every report in full and catch the ## BLOCKED section under a developer report that otherwise reads finished, fail the gate on the push made after the Mode B and Mode C reports, keep the reviewer's advisory non-blocking (rules/review-severity.md), and require fresh reviewer and tester passes on the new tip.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "BLOCKED section identified",
+      "description": "gate-decision.md identifies the `## BLOCKED` section at the end of reports/developer.md (the unresolved auth-core / cryptography version conflict). Source: skills/herdr-teamlead/SKILL.md Step 10 'A ## BLOCKED section can sit under a report that otherwise reads as finished'; round-flow.md Reading a Report",
+      "max_score": 15
+    },
+    {
+      "name": "Developer report does not clear the gate",
+      "description": "gate-decision.md does not let the developer report clear the gate on the strength of its summary: it either marks the developer-report condition FAIL, or marks that condition (branch and SHA named) PASS while recording the unresolved BLOCKED section as a separate item that blocks release. Source: round-flow.md Release Gate condition 1 and Reading a Report 'A ## BLOCKED section \u2014 the worker stopped on something it could not decide'",
+      "max_score": 15
+    },
+    {
+      "name": "Condition 4 fails",
+      "description": "gate-decision.md marks the 'nothing pushed after the reviewer and tester reports' condition FAIL, because the branch was pushed after both reports were filed. Source: round-flow.md Release Gate condition 4 'Nothing has been pushed to the branch after those two reports'",
+      "max_score": 15
+    },
+    {
+      "name": "Post-review push identified",
+      "description": "gate-decision.md identifies the push from abc1234 to def5678 (2026-10-11 14:09 UTC) as the one made after the reviewer and tester reports",
+      "max_score": 10
+    },
+    {
+      "name": "Advisory not a blocker",
+      "description": "gate-decision.md does NOT treat the reviewer's advisory finding (the `refresh_token()` docstring wording) as a blocking finding or a reason the gate fails. A documentation-only fix changes no behavior, so it is advisory. Source: rules/review-severity.md 'Advisory \u2014 Never Gates' and its two-tier test (blocking = the fix changes behavior)",
+      "max_score": 10
+    },
+    {
+      "name": "Reviewer report assessed",
+      "description": "gate-decision.md recognizes that the Mode B reviewer report covers SHA abc1234 with no blocking finding. Either reading is accepted: PASS for abc1234, or stale/FAIL because the tip moved to def5678. Failing it over the advisory is not accepted. Source: round-flow.md Release Gate condition 2; 'A newer push invalidates both'",
+      "max_score": 10
+    },
+    {
+      "name": "Tester report assessed",
+      "description": "gate-decision.md recognizes that the Mode C tester report ran the gates and met every acceptance criterion at SHA abc1234. Either reading is accepted: PASS for abc1234, or stale/FAIL because the tip moved to def5678. Source: round-flow.md Release Gate condition 3; 'A newer push invalidates both'",
+      "max_score": 10
+    },
+    {
+      "name": "Overall verdict: not ready",
+      "description": "gate-decision.md's overall verdict is that the branch is NOT ready for release",
+      "max_score": 10
+    },
+    {
+      "name": "Re-verification on the new tip",
+      "description": "The verdict names fresh broad reviewer (Mode B) and tester (Mode C) passes against def5678 (the current tip) as required before release. Source: round-flow.md 'A newer push invalidates both: re-run Phase 2 against the new tip'; SKILL.md Step 10 'obtain broad independent reviewer and tester passes against the current pushed tip before release'",
+      "max_score": 5
+    }
+  ]
+}

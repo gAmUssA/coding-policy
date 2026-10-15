@@ -2,7 +2,8 @@
   "include": [
     "scripts",
     "skills",
-    "hooks"
+    "hooks",
+    "evals"
   ],
   "exclude": [
     "**/node_modules",

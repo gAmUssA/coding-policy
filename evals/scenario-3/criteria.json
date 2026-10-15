@@ -1,0 +1,56 @@
+{
+  "context": "Tests whether the agent reads every review thread in full, correctly applies review severity rules (policy reviewer blocking vs. Copilot always advisory), uses the exact required reply literals for each category, defers the advisory findings rather than fixing them immediately, and notes that Copilot must be re-requested after any push.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Policy reviewer thread addressed",
+      "description": "response-plan.md includes a section or entry covering the github-actions[bot] review body (the input-sanitization finding)",
+      "max_score": 8
+    },
+    {
+      "name": "Copilot inline #1 addressed",
+      "description": "response-plan.md includes a section or entry covering the Copilot inline comment on line 84 (input validation)",
+      "max_score": 8
+    },
+    {
+      "name": "Copilot inline #2 addressed",
+      "description": "response-plan.md includes a section or entry covering the Copilot inline comment on line 92 (docstring)",
+      "max_score": 8
+    },
+    {
+      "name": "Policy finding classified blocking",
+      "description": "The policy reviewer's finding is classified as blocking in response-plan.md",
+      "max_score": 10
+    },
+    {
+      "name": "Copilot findings classified advisory",
+      "description": "Both Copilot inline comments are classified as advisory (not blocking) in response-plan.md \u2014 Copilot findings are always advisory regardless of Copilot's review state",
+      "max_score": 10
+    },
+    {
+      "name": "Blocking reply literal used",
+      "description": "response-plan.md states the reply text for the policy reviewer's blocking finding opens with exactly 'Fixed in <sha>' (or the literal text 'Fixed in' followed by a SHA placeholder)",
+      "max_score": 14
+    },
+    {
+      "name": "Advisory reply literal matches disposition",
+      "description": "Every advisory thread's planned reply opens with the literal skills/release/SKILL.md Step 6 prescribes for its disposition: 'Acknowledged \u2014 deferred to <follow-up ref>' for a deferred advisory, or 'Fixed in <sha>' for one folded into the blocking round. Score 0 if any advisory reply uses neither literal, or the literal contradicts the disposition the plan states.",
+      "max_score": 14
+    },
+    {
+      "name": "Advisory folded or deferred",
+      "description": "response-plan.md gives every Copilot advisory finding one of the two dispositions rules/review-severity.md allows: folded into the push already fixing the blocking finding (a blocking round is open), or deferred to a named follow-up issue or PR referenced from this PR. Score 0 if any advisory gets its own dedicated fix push, or is left without a disposition.",
+      "max_score": 10
+    },
+    {
+      "name": "No dedicated advisory round",
+      "description": "response-plan.md does NOT propose a separate re-review round or dedicated push solely for the advisory finding(s)",
+      "max_score": 8
+    },
+    {
+      "name": "Copilot re-request mentioned",
+      "description": "response-plan.md mentions that Copilot must be re-requested after pushing fixes (e.g. via request-copilot-review.sh or equivalent) because it does not re-post automatically",
+      "max_score": 10
+    }
+  ]
+}

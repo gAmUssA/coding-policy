@@ -1,0 +1,40 @@
+{
+  "pr": {
+    "number": 47,
+    "title": "feat(auth): add token expiry refresh on session restore",
+    "head_sha": "a1b2c3d",
+    "base": "main",
+    "url": "https://github.com/acme-corp/auth-service/pull/47"
+  },
+  "watch": {
+    "result": "changes_requested",
+    "policy_reviewer": {
+      "actor": "github-actions[bot]",
+      "state": "CHANGES_REQUESTED",
+      "submitted_at": "2026-10-14T11:18:04Z",
+      "body": "Policy review complete.\n\n## Findings\n\n### Missing input sanitization on `session_token` parameter\n\n`rules/no-secrets.md` requires that tokens sourced from user-supplied input are sanitized before storage. The `restore_session()` handler at `src/auth/session.py:84` assigns `session_token = request.params['token']` directly to the session store without any validation or sanitization. This allows a caller to inject arbitrary data into the session store.\n\n**Fix required before merge.**"
+    },
+    "copilot": {
+      "actor": "Copilot",
+      "state": "CHANGES_REQUESTED",
+      "submitted_at": "2026-10-14T11:21:33Z",
+      "body": "Copilot review complete. Two findings below.",
+      "inline_comments": [
+        {
+          "id": 881,
+          "path": "src/auth/session.py",
+          "line": 84,
+          "body": "**Security: Missing input validation**\n\nThe `session_token` value from `request.params` is used directly without validation. Consider whitelisting allowed characters (e.g., alphanumeric plus `-_`) and enforcing a maximum length before any downstream use.",
+          "submitted_at": "2026-10-14T11:21:33Z"
+        },
+        {
+          "id": 882,
+          "path": "src/auth/session.py",
+          "line": 92,
+          "body": "**Style: Missing docstring on `restore_session()`**\n\nThe function has no docstring. Consider adding one describing parameters, return value, and raised exceptions to aid future maintainers.",
+          "submitted_at": "2026-10-14T11:21:40Z"
+        }
+      ]
+    }
+  }
+}

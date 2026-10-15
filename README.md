@@ -113,3 +113,14 @@ bash scripts/check-changelog-fragment.sh origin/main
 ```
 
 On merge, `.github/workflows/publish.yml` runs `scripts/assemble-release.sh` to assign the version and write the CHANGELOG entry, commits it to `main` as `chore(release): <version>` through `scripts/push-release.sh`, and publishes. A merge with no fragment assigns no version and publishes only a version whose earlier publish failed. Re-running a publish run whose publish step failed publishes the version it already committed. The decision is recorded in [ADR 0003](docs/adr/0003-version-on-merge.md).
+
+### Evals
+
+`evals/` holds Tessl eval scenarios that compare an agent with this plugin against a baseline without it. Two scenarios hand the agent a git repository; their histories are stored as `git fast-export` streams listed in `evals/git-fixtures.tsv`. Rebuild them before a run:
+
+```
+bash scripts/eval-fixtures.sh import
+tessl eval run .   # add --model <id> on a paid Tessl plan
+```
+
+After changing a fixture's history, run `bash scripts/eval-fixtures.sh export` and remove the fixture's `.git` before staging it, or git records the directory as an empty submodule link.

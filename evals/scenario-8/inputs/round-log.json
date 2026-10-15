@@ -1,0 +1,26 @@
+{
+  "round": 3,
+  "base_sha": "a1b2c3d",
+  "head_sha": null,
+  "assignments": [
+    {
+      "worker": "bob",
+      "role": "developer",
+      "task": "implement auth middleware",
+      "status": "working",
+      "dispatched_at": "2026-10-14T09:15:00Z",
+      "done": "Scaffolded the auth middleware module and wrote unit tests for token validation",
+      "plan": "Wire middleware into the request pipeline and add integration tests"
+    },
+    {
+      "worker": "charlie",
+      "role": "developer",
+      "task": "migrate database schema",
+      "status": "blocked",
+      "dispatched_at": "2026-10-14T08:00:00Z",
+      "done": "Wrote migration script for users table",
+      "plan": "Run migration once database access is restored",
+      "blocked_reason": "Waiting on DBA to grant write access to staging database"
+    }
+  ]
+}

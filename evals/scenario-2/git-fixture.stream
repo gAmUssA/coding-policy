@@ -1,0 +1,639 @@
+blob
+mark :1
+data 851
+name: Publish Plugin
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    name: Assemble and Publish
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for pending fragments
+        id: check
+        run: |
+          COUNT=$(ls changelog.d/*.md 2>/dev/null | grep -v 'README.md' | wc -l || echo 0)
+          echo "fragment_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble release
+        if: steps.check.outputs.fragment_count != '0'
+        run: bash scripts/assemble-release.sh
+
+      - name: Publish plugin
+        if: steps.check.outputs.fragment_count != '0'
+        run: tessl plugin publish
+        env:
+          TESSL_TOKEN: ${{ secrets.TESSL_TOKEN }}
+
+blob
+mark :2
+data 830
+# Changelog
+
+## 1.4.2 — 2026-09-15
+
+### Fixed
+- Corrected an edge case in pre-commit hook when staged files include symlinks
+
+## 1.4.1 — 2026-08-30
+
+### Fixed
+- Resolved a false positive in the dependency version checker
+
+## 1.4.0 — 2026-08-12
+
+### Added
+- New `code-review` skill for automated diff analysis
+- Support for monorepo layouts in `release` skill
+
+### Changed
+- `testing-standards.md` updated with stricter coverage thresholds
+
+## 1.3.0 — 2026-07-01
+
+### Added
+- `dependency-management.md` rule for pinning third-party packages
+
+## 1.2.0 — 2026-06-10
+
+### Added
+- `error-handling.md` rule covering retry and fallback patterns
+
+## 1.1.0 — 2026-05-20
+
+### Added
+- Initial `release` skill for structured PR-based shipping
+
+## 1.0.0 — 2026-04-01
+
+### Added
+- Initial plugin release with core rules and hooks
+
+blob
+mark :3
+data 1066
+# Changelog Fragments
+
+This directory holds unreleased changelog fragments. Each fragment is a Markdown file with YAML front matter.
+
+## Format
+
+```markdown
+---
+bump: patch | minor | major
+---
+
+### Added
+- Short description of what was added
+
+### Changed
+- Short description of what changed
+
+### Fixed
+- Short description of what was fixed
+
+### Removed
+- Short description of what was removed
+```
+
+## Rules
+
+- `bump` is required in the front matter: `patch` for fixes and rule tightening, `minor` for a new rule/skill/hook or process change, `major` for a removed or contract-breaking change.
+- The body must contain one or more `### <Section>` headings (Added, Changed, Fixed, Removed, etc.) with `- ` bullet items.
+- Do **not** add `## <version>` headings here — the publish workflow writes those on merge.
+- Do **not** edit `plugin.json` version — the publish workflow bumps it on merge.
+- Fragment filename: use a short descriptive name (e.g., `add-audit-skill.md`).
+- The publish workflow assembles all fragments from this directory when merging to `main`.
+
+blob
+mark :4
+data 549
+{
+  "name": "acme/dev-toolkit",
+  "version": "1.4.2",
+  "description": "A developer toolkit plugin providing coding standards, review automation, and workflow utilities for the Acme engineering platform.",
+  "rules": [
+    "rules/commit-conventions.md",
+    "rules/code-formatting.md",
+    "rules/testing-standards.md",
+    "rules/dependency-management.md",
+    "rules/error-handling.md"
+  ],
+  "skills": [
+    "skills/release/SKILL.md",
+    "skills/code-review/SKILL.md"
+  ],
+  "hooks": [
+    "hooks/pre-commit.sh",
+    "hooks/post-merge.sh"
+  ]
+}
+
+blob
+mark :5
+data 689
+#!/usr/bin/env bash
+# assemble-release.sh
+#
+# Called by the publish workflow on push to main.
+# - Reads all changelog.d/<name>.md fragments (excluding README.md)
+# - Determines the highest bump level (major > minor > patch)
+# - Bumps plugin.json version accordingly
+# - Prepends a ## <version> — <date> heading to CHANGELOG.md with merged fragment bodies
+# - Deletes the assembled fragments
+# - Commits the result as chore(release): <version>
+#
+# This script runs in CI. Do NOT run it manually during development.
+# To record a release entry, add a fragment to changelog.d/ instead.
+
+set -euo pipefail
+echo "This script is run by CI on merge to main. Do not invoke manually." >&2
+exit 0
+
+blob
+mark :6
+data 3894
+#!/usr/bin/env bash
+# check-changelog-fragment.sh <base-ref>
+#
+# Validates that:
+#   1. At least one changelog.d/<name>.md fragment was added in this branch (vs base)
+#   2. The fragment has valid `bump:` front matter (patch|minor|major)
+#   3. The fragment has at least one ### <Section> heading with bullets
+#   4. plugin.json version was NOT edited
+#   5. No ## <version> heading was added to CHANGELOG.md
+#
+# Exit 0 = green (all checks pass)
+# Exit 1 = red (one or more checks failed)
+
+set -euo pipefail
+
+BASE="${1:-origin/main}"
+PASS=true
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "Checking changelog fragment vs $BASE ..."
+
+# Get list of changed files
+CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+
+# Check 1: At least one changelog.d/<name>.md added (not README.md)
+FRAGMENTS=$(echo "$CHANGED" | grep -E '^changelog\.d/[^/]+\.md$' | grep -v '^changelog\.d/README\.md$' || true)
+
+if [ -z "$FRAGMENTS" ]; then
+    echo -e "${RED}✗ FAIL${NC}: No changelog fragment found in changelog.d/ (expected changelog.d/<name>.md)"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: Fragment(s) found: $FRAGMENTS"
+
+    # Check 2 & 3: Validate each fragment
+    while IFS= read -r frag; do
+        if [ ! -f "$frag" ]; then
+            echo -e "${RED}✗ FAIL${NC}: Fragment listed in diff but file not found: $frag"
+            PASS=false
+            continue
+        fi
+
+        # Check bump front matter
+        BUMP=$(grep -m1 '^bump:' "$frag" | sed 's/bump:[[:space:]]*//' | tr -d '[:space:]' || true)
+        if [[ "$BUMP" != "patch" && "$BUMP" != "minor" && "$BUMP" != "major" ]]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: missing or invalid 'bump:' front matter (got: '$BUMP', expected: patch|minor|major)"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: bump=$BUMP"
+        fi
+
+        # Check ### Section headings
+        SECTIONS=$(grep -c '^### ' "$frag" || true)
+        if [ "$SECTIONS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no '### <Section>' headings found"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $SECTIONS section heading(s)"
+        fi
+
+        # Check for bullet items
+        BULLETS=$(grep -c '^- ' "$frag" || true)
+        if [ "$BULLETS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no bullet items under section headings"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $BULLETS bullet(s)"
+        fi
+    done <<< "$FRAGMENTS"
+fi
+
+# Check 4: plugin.json version not edited
+PLUGIN_CHANGED=$(echo "$CHANGED" | grep '^plugin\.json$' || true)
+if [ -n "$PLUGIN_CHANGED" ]; then
+    VERSION_DIFF=$(git diff "$BASE"...HEAD -- plugin.json 2>/dev/null | grep '^[+-].*"version"' || true)
+    if [ -n "$VERSION_DIFF" ]; then
+        echo -e "${RED}✗ FAIL${NC}: plugin.json 'version' was edited — the publish workflow assigns it on merge"
+        echo "$VERSION_DIFF"
+        PASS=false
+    else
+        echo -e "${GREEN}✓ PASS${NC}: plugin.json touched but version field unchanged"
+    fi
+else
+    echo -e "${GREEN}✓ PASS${NC}: plugin.json version not edited"
+fi
+
+# Check 5: No ## <version> heading added to CHANGELOG.md
+CHANGELOG_DIFF=$(git diff "$BASE"...HEAD -- CHANGELOG.md 2>/dev/null | grep '^+## [0-9]' || true)
+if [ -n "$CHANGELOG_DIFF" ]; then
+    echo -e "${RED}✗ FAIL${NC}: A '## <version>' heading was added to CHANGELOG.md — the publish workflow writes version headings on merge"
+    echo "$CHANGELOG_DIFF"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: No version heading added to CHANGELOG.md"
+fi
+
+echo ""
+if [ "$PASS" = true ]; then
+    echo -e "${GREEN}All checks passed.${NC}"
+    exit 0
+else
+    echo -e "${RED}One or more checks failed.${NC}"
+    exit 1
+fi
+
+reset refs/heads/feature/add-env-linting-skill
+commit refs/heads/feature/add-env-linting-skill
+mark :7
+author Dev <dev@acme.example> 1791981197 +0000
+committer Dev <dev@acme.example> 1791981197 +0000
+data 38
+chore: initial plugin state at v1.4.2
+M 100644 :1 .github/workflows/publish.yml
+M 100644 :2 CHANGELOG.md
+M 100644 :3 changelog.d/README.md
+M 100644 :4 plugin.json
+M 100644 :5 scripts/assemble-release.sh
+M 100644 :6 scripts/check-changelog-fragment.sh
+
+blob
+mark :8
+data 1481
+---
+name: env-linting
+description: >
+  Checks environment variable declarations across the codebase for consistency:
+  ensures all variables referenced in code are declared in .env.example, all
+  declared variables follow SCREAMING_SNAKE_CASE, and no secret patterns appear
+  in committed files. Use when auditing environment configuration or adding new
+  environment variables.
+---
+
+# Environment Linting Skill
+
+## Step 1 — Scan for Variable References
+
+Run the scanner to identify every environment variable accessed in source files:
+
+```bash
+bash skills/env-linting/scan-env-refs.sh
+```
+
+This produces `env-refs.json` listing each variable name and the files that reference it.
+
+## Step 2 — Validate Against .env.example
+
+Compare the scanned references against declared variables in `.env.example`:
+
+```bash
+bash skills/env-linting/validate-env-declarations.sh env-refs.json
+```
+
+Undeclared variables are reported as findings. Add missing declarations to `.env.example` with a one-line purpose comment.
+
+## Step 3 — Check Naming Conventions
+
+All environment variable names must follow SCREAMING_SNAKE_CASE. The scanner flags deviations automatically. Rename any non-conforming variables and update all references.
+
+## Step 4 — Secret Pattern Scan
+
+Run the secret pattern scan to ensure no tokens, passwords, or keys appear in committed files:
+
+```bash
+bash skills/env-linting/scan-secrets.sh
+```
+
+Exit 0 means clean. Exit 1 lists each finding with file and line number.
+
+commit refs/heads/feature/add-env-linting-skill
+mark :9
+author Dev <dev@acme.example> 1791981208 +0000
+committer Dev <dev@acme.example> 1791981208 +0000
+data 75
+feat(env-linting): add env-linting skill for environment variable auditing
+from :7
+M 100644 :8 skills/env-linting/SKILL.md
+
+blob
+mark :10
+data 145
+# changelog.d
+
+Pending release notes for the next version. `scripts/assemble-release.sh` folds them into the release when a PR merges to `main`.
+
+blob
+mark :11
+data 195
+#!/usr/bin/env bash
+# assemble-release.sh — run by the publish workflow on push to main.
+
+set -euo pipefail
+echo "This script is run by CI on merge to main. Do not invoke manually." >&2
+exit 0
+
+blob
+mark :12
+data 3546
+#!/usr/bin/env bash
+# check-changelog-fragment.sh <base-ref> — release-readiness gate CI runs on every PR.
+# Exit 0 = green, exit 1 = red.
+
+set -euo pipefail
+
+BASE="${1:-origin/main}"
+PASS=true
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "Checking changelog fragment vs $BASE ..."
+
+# Get list of changed files
+CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+
+# Check 1: At least one changelog.d/<name>.md added (not README.md)
+FRAGMENTS=$(echo "$CHANGED" | grep -E '^changelog\.d/[^/]+\.md$' | grep -v '^changelog\.d/README\.md$' || true)
+
+if [ -z "$FRAGMENTS" ]; then
+    echo -e "${RED}✗ FAIL${NC}: No changelog fragment found in changelog.d/ (expected changelog.d/<name>.md)"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: Fragment(s) found: $FRAGMENTS"
+
+    # Check 2 & 3: Validate each fragment
+    while IFS= read -r frag; do
+        if [ ! -f "$frag" ]; then
+            echo -e "${RED}✗ FAIL${NC}: Fragment listed in diff but file not found: $frag"
+            PASS=false
+            continue
+        fi
+
+        # Check bump front matter
+        BUMP=$(grep -m1 '^bump:' "$frag" | sed 's/bump:[[:space:]]*//' | tr -d '[:space:]' || true)
+        if [[ "$BUMP" != "patch" && "$BUMP" != "minor" && "$BUMP" != "major" ]]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: missing or invalid 'bump:' front matter (got: '$BUMP', expected: patch|minor|major)"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: bump=$BUMP"
+        fi
+
+        # Check ### Section headings
+        SECTIONS=$(grep -c '^### ' "$frag" || true)
+        if [ "$SECTIONS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no '### <Section>' headings found"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $SECTIONS section heading(s)"
+        fi
+
+        # Check for bullet items
+        BULLETS=$(grep -c '^- ' "$frag" || true)
+        if [ "$BULLETS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no bullet items under section headings"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $BULLETS bullet(s)"
+        fi
+    done <<< "$FRAGMENTS"
+fi
+
+# Check 4: plugin.json version not edited
+PLUGIN_CHANGED=$(echo "$CHANGED" | grep '^plugin\.json$' || true)
+if [ -n "$PLUGIN_CHANGED" ]; then
+    VERSION_DIFF=$(git diff "$BASE"...HEAD -- plugin.json 2>/dev/null | grep '^[+-].*"version"' || true)
+    if [ -n "$VERSION_DIFF" ]; then
+        echo -e "${RED}✗ FAIL${NC}: plugin.json 'version' was edited — the publish workflow assigns it on merge"
+        echo "$VERSION_DIFF"
+        PASS=false
+    else
+        echo -e "${GREEN}✓ PASS${NC}: plugin.json touched but version field unchanged"
+    fi
+else
+    echo -e "${GREEN}✓ PASS${NC}: plugin.json version not edited"
+fi
+
+# Check 5: No ## <version> heading added to CHANGELOG.md
+CHANGELOG_DIFF=$(git diff "$BASE"...HEAD -- CHANGELOG.md 2>/dev/null | grep '^+## [0-9]' || true)
+if [ -n "$CHANGELOG_DIFF" ]; then
+    echo -e "${RED}✗ FAIL${NC}: A '## <version>' heading was added to CHANGELOG.md — the publish workflow writes version headings on merge"
+    echo "$CHANGELOG_DIFF"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: No version heading added to CHANGELOG.md"
+fi
+
+echo ""
+if [ "$PASS" = true ]; then
+    echo -e "${GREEN}All checks passed.${NC}"
+    exit 0
+else
+    echo -e "${RED}One or more checks failed.${NC}"
+    exit 1
+fi
+
+commit refs/heads/feature/add-env-linting-skill
+mark :13
+author Dev <dev@acme.example> 1791981200 +0000
+committer Dev <dev@acme.example> 1791981200 +0000
+data 52
+docs: shorten changelog.d README and script headers
+from :7
+M 100644 :10 changelog.d/README.md
+M 100644 :11 scripts/assemble-release.sh
+M 100644 :12 scripts/check-changelog-fragment.sh
+
+commit refs/heads/feature/add-env-linting-skill
+mark :14
+author Dev <dev@acme.example> 1791981210 +0000
+committer Dev <dev@acme.example> 1791981210 +0000
+data 55
+Merge branch 'main' into feature/add-env-linting-skill
+from :9
+merge :13
+M 100644 :10 changelog.d/README.md
+M 100644 :11 scripts/assemble-release.sh
+M 100644 :12 scripts/check-changelog-fragment.sh
+
+blob
+mark :15
+data 4572
+#!/usr/bin/env bash
+# check-changelog-fragment.sh <base-ref> — release-readiness gate CI runs on every PR.
+# Exit 0 = green, exit 1 = red, exit 2 = the gate could not decide (bad base ref, git or grep failure).
+
+set -euo pipefail
+
+BASE="${1:-origin/main}"
+PASS=true
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+# matching <ERE>: stdin lines matching the pattern. No match is an empty
+# result; a grep failure (exit 2) stops the gate instead of reading as PASS.
+matching() {
+    local rc=0
+    grep -E -- "$1" || rc=$?
+    if (( rc > 1 )); then
+        echo "error: grep failed (exit $rc) — the gate cannot decide; re-run" >&2
+        exit 2
+    fi
+}
+
+# not_matching <ERE>: stdin lines NOT matching the pattern, same exit handling.
+not_matching() {
+    local rc=0
+    grep -E -v -- "$1" || rc=$?
+    if (( rc > 1 )); then
+        echo "error: grep failed (exit $rc) — the gate cannot decide; re-run" >&2
+        exit 2
+    fi
+}
+
+# diff_of <args...>: git diff from the merge base, or a stop with what to do.
+diff_of() {
+    git diff "$BASE"...HEAD "$@" \
+        || { echo "error: git diff against '$BASE' failed — fetch the base ref (git fetch origin) or pass an existing one" >&2; exit 2; }
+}
+
+echo "Checking changelog fragment vs $BASE ..."
+
+if ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
+    echo "error: base ref '$BASE' does not exist — pass the branch the PR targets, e.g. main" >&2
+    exit 2
+fi
+
+# Get list of changed files
+CHANGED=$(diff_of --name-only)
+
+# Check 1: At least one changelog.d/<name>.md added (not README.md)
+FRAGMENTS=$(printf '%s\n' "$CHANGED" | matching '^changelog\.d/[^/]+\.md$' | not_matching '^changelog\.d/README\.md$')
+
+if [ -z "$FRAGMENTS" ]; then
+    echo -e "${RED}✗ FAIL${NC}: No changelog fragment found in changelog.d/ (expected changelog.d/<name>.md)"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: Fragment(s) found: $FRAGMENTS"
+
+    # Check 2 & 3: Validate each fragment
+    while IFS= read -r frag; do
+        if [ ! -f "$frag" ]; then
+            echo -e "${RED}✗ FAIL${NC}: Fragment listed in diff but file not found: $frag"
+            PASS=false
+            continue
+        fi
+
+        # Check bump front matter
+        BUMP=$(matching '^bump:' < "$frag" | head -n1 | sed 's/bump:[[:space:]]*//' | tr -d '[:space:]')
+        if [[ "$BUMP" != "patch" && "$BUMP" != "minor" && "$BUMP" != "major" ]]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: missing or invalid 'bump:' front matter (got: '$BUMP', expected: patch|minor|major)"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: bump=$BUMP"
+        fi
+
+        # Check ### Section headings
+        SECTIONS=$(matching '^### ' < "$frag" | wc -l | tr -d ' ')
+        if [ "$SECTIONS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no '### <Section>' headings found"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $SECTIONS section heading(s)"
+        fi
+
+        # Check for bullet items
+        BULLETS=$(matching '^- ' < "$frag" | wc -l | tr -d ' ')
+        if [ "$BULLETS" -lt 1 ]; then
+            echo -e "${RED}✗ FAIL${NC}: $frag: no bullet items under section headings"
+            PASS=false
+        else
+            echo -e "${GREEN}✓ PASS${NC}: $frag: $BULLETS bullet(s)"
+        fi
+    done <<< "$FRAGMENTS"
+fi
+
+# Check 4: plugin.json version not edited
+PLUGIN_CHANGED=$(printf '%s\n' "$CHANGED" | matching '^plugin\.json$')
+if [ -n "$PLUGIN_CHANGED" ]; then
+    VERSION_DIFF=$(diff_of -- plugin.json | matching '^[+-].*"version"')
+    if [ -n "$VERSION_DIFF" ]; then
+        echo -e "${RED}✗ FAIL${NC}: plugin.json 'version' was edited — the publish workflow assigns it on merge"
+        echo "$VERSION_DIFF"
+        PASS=false
+    else
+        echo -e "${GREEN}✓ PASS${NC}: plugin.json touched but version field unchanged"
+    fi
+else
+    echo -e "${GREEN}✓ PASS${NC}: plugin.json version not edited"
+fi
+
+# Check 5: No ## <version> heading added to CHANGELOG.md
+CHANGELOG_DIFF=$(diff_of -- CHANGELOG.md | matching '^\+## [0-9]')
+if [ -n "$CHANGELOG_DIFF" ]; then
+    echo -e "${RED}✗ FAIL${NC}: A '## <version>' heading was added to CHANGELOG.md — the publish workflow writes version headings on merge"
+    echo "$CHANGELOG_DIFF"
+    PASS=false
+else
+    echo -e "${GREEN}✓ PASS${NC}: No version heading added to CHANGELOG.md"
+fi
+
+echo ""
+if [ "$PASS" = true ]; then
+    echo -e "${GREEN}All checks passed.${NC}"
+    exit 0
+else
+    echo -e "${RED}One or more checks failed.${NC}"
+    exit 1
+fi
+
+commit refs/heads/main
+mark :16
+author Fixture <fixture@example.com> 1790856000 +0000
+committer Fixture <fixture@example.com> 1790856000 +0000
+data 70
+fix(ci): handle git and grep failures in the fragment gate explicitly
+from :13
+M 100644 :15 scripts/check-changelog-fragment.sh
+
+commit refs/heads/feature/add-env-linting-skill
+mark :17
+author Fixture <fixture@example.com> 1790856000 +0000
+committer Fixture <fixture@example.com> 1790856000 +0000
+data 55
+Merge branch 'main' into feature/add-env-linting-skill
+from :14
+merge :16
+M 100644 :15 scripts/check-changelog-fragment.sh
+

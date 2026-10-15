@@ -1,0 +1,66 @@
+{
+  "context": "Tests whether the agent writes the trigger declaration that skills/herdr-teamlead/references/specialists.md 'Declare this repo's trigger surfaces' and skills/herdr-teamlead/teamlead/triggers.py load_declaration prescribe, without the task naming the file, the fields or the glob semantics: .herdr/triggers.json with exactly the seven fields, single-segment package_roots globs, subtree globs for the other path fields, and argparse markers.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "File location",
+      "description": "The declaration is written to `.herdr/triggers.json` (not `triggers.json`, `.herdr/triggers.yml`, or another path) and parses as valid JSON. Source: specialists.md '`teamlead detect-triggers` classifies a diff against `.herdr/triggers.json`'; triggers.py DECLARATION_FILE",
+      "max_score": 8
+    },
+    {
+      "name": "schema_version present",
+      "description": "The JSON contains `schema_version` set to the integer `1`. Source: specialists.md example; triggers.py refuses any other schema_version",
+      "max_score": 8
+    },
+    {
+      "name": "package_roots present",
+      "description": "The JSON contains a `package_roots` field that is a non-empty array of strings. Source: specialists.md example",
+      "max_score": 6
+    },
+    {
+      "name": "package_roots single-segment glob",
+      "description": "`package_roots` uses `plugins/*` (single-segment wildcard), not `plugins/**`, `plugins/**/*`, or a list of nested paths. Source: specialists.md 'A package root is a directory rather than a subtree, so * matches within one path segment there'",
+      "max_score": 12
+    },
+    {
+      "name": "scripts in package_roots",
+      "description": "`package_roots` includes `\"scripts\"` as a literal directory entry. Source: the task's statement that scripts/ is its own unit of ownership, declared the way specialists.md's example declares `\"scripts\"`",
+      "max_score": 8
+    },
+    {
+      "name": "package_change_lines present",
+      "description": "The JSON contains `package_change_lines` as a positive JSON integer (not a string). Source: specialists.md 'package_change_lines is the size a changed package must exceed to trigger the architect'; triggers.py 'needs a positive package_change_lines'",
+      "max_score": 6
+    },
+    {
+      "name": "trust_boundary_paths covers workflows",
+      "description": "`trust_boundary_paths` includes an entry covering `.github/workflows/` files, such as `.github/workflows/*`. Source: specialists.md example and its trust-boundary trigger row",
+      "max_score": 10
+    },
+    {
+      "name": "cli_spec_paths covers cli dir",
+      "description": "`cli_spec_paths` includes an entry covering the Python files under `cli/`, including `cli/commands/`, such as `cli/*.py`, `cli/*` or `cli/**/*.py` (subtree globs: `*` spans separators). Source: specialists.md 'trust_boundary_paths, cli_spec_paths and user_doc_paths are subtree globs, where * does span path separators'",
+      "max_score": 10
+    },
+    {
+      "name": "cli_surface_markers present",
+      "description": "`cli_surface_markers` is a non-empty array of literal substrings containing at least one argparse marker such as `\"add_parser(\"` or `\"add_argument(\"`. Source: specialists.md 'cli_surface_markers are literal substrings that an added line inside a CLI spec path must carry to count as a new command or flag'",
+      "max_score": 10
+    },
+    {
+      "name": "user_doc_paths covers docs dir",
+      "description": "`user_doc_paths` includes an entry covering files under `docs/`, such as `docs/*`. Source: specialists.md '`docs/*` covers everything under `docs`'",
+      "max_score": 8
+    },
+    {
+      "name": "No omitted fields",
+      "description": "All seven fields are present: `schema_version`, `package_roots`, `package_change_lines`, `trust_boundary_paths`, `cli_spec_paths`, `cli_surface_markers`, `user_doc_paths`. Source: specialists.md 'Every field is required; an absent or incomplete declaration is refused'",
+      "max_score": 8
+    },
+    {
+      "name": "No extra fields",
+      "description": "The JSON object has no keys beyond those seven (no comments, descriptions, or extra settings). Source: triggers.py load_declaration refuses unless set(payload) equals the seven declaration fields ('requires exactly ...')",
+      "max_score": 6
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "context": "Tests whether the agent onboards a consumer repo the way skills/onboard-repo/SKILL.md prescribes, without the task naming any of it: scripts run from the plugin mount, tessl-hygiene.sh after tessl install, the CODEX_AUTH_JSON secret set with gh and documented in .env.example (rules/no-secrets.md), and the branch, commit message and staged files from Step 5.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Plugin mount path",
+      "description": "onboarding-plan.md runs the onboarding scripts from the plugin mount `.tessl/plugins/gamussa/coding-policy/` (or a script path beneath it, e.g. `.tessl/plugins/gamussa/coding-policy/skills/onboard-repo/scaffold.sh`). Source: skills/onboard-repo/SKILL.md 'Scripts run from the plugin mount inside the consumer'",
+      "max_score": 12
+    },
+    {
+      "name": "tessl-hygiene.sh step",
+      "description": "onboarding-plan.md includes a step that runs tessl-hygiene.sh after `tessl install gamussa/coding-policy`. Source: skills/onboard-repo/SKILL.md Step 2",
+      "max_score": 12
+    },
+    {
+      "name": "Correct branch name",
+      "description": "onboarding-plan.md uses the branch name `chore/onboard-coding-policy` (exact string). Source: skills/onboard-repo/SKILL.md Step 5 'Branch: chore/onboard-coding-policy (install)'",
+      "max_score": 12
+    },
+    {
+      "name": "Correct commit message",
+      "description": "onboarding-plan.md uses the commit message `ci(review): add gamussa/coding-policy PR review setup` (exact string). Source: skills/onboard-repo/SKILL.md Step 5",
+      "max_score": 12
+    },
+    {
+      "name": "Files to stage",
+      "description": "onboarding-plan.md stages all four in one commit: tessl.json, .gitignore, .env.example, and the scaffolded .github/ files. Source: skills/onboard-repo/SKILL.md Step 5 'One commit staging tessl.json, .gitignore, .env.example, and the scaffolded .github/ files'",
+      "max_score": 10
+    },
+    {
+      "name": "CODEX_AUTH_JSON secret command",
+      "description": "onboarding-plan.md includes `gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json` (or the same command with an explicit `--repo acme-org/acme-payments`). Source: skills/onboard-repo/SKILL.md Step 4",
+      "max_score": 12
+    },
+    {
+      "name": "CODEX_AUTH_JSON in .env.example",
+      "description": "repo/.env.example exists and contains a line starting with `CODEX_AUTH_JSON=` whose value is a placeholder, never a real credential. Source: skills/onboard-repo/SKILL.md Step 4 'add a CODEX_AUTH_JSON= entry ... to .env.example (create the file if absent)'; rules/no-secrets.md",
+      "max_score": 10
+    },
+    {
+      "name": "Purpose description in .env.example",
+      "description": "repo/.env.example explains in a comment what CODEX_AUTH_JSON is for (the Codex credential the PR review workflow authenticates with) and where its value comes from. Source: skills/onboard-repo/SKILL.md Step 4 'with a one-line purpose'; rules/no-secrets.md 'Document what each variable is for and where to get the value'",
+      "max_score": 10
+    },
+    {
+      "name": "Secrets settings URL in .env.example",
+      "description": "repo/.env.example includes `https://github.com/acme-org/acme-payments/settings/secrets/actions`. Source: skills/onboard-repo/SKILL.md Step 4 'the repo's https://github.com/<owner>/<repo>/settings/secrets/actions link'; rules/no-secrets.md 'include a deep link to the platform's secrets configuration page'",
+      "max_score": 10
+    }
+  ]
+}

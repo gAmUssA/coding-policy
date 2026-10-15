@@ -1,0 +1,46 @@
+{
+  "context": "Tests whether the agent records a release entry the coding-policy way in an assign-on-merge repo (changelog.d/ plus a publish workflow that assembles it). The task names none of the convention; it comes only from rules/context-artifacts.md Versioning and CHANGELOG and skills/release/SKILL.md Step 3 (Assign-on-merge) and Step 1 (the fragment check). Expected: a changelog.d/<name>.md fragment whose front matter holds only `bump: minor`, a body of `### <Section>` headings with `- ` bullets, no manifest version edit, no CHANGELOG version heading, and the fragment checker run green.",
+  "type": "weighted_checklist",
+  "checklist": [
+    {
+      "name": "Fragment file created",
+      "description": "A new .md file exists under changelog.d/ (other than README.md). Source: rules/context-artifacts.md 'Every PR that changes shipped content ... adds a fragment changelog.d/<name>.md'; skills/release/SKILL.md Step 3 Assign-on-merge 'Add changelog.d/<name>.md'",
+      "max_score": 10
+    },
+    {
+      "name": "Front matter holds only bump",
+      "description": "The fragment opens with a YAML front matter block that carries a 'bump:' key and no other key. Source: rules/context-artifacts.md 'A fragment's front matter holds only bump'",
+      "max_score": 10
+    },
+    {
+      "name": "bump level is minor",
+      "description": "The fragment's bump value is 'minor'. Source: rules/context-artifacts.md 'minor for a new rule/skill/hook or a process change'; skills/release/SKILL.md Step 3 'minor for a new rule/skill/hook'",
+      "max_score": 15
+    },
+    {
+      "name": "Section heading present",
+      "description": "The fragment body contains at least one '### <Section>' heading (e.g. '### Added') and no '#' or '##' heading. Source: rules/context-artifacts.md 'A fragment's body is one or more ### <Section> headings, each with - bullets'",
+      "max_score": 10
+    },
+    {
+      "name": "Bullet items under heading",
+      "description": "Each '### <Section>' heading in the fragment is followed by at least one '- ' bullet describing the new env-linting skill. Source: rules/context-artifacts.md 'each with - bullets'",
+      "max_score": 10
+    },
+    {
+      "name": "plugin.json version unchanged",
+      "description": "The 'version' field in plugin.json still reads '1.4.2'. Source: rules/context-artifacts.md 'A PR never edits a manifest version'; skills/release/SKILL.md Step 3 'Never edit a manifest version'",
+      "max_score": 15
+    },
+    {
+      "name": "No version heading in CHANGELOG",
+      "description": "CHANGELOG.md has no new '## <number>' heading. Source: rules/context-artifacts.md 'never adds a ## <version> heading to CHANGELOG.md'; skills/release/SKILL.md Step 3 'Never ... add a ## <version> CHANGELOG heading'",
+      "max_score": 15
+    },
+    {
+      "name": "Fragment checker run green",
+      "description": "validation-result.txt exists and holds the output of scripts/check-changelog-fragment.sh (any base ref, e.g. main or origin/main) showing every check passing ('All checks passed.'). Output of a different or hand-written check does not count. Source: skills/release/SKILL.md Step 1 'run bash scripts/check-changelog-fragment.sh origin/main on the committed branch' and Step 3 'must exit 0'; rules/context-artifacts.md 'scripts/check-changelog-fragment.sh fails the PR on a missing or malformed fragment'",
+      "max_score": 15
+    }
+  ]
+}

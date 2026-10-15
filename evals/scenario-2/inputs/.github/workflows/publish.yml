@@ -1,0 +1,33 @@
+name: Publish Plugin
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  publish:
+    name: Assemble and Publish
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for pending fragments
+        id: check
+        run: |
+          COUNT=$(ls changelog.d/*.md 2>/dev/null | grep -v 'README.md' | wc -l || echo 0)
+          echo "fragment_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble release
+        if: steps.check.outputs.fragment_count != '0'
+        run: bash scripts/assemble-release.sh
+
+      - name: Publish plugin
+        if: steps.check.outputs.fragment_count != '0'
+        run: tessl plugin publish
+        env:
+          TESSL_TOKEN: ${{ secrets.TESSL_TOKEN }}
