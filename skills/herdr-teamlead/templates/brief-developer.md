@@ -59,8 +59,7 @@ the implementation and push stages below apply only to authorized code changes.
   reformatting of code you did not need to touch.
 - Tests ship with the code, in the same commit series — deterministic, asserting
   outcomes.
-- One logical change per commit. Imperative subject line under 72 characters, a
-  body saying why.
+- Commits follow `rules/commit-conventions.md`.
 - Run the repository's configured gates from inside the worktree. Green before
   you push.
 
@@ -83,7 +82,10 @@ Write `{{REPORT}}` covering:
 
 - What you implemented and why, decision by decision.
 - The branch name and every commit SHA.
-- Gate output — the command you ran and its summary line.
+- For an implementation task, a `## Gates` section: one line per gate, the
+  real exit code of its final run, `unknown` if it never finished. The lead's
+  `check-gates` refuses a missing line or a non-zero exit as not done:
+  `- <name> exit=<code> cmd=<exact command>`
 - Anything you chose not to do, and why.
 - Open questions for the reviewer.
 - For a bug, the reproduction, working comparison, causal explanation,

@@ -973,6 +973,21 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(UsageError, "artifact changed"):
             validate_work(self.store, self.history, TASK, 7, "plan-1", WORK)
 
+    def test_approved_review_requires_green_gate_lines(self):
+        self.approve()
+        self.finish(6)
+        data = {"dispatch": "fix-6", "head_revision": HEAD, "verdict": "approved", "review_mode": "full",
+                "reviewer": "independent-reviewer", "report": str(self.review), "changed_paths": ["src/parser.py"]}
+        reviewed = "Reviewed head: " + HEAD + "\nNo blocking findings.\n\n## Gates\n\n"
+        for gates in ("", "- tests exit=1 cmd=bash scripts/run-tests.sh\n", "- tests exit=unknown cmd=bash scripts/run-tests.sh\n"):
+            with self.subTest(gates=gates):
+                self.review.write_text(reviewed + gates)
+                with self.assertRaisesRegex(UsageError, "green `## Gates`"):
+                    record_report(self.store, data, AT)
+                self.assertIsNone(_dispatch(self.store, "fix-6").get("report"))
+        self.review.write_text(reviewed + "- tests exit=0 cmd=bash scripts/run-tests.sh\n")
+        self.assertEqual(record_report(self.store, data, AT)["verdict"], "approved")
+
     def test_future_or_corrupt_recovery_records_preserve_disk_and_refuse_history(self):
         self.approve()
         self.finish(6)
