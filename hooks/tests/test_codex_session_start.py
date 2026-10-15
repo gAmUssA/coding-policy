@@ -40,7 +40,7 @@ class CodexSessionStart(unittest.TestCase):
                     {
                         "hooks": [
                             {
-                                "args": ["${TESSL_PLUGIN_DIR}/hooks/check.sh"],
+                                "args": ["${TESSL_PLUGIN_DIR}/hooks/session-start.sh"],
                             }
                         ]
                     }
@@ -48,6 +48,7 @@ class CodexSessionStart(unittest.TestCase):
             },
         }
         self.write_manifest()
+        (self.root / "hooks/session-start-hooks.txt").write_text("check.sh\n")
         (self.root / "rules/always.md").write_text(
             "---\nalwaysApply: true\n---\n# Always\n"
         )
@@ -114,7 +115,16 @@ class CodexSessionStart(unittest.TestCase):
     def test_undeclared_hook_is_not_executed(self):
         result = self.run_hook("../check.sh")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("manifest-declared", result.stderr)
+        self.assertIn("session-start-hooks.txt", result.stderr)
+
+    def test_manifest_entry_outside_the_list_is_not_executed(self):
+        (self.root / "hooks/session-start.sh").write_text(
+            "touch \"$TESSL_PLUGIN_DIR/ran\"\n"
+        )
+        result = self.run_hook("session-start.sh")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("session-start-hooks.txt", result.stderr)
+        self.assertFalse((self.root / "ran").exists())
 
     def test_tessl_context_and_stdin_are_preserved(self):
         (self.root / "hooks/check.sh").write_text(
@@ -170,14 +180,16 @@ class CodexSessionStart(unittest.TestCase):
         (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
         adapter = self.load_adapter()
         communicate = subprocess.Popen[str].communicate
+        calls: list[float | None] = []
 
         def time_out(
             process: subprocess.Popen[str],
             input: str | None = None,
             timeout: float | None = None,
         ) -> tuple[str, str]:
-            if timeout is not None:
-                raise subprocess.TimeoutExpired(process.args, timeout)
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
             # Bound cleanup in the test, so a regression fails instead of hanging.
             return communicate(process, input=input, timeout=5)
 
@@ -191,6 +203,98 @@ class CodexSessionStart(unittest.TestCase):
             self.assertEqual(adapter.main(), 1)
         self.assertIn("timed out", errors.getvalue())
 
+    def test_timeout_survives_eperm_from_an_unsignalable_group(self):
+        # macOS answers EPERM to killpg while the group's members cannot take a
+        # signal yet. The first group signal is refused that way; the adapter
+        # still reports the timeout and leaves no member of the group behind.
+        (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
+        adapter = self.load_adapter()
+        killpg = os.killpg
+        groups: list[int] = []
+
+        def refuse_once(pgid: int, sig: int) -> None:
+            groups.append(pgid)
+            if len(groups) == 1:
+                raise PermissionError(1, "Operation not permitted")
+            killpg(pgid, sig)
+
+        communicate = subprocess.Popen[str].communicate
+        calls: list[float | None] = []
+
+        def time_out(
+            process: subprocess.Popen[str],
+            input: str | None = None,
+            timeout: float | None = None,
+        ) -> tuple[str, str]:
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
+            return communicate(process, input=input, timeout=5)
+
+        errors = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["hook", "check.sh"]),
+            patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
+            patch.object(subprocess.Popen, "communicate", time_out),
+            patch.object(os, "killpg", refuse_once),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(adapter.main(), 1)
+        self.assertIn("timed out", errors.getvalue())
+        self.assertNotIn("Operation not permitted", errors.getvalue())
+        # No member left that still runs: zombies awaiting a reaper answer
+        # kill(0) on Linux and EPERM on macOS, so ask ps for their state.
+        table = subprocess.run(
+            ["ps", "-A", "-o", "pgid=,stat="],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        running = [
+            row for row in table.splitlines()
+            if row.split()[0] == str(groups[0]) and not row.split()[1].startswith("Z")
+        ]
+        self.assertEqual(running, [])
+
+    def test_timeout_reaps_a_nested_deadline_runners_group(self):
+        # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
+        # (patched to 1s) holds an 8s sleeper in the runner's separate process
+        # group. SIGKILL alone skips the runner's TERM trap, leaving the sleeper
+        # holding stdout. The sleeper writes a marker only if nothing killed it,
+        # so the outcome is checked, never elapsed time.
+        shutil.copy2(ROOT / "hooks/bounded-run.sh", self.root / "hooks/bounded-run.sh")
+        sleeper_pid = self.root / "sleeper.pid"
+        (self.root / "hooks/check.sh").write_text(
+            "set -euo pipefail\n"
+            'echo "${SESSION_START_CHILD_DEADLINE_SEC-unset}" > "$TESSL_PLUGIN_DIR/deadline"\n'
+            'bash "$TESSL_PLUGIN_DIR/hooks/bounded-run.sh" 30 '
+            "bash -c 'echo $$ > \"$1\"; sleep 8; touch \"$2\"' _ "
+            "\"$TESSL_PLUGIN_DIR/sleeper.pid\" \"$TESSL_PLUGIN_DIR/sleeper.done\"\n"
+        )
+        adapter = self.load_adapter()
+        errors = io.StringIO()
+        with (
+            patch.object(adapter, "HOOK_TIMEOUT_SECONDS", 1),
+            patch.object(sys, "argv", ["hook", "check.sh"]),
+            patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(adapter.main(), 1)
+        pid = int(sleeper_pid.read_text().strip())
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except (ProcessLookupError, PermissionError):
+            # Gone, or a zombie awaiting its reaper (macOS answers EPERM).
+            alive = False
+        if alive:
+            os.kill(pid, signal.SIGKILL)
+        self.assertFalse(
+            (self.root / "sleeper.done").exists(),
+            "adapter waited until the nested runner's sleeper finished",
+        )
+        self.assertFalse(alive, "the nested runner's sleeper survived the timeout")
+        self.assertIn("timed out", errors.getvalue())
+        self.assertEqual((self.root / "deadline").read_text().strip(), "1")
+
     def test_timeout_closes_a_real_descendants_output_pipe(self):
         # Trigger the timeout only after the grandchild reports readiness. Its
         # pipe reaches EOF only when both Bash and the descendant have exited.
@@ -202,13 +306,15 @@ class CodexSessionStart(unittest.TestCase):
         adapter = self.load_adapter()
         communicate = subprocess.Popen[str].communicate
         descendants: list[tuple[int, int]] = []
+        calls: list[float | None] = []
 
         def timeout_when_ready(
             process: subprocess.Popen[str],
             input: str | None = None,
             timeout: float | None = None,
         ) -> tuple[str, str]:
-            if timeout is not None:
+            calls.append(timeout)
+            if len(calls) == 1:
                 self.assertIsNotNone(process.stdout)
                 # assertIsNotNone above proved the pipe exists.
                 stdout = cast(IO[str], process.stdout)
@@ -218,7 +324,7 @@ class CodexSessionStart(unittest.TestCase):
                 )
                 pid = int(stdout.readline().strip())
                 descendants.append((pid, os.dup(stdout.fileno())))
-                raise subprocess.TimeoutExpired(process.args, timeout)
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
             # Bound cleanup in the test, so a regression fails instead of hanging.
             return communicate(process, input=input, timeout=5)
 
@@ -244,8 +350,9 @@ class CodexSessionStart(unittest.TestCase):
                 os.close(pipe)
                 try:
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    # Expected after successful process-group cleanup.
+                except (ProcessLookupError, PermissionError):
+                    # Expected after successful process-group cleanup; macOS
+                    # answers EPERM for a zombie awaiting its reaper.
                     continue
 
 
@@ -308,12 +415,12 @@ class CodexPackage(unittest.TestCase):
         ]
         self.assertIn('python3 "${PLUGIN_ROOT}/hooks/codex-session-start.py"', session)
         originals = [
-            Path(hook["args"][0]).name
-            for group in tessl["hooks"]["SessionStart"]
-            for hook in group["hooks"]
+            line.strip()
+            for line in (ROOT / "hooks/session-start-hooks.txt").read_text().splitlines()
+            if line.strip()
         ]
         self.assertEqual(
-            {command.rsplit(" ", 1)[-1] for command in session[1:]}, set(originals)
+            [command.rsplit(" ", 1)[-1] for command in session[1:]], originals
         )
         expected_stop = [
             hook["command"].replace("${TESSL_PLUGIN_DIR}", "${PLUGIN_ROOT}")

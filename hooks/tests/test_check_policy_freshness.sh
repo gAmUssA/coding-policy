@@ -10,6 +10,8 @@
 #   3. Throttle          -> with an injected fixed clock (FRESHNESS_NOW): a call
 #                           inside the window is silent (throttle skips the check
 #                           before any emit), a call past it fires again.
+#   3b. Per directory    -> a check in one directory never throttles another's;
+#                           the same directory inside the window stays silent.
 #   4. tessl missing     -> silent no-op, exit 0 (no crash).
 #   5. tessl errors      -> silent no-op, exit 0 (network/registry failure tolerated).
 #
@@ -49,9 +51,10 @@ pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
 
 # run <state-dir> [extra env assignments...] -> OUT, RC  (stub tessl on PATH)
+# RUN_CWD (optional) is the session directory the hook runs in.
 run() {
   local dir="$1"; shift
-  OUT="$(env "PATH=$STUBBIN:$PATH" FRESHNESS_STATE_DIR="$dir" "$@" bash "$SCRIPT" </dev/null 2>/dev/null)"
+  OUT="$(cd "${RUN_CWD:-.}" && env "PATH=$STUBBIN:$PATH" FRESHNESS_STATE_DIR="$dir" "$@" bash "$SCRIPT" </dev/null 2>/dev/null)"
   RC=$?
 }
 
@@ -72,11 +75,27 @@ if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Ses
 #    25h later (past the 24h window) fires again.
 d="$TMP/c3"
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1000000            # fires, stamps 1000000
-[[ -n "$OUT" ]] || fail "throttle setup: first call should have fired"
+# The throttle assertions below depend on this stamp: abort, never tally.
+[[ -n "$OUT" ]] || { echo "fatal: throttle setup: first call should have fired, got RC=$RC" >&2; exit 2; }
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1003600            # +1h, inside 24h window
 if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "throttle active: call inside window should be silent, got OUT=$OUT"; fi
 run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1090000            # +25h, past window
 if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext' >/dev/null 2>&1; then pass; else fail "throttle expired: call past window should fire, got OUT=$OUT"; fi
+
+
+# 3b. per-directory throttle: project A's check must not silence project B
+#     inside the window, while A itself stays throttled.
+d="$TMP/c3b"
+mkdir -p "$TMP/projA" "$TMP/projB" || { echo "fatal: mkdir projA/projB failed" >&2; exit 2; }
+RUN_CWD="$TMP/projA" run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1000000
+# The A-throttled assertion below depends on this stamp, so a missing first
+# fire aborts rather than tallies (aggregate-reporting carve-out).
+[[ -n "$OUT" ]] || { echo "fatal: per-directory setup: first call in A should have fired, got RC=$RC" >&2; exit 2; }
+RUN_CWD="$TMP/projB" run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1003600
+if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("0.3.139")' >/dev/null 2>&1; then
+  pass; else fail "per-directory: B inside A's window should still fire, got OUT=$OUT"; fi
+RUN_CWD="$TMP/projA" run "$d" STUB_JSON="$OUTDATED" FRESHNESS_NOW=1003600
+if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "per-directory: A inside its own window should be silent, got OUT=$OUT"; fi
 
 # 4. tessl missing -> silent no-op. Build a minimal PATH with symlinks to the
 #    tools the hook needs (jq present so it passes that check) but NO tessl, so

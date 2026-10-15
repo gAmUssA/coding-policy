@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Codex SessionStart adapter; no third-party dependencies.
 
-stdin: native SessionStart JSON. Optional argv: a manifest-declared hook filename.
+stdin: native SessionStart JSON. Optional argv: a hook filename listed in
+hooks/session-start-hooks.txt.
 stdout: native hookSpecificOutput with policy paths or translated hook context.
 exit: 0 on success/no-op, the child status on failure, 1 on invalid input or timeout.
 The no-argument mode only reads packaged files. Child hooks retain their documented
-side effects. On POSIX hosts, HOOK_TIMEOUT_SECONDS bounds the hook process group;
-timeout cleanup kills the group and drains its output. Errors go to stderr.
+side effects. On POSIX hosts, HOOK_TIMEOUT_SECONDS bounds the hook process group,
+and each child sees it as SESSION_START_CHILD_DEADLINE_SEC so its own deadlines
+nest inside it. Timeout cleanup sends the group SIGTERM, waits up to
+TERM_GRACE_SECONDS for every member (a hooks/bounded-run.sh inside reaps its own
+group on SIGTERM), sends SIGKILL to what is left, and drains the output for at
+most DRAIN_SECONDS. Errors go to stderr.
 """
 
 import json
@@ -14,11 +19,17 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK_TIMEOUT_SECONDS = 45
+# Longer than bounded-run.sh's TRAP_GRACE_SEC, so a runner inside the hook
+# finishes reaping its own process group before the SIGKILL.
+TERM_GRACE_SECONDS = 3
+DRAIN_SECONDS = 2
+POLL_SECONDS = 0.05
 
 
 def is_json_object(value: object) -> TypeGuard[dict[str, object]]:
@@ -73,6 +84,49 @@ def policy_context(manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def signal_group(pgid: int, sig: int) -> bool:
+    """Send sig to the group; False when no member is left.
+
+    macOS answers EPERM while the group's members exist but cannot take a
+    signal yet (a child still between fork and exec, or only zombies left):
+    the group still counts as present and the caller's poll retries.
+    """
+    try:
+        os.killpg(pgid, sig)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def group_alive(pgid: int) -> bool:
+    """True while any member of the group exists (signal 0 probes only)."""
+    return signal_group(pgid, 0)
+
+
+def stop_group(process: subprocess.Popen[str]) -> None:
+    """Stop a timed-out hook's whole process group and close its pipes."""
+    pgid = process.pid
+    if signal_group(pgid, signal.SIGTERM):
+        deadline = time.monotonic() + TERM_GRACE_SECONDS
+        while time.monotonic() < deadline:
+            process.poll()  # Reap the leader so only live members count.
+            if not group_alive(pgid):
+                break
+            time.sleep(POLL_SECONDS)
+        signal_group(pgid, signal.SIGKILL)
+    try:
+        process.communicate(timeout=DRAIN_SECONDS)
+    except subprocess.TimeoutExpired:
+        # A process that left the group still holds a pipe: stop waiting on it.
+        process.kill()
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+        process.wait()
+
+
 def run_hook(command: list[str], event_text: str) -> subprocess.CompletedProcess[str]:
     if os.name != "posix":
         raise ValueError("hook process groups require macOS, Linux, or WSL")
@@ -83,19 +137,18 @@ def run_hook(command: list[str], event_text: str) -> subprocess.CompletedProcess
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
-        env={**os.environ, "TESSL_PLUGIN_DIR": str(ROOT)},
+        env={
+            **os.environ,
+            "TESSL_PLUGIN_DIR": str(ROOT),
+            "SESSION_START_CHILD_DEADLINE_SEC": str(HOOK_TIMEOUT_SECONDS),
+        },
     ) as process:
         try:
             stdout, stderr = process.communicate(
                 input=event_text, timeout=HOOK_TIMEOUT_SECONDS
             )
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                # The whole group exited between the timeout and the signal.
-                process.wait()
-            process.communicate()
+            stop_group(process)
             raise
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
@@ -112,14 +165,15 @@ def main() -> int:
         if len(sys.argv) == 1:
             emit_context(policy_context(manifest))
             return 0
+        # The same list hooks/session-start.sh runs for Tessl-configured agents.
         allowed = {
-            Path(hook["args"][0]).name
-            for group in manifest["hooks"]["SessionStart"]
-            for hook in group["hooks"]
+            line.strip()
+            for line in (ROOT / "hooks/session-start-hooks.txt").read_text().splitlines()
+            if line.strip()
         }
         if len(sys.argv) != 2 or sys.argv[1] not in allowed:
             raise ValueError(
-                "expected one manifest-declared SessionStart hook filename"
+                "expected one SessionStart hook filename from hooks/session-start-hooks.txt"
             )
         result = run_hook(
             ["bash", str(bundled_path("hooks/" + sys.argv[1]))],
