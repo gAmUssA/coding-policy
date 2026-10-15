@@ -36,6 +36,9 @@
 #                                   block: statuses come first, the guide
 #                                   follows under its own not-a-status header,
 #                                   in both native and portable shape.
+#  16. Header contract          -> the agent-context header the aggregator emits
+#                                   appears verbatim, in backticks, in
+#                                   rules/hook-action-reporting.md and ADR 0006.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -250,6 +253,19 @@ BEANS-GUIDE line two"
         and ($c[$at:] | test("guide.sh") and test("BEANS-GUIDE line one\nBEANS-GUIDE line two"))' >/dev/null 2>&1; then
       pass; else fail "status vs guide ($mode15): expected statuses first and the guide under its own header, got RC=$RC OUT=$OUT"; fi
   done
+
+  # 16. The header the aggregator emits is the literal the rule and the ADR
+  # name, so an agent following the rule stops relaying exactly there.
+  mk_case c16
+  ctx_child guide.sh "guide text"
+  run SESSION_START_HOOKS="guide.sh"
+  local header16
+  header16="$(printf '%s' "$OUT" | jq -r '.hookSpecificOutput.additionalContext' | head -n 1)" || die "c16 could not read the emitted header"
+  header16="${header16% (from guide.sh):}"
+  if [[ -n "$header16" && "$header16" != *"(from"* ]] \
+     && grep -qF -- "\`${header16}\`" "$ROOT/rules/hook-action-reporting.md" \
+     && grep -qF -- "\`${header16} (from <hook>):\`" "$ROOT/docs/adr/0006-native-aggregating-session-start.md"; then
+    pass; else fail "header contract: emitted header '${header16}' is not the literal named in rules/hook-action-reporting.md and ADR 0006"; fi
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"
