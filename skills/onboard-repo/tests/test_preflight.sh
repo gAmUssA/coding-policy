@@ -69,7 +69,8 @@ main() {
   STUBBIN="$TMP/bin"; mkdir -p "$STUBBIN"
   cat > "$STUBBIN/gh" <<'STUB'
 #!/usr/bin/env bash
-if [[ "$1 $2" == "auth status" ]]; then [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1; exit 0; fi
+# Pinned to github.com, so GH_HOST can never redirect the auth check.
+if [[ "$1 $2" == "auth status" ]]; then [[ "$3 $4" == "--hostname github.com" ]] || exit 97; [[ -n "${STUB_GH_UNAUTH:-}" ]] && exit 1; exit 0; fi
 exit 0
 STUB
   chmod +x "$STUBBIN/gh" || die "could not make the gh stub executable at $STUBBIN/gh"

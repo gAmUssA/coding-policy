@@ -43,9 +43,9 @@ cleanup() {
 # Echo the JSON body of one gh api path, or return 2 with a diagnostic.
 api() { # <path>
   local rc=0 out
-  out="$("$GH_BIN" api "$1" 2>"$ERRFILE")" || rc=$?
+  out="$("$GH_BIN" api --hostname github.com "$1" 2>"$ERRFILE")" || rc=$?
   if (( rc != 0 )); then
-    warn "\`${GH_BIN} api $1\` failed (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — run \`${GH_BIN} auth status\` to check the session"
+    warn "\`${GH_BIN} api --hostname github.com $1\` failed (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — run \`${GH_BIN} auth status --hostname github.com\` to check the session"
     return 2
   fi
   printf '%s' "$out"
@@ -78,9 +78,9 @@ main() {
   # session exits 1 with the fix, instead of surfacing as exit 2 from the
   # first `gh api` call and reading as "GitHub could not answer".
   local auth_rc=0
-  "$GH_BIN" auth status >/dev/null 2>"$ERRFILE" || auth_rc=$?
+  "$GH_BIN" auth status --hostname github.com >/dev/null 2>"$ERRFILE" || auth_rc=$?
   if (( auth_rc != 0 )); then
-    warn "not logged in to GitHub (\`${GH_BIN} auth status\` exit ${auth_rc}): $(tr '\n' ' ' < "$ERRFILE") — run \`${GH_BIN} auth login\` and retry"
+    warn "not logged in to GitHub (\`${GH_BIN} auth status --hostname github.com\` exit ${auth_rc}): $(tr '\n' ' ' < "$ERRFILE") — run \`${GH_BIN} auth login --hostname github.com\` and retry"
     return 1
   fi
 
@@ -106,7 +106,7 @@ main() {
     elif .permissions.pull then "read"
     else "none" end')" || rc=$?
   if (( rc != 0 )) || [[ -z "$viewer_login" || -z "$owner_login" ]]; then
-    warn "could not read the login/permission fields from the GitHub payloads — run \`${GH_BIN} api repos/${slug}\` and inspect them"
+    warn "could not read the login/permission fields from the GitHub payloads — run \`${GH_BIN} api --hostname github.com repos/${slug}\` and inspect them"
     return 2
   fi
 
@@ -119,7 +119,7 @@ main() {
     # Org namespace: ownership means administering the org. A 404 here is the
     # documented "not a member" answer, not a failure.
     local role="" membership_rc=0
-    role="$("$GH_BIN" api "orgs/${owner_login}/memberships/${viewer_login}" --jq '.role // ""' 2>"$ERRFILE")" || membership_rc=$?
+    role="$("$GH_BIN" api --hostname github.com "orgs/${owner_login}/memberships/${viewer_login}" --jq '.role // ""' 2>"$ERRFILE")" || membership_rc=$?
     if (( membership_rc == 0 )) && [[ "$role" == "admin" ]]; then
       owner=true
     elif (( membership_rc != 0 )); then
@@ -131,7 +131,7 @@ main() {
       if grep -q '404' "$ERRFILE"; then
         : # not a member — not an owner, nothing to report
       else
-        warn "could not read org membership for ${viewer_login} in ${owner_login} (exit ${membership_rc}): $(tr '\n' ' ' < "$ERRFILE") — no verdict; check \`gh auth status\` and the network, then rerun"
+        warn "could not read org membership for ${viewer_login} in ${owner_login} (exit ${membership_rc}): $(tr '\n' ' ' < "$ERRFILE") — no verdict; check \`gh auth status --hostname github.com\` and the network, then rerun"
         return 2
       fi
     fi

@@ -42,7 +42,7 @@ submit_review() {
     attempt=$((attempt + 1))
     # Capture stderr (stdout discarded) so a non-retryable 422 can be told apart
     # from any other failure (which is retried).
-    if err=$(printf '%s' "$payload" | gh api "repos/${owner}/${repo}/pulls/${pr}/reviews" --method POST --input - 2>&1 1>/dev/null); then
+    if err=$(printf '%s' "$payload" | gh api --hostname github.com "repos/${owner}/${repo}/pulls/${pr}/reviews" --method POST --input - 2>&1 1>/dev/null); then
       return 0
     fi
     # HTTP 422 (unprocessable) is not transient — do not retry; let the caller fall back.

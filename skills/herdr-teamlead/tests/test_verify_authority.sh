@@ -43,11 +43,15 @@ mk_fake_gh() { # <path>
   cat > "$1" <<'FAKE' || die "could not write the fake gh"
 #!/usr/bin/env bash
 set -uo pipefail
+# Every call is pinned to github.com, so GH_HOST can never redirect it.
 if [[ "${1:-} ${2:-}" == "auth status" ]]; then
+  [[ "${3:-} ${4:-}" == "--hostname github.com" ]] || { echo "fake gh: auth status not pinned to github.com: $*" >&2; exit 97; }
   [[ -n "${FAKE_AUTH_ERR:-}" ]] && { printf 'You are not logged into any GitHub hosts.\n' >&2; exit 1; }
   printf 'Logged in to github.com\n'; exit 0
 fi
 [[ "${1:-}" == "api" ]] || { echo '{"error":"unsupported"}' >&2; exit 2; }
+[[ "${2:-} ${3:-}" == "--hostname github.com" ]] || { echo "fake gh: api call not pinned to github.com: $*" >&2; exit 97; }
+set -- "$1" "${@:4}"
 [[ -n "${FAKE_ARGV_FILE:-}" ]] && printf '%s\n' "$*" >> "$FAKE_ARGV_FILE"
 case "${2:-}" in
   user)

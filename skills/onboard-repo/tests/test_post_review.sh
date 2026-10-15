@@ -32,6 +32,8 @@ GH_CAPTURE=""
 MOCK_422_ON_APPROVE=0
 gh() {
   if [[ "${1:-}" == "api" && "$*" == */reviews* ]]; then
+    # Pinned to github.com, so GH_HOST can never redirect the review post.
+    [[ "${2:-} ${3:-}" == "--hostname github.com" ]] || { echo "mock gh: review post not pinned to github.com: $*" >&2; return 97; }
     local payload; payload=$(cat)
     printf '%s' "$payload" > "$GH_CAPTURE"
     local ev; ev=$(jq -r '.event' <<<"$payload")
