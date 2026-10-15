@@ -33,9 +33,9 @@
 #                       still ends the fetch ("not verified", exit 0) within the guard.
 #   1h. ssh deadline -> an ssh that connects and then hangs is killed at the
 #                       fetch deadline ("not verified", exit 0), with no timeout on PATH.
-#   1i. Nested deadline -> SESSION_START_CHILD_DEADLINE_SEC=3 caps a 60s
-#                       SYNC_FETCH_TIMEOUT, so the hung fetch ends inside the
-#                       hook's own deadline.
+#   1i. Nested deadline -> SESSION_START_CHILD_DEADLINE_SEC caps a 60s
+#                       SYNC_FETCH_TIMEOUT, so the hung fetch ends before the
+#                       watchdog (without the cap it would run 60s).
 #   2. Up to date    -> emits a marker "in sync" status, exit 0.
 #   3. Throttle      -> with a fixed injected clock: a call inside the window
 #                       skips the fetch and reports "not verified" (never a
@@ -70,9 +70,15 @@ cleanup() {
   return 0
 }
 
-#: Seconds the HTTP-stall case waits for the hook before killing it. The hook's
-#: own bound under test is SYNC_FETCH_TIMEOUT=2.
-STALL_GUARD_SEC=20
+#: Deadlines under test in the stall cases (1g, 1h, 1i): the fetch deadline,
+#: and the aggregator's child deadline that caps it.
+FETCH_DEADLINE_SEC=2
+CHILD_DEADLINE_SEC=3
+#: Upper bound, and the only elapsed-time check: the watchdog that ends a stall
+#: case whose hook never returns (testing-standards Determinism, elapsed-time
+#: carve-out: 4x the largest deadline under test plus fixed slack).
+GUARD_SLACK_SEC=8
+STALL_GUARD_SEC=$(( 4 * CHILD_DEADLINE_SEC + GUARD_SLACK_SEC ))
 
 g() { git "$@"; }
 
@@ -280,7 +286,7 @@ while True:
   for tool in bash git jq cksum cut mkdir date env dirname sleep; do
     ln -sf "$(command -v "$tool")" "$bin/$tool" || die "could not link $tool"
   done
-  ( cd "$TMP/r1g" && env SYNC_STATE_DIR="$TMP/s1g" SYNC_FETCH_TIMEOUT=2 PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1g.out" 2>/dev/null ) &
+  ( cd "$TMP/r1g" && env SYNC_STATE_DIR="$TMP/s1g" SYNC_FETCH_TIMEOUT="$FETCH_DEADLINE_SEC" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1g.out" 2>/dev/null ) &
   local hook_pid=$! done1g=0 rc1g=0
   for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
     if ! kill -0 "$hook_pid" 2>/dev/null; then done1g=1; break; fi
@@ -294,8 +300,15 @@ while True:
   if (( done1g )) && [[ $rc1g -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
     pass; else fail "http bound: expected the stalled fetch to end within ${STALL_GUARD_SEC}s as 'not verified' with exit 0, got done=$done1g rc=$rc1g OUT=$OUT"; fi
   kill "$STALL_PID" || echo "warn: could not stop the stall server $STALL_PID" >&2
-  wait "$STALL_PID"
+  local stall_rc=0
+  wait "$STALL_PID" || stall_rc=$?
   STALL_PID=""
+  # SIGTERM (143) is the expected end; SIGKILL (137) is tolerated. Anything
+  # else means the server died on its own and the case proved nothing.
+  case "$stall_rc" in
+    143|137) pass ;;
+    *) fail "stall server: expected termination by signal (143/137), got exit $stall_rc" ;;
+  esac
 
   # 1h. An ssh that connects and then never answers: ConnectTimeout cannot
   # help, so only the fetch deadline ends it. Same no-timeout PATH as 1g.
@@ -305,7 +318,7 @@ while True:
   # shellcheck disable=SC2016 # $$ and $0 belong to the generated script
   printf '#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 60\n' > "$TMP/hang-ssh" || die "write hang-ssh failed"
   chmod +x "$TMP/hang-ssh" || die "chmod hang-ssh failed"
-  ( cd "$TMP/r1h" && env SYNC_STATE_DIR="$TMP/s1h" SYNC_FETCH_TIMEOUT=2 GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1h.out" 2>/dev/null ) &
+  ( cd "$TMP/r1h" && env SYNC_STATE_DIR="$TMP/s1h" SYNC_FETCH_TIMEOUT="$FETCH_DEADLINE_SEC" GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1h.out" 2>/dev/null ) &
   hook_pid=$!; local done1h=0 rc1h=0
   for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
     if ! kill -0 "$hook_pid" 2>/dev/null; then done1h=1; break; fi
@@ -331,8 +344,8 @@ while True:
   clone_from "$BARE" "$TMP/r1i"
   g -C "$TMP/r1i" remote set-url origin "ssh://fake.invalid/repo.git" || die "r1i set-url failed"
   rm -f "$TMP/hang-ssh.pid" || die "could not reset hang-ssh.pid"
-  local t1i=$SECONDS rc1i=0
-  ( cd "$TMP/r1i" && env SYNC_STATE_DIR="$TMP/s1i" SYNC_FETCH_TIMEOUT=60 SESSION_START_CHILD_DEADLINE_SEC=3 GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1i.out" 2>/dev/null ) &
+  local rc1i=0
+  ( cd "$TMP/r1i" && env SYNC_STATE_DIR="$TMP/s1i" SYNC_FETCH_TIMEOUT=60 SESSION_START_CHILD_DEADLINE_SEC="$CHILD_DEADLINE_SEC" GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1i.out" 2>/dev/null ) &
   hook_pid=$!; local done1i=0
   for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
     if ! kill -0 "$hook_pid" 2>/dev/null; then done1i=1; break; fi
@@ -342,10 +355,9 @@ while True:
     kill "$hook_pid" || echo "warn: could not kill the stalled hook $hook_pid" >&2
   fi
   wait "$hook_pid" || rc1i=$?
-  local took1i=$(( SECONDS - t1i ))
   OUT="$(cat "$TMP/r1i.out")"
-  if (( done1i )) && [[ $rc1i -eq 0 ]] && (( took1i <= 6 )) && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
-    pass; else fail "nested deadline: expected the fetch capped below 3s and 'not verified' with exit 0, got done=$done1i rc=$rc1i took=${took1i}s OUT=$OUT"; fi
+  if (( done1i )) && [[ $rc1i -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
+    pass; else fail "nested deadline: expected the fetch capped below the ${CHILD_DEADLINE_SEC}s child deadline and 'not verified' with exit 0, got done=$done1i rc=$rc1i OUT=$OUT"; fi
   hang_pid=""
   [[ -r "$TMP/hang-ssh.pid" ]] && hang_pid="$(cat "$TMP/hang-ssh.pid")"
   if [[ -n "$hang_pid" ]] && kill -0 "$hang_pid" 2>/dev/null; then

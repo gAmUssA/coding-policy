@@ -208,18 +208,19 @@ class CodexSessionStart(unittest.TestCase):
         # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
         # (patched to 1s) holds an 8s sleeper in the runner's separate process
         # group. SIGKILL alone skips the runner's TERM trap, leaving the sleeper
-        # holding stdout; the adapter must return promptly with it dead.
+        # holding stdout. The sleeper writes a marker only if nothing killed it,
+        # so the outcome is checked, never elapsed time.
         shutil.copy2(ROOT / "hooks/bounded-run.sh", self.root / "hooks/bounded-run.sh")
         sleeper_pid = self.root / "sleeper.pid"
         (self.root / "hooks/check.sh").write_text(
             "set -euo pipefail\n"
             'echo "${SESSION_START_CHILD_DEADLINE_SEC-unset}" > "$TESSL_PLUGIN_DIR/deadline"\n'
             'bash "$TESSL_PLUGIN_DIR/hooks/bounded-run.sh" 30 '
-            "bash -c 'echo $$ > \"$1\"; exec sleep 8' _ \"$TESSL_PLUGIN_DIR/sleeper.pid\"\n"
+            "bash -c 'echo $$ > \"$1\"; sleep 8; touch \"$2\"' _ "
+            "\"$TESSL_PLUGIN_DIR/sleeper.pid\" \"$TESSL_PLUGIN_DIR/sleeper.done\"\n"
         )
         adapter = self.load_adapter()
         errors = io.StringIO()
-        started = time.monotonic()
         with (
             patch.object(adapter, "HOOK_TIMEOUT_SECONDS", 1),
             patch.object(sys, "argv", ["hook", "check.sh"]),
@@ -227,7 +228,6 @@ class CodexSessionStart(unittest.TestCase):
             redirect_stderr(errors),
         ):
             self.assertEqual(adapter.main(), 1)
-        elapsed = time.monotonic() - started
         pid = int(sleeper_pid.read_text().strip())
         try:
             os.kill(pid, 0)
@@ -236,7 +236,10 @@ class CodexSessionStart(unittest.TestCase):
             alive = False
         if alive:
             os.kill(pid, signal.SIGKILL)
-        self.assertLess(elapsed, 6, "adapter waited on the nested runner's sleeper")
+        self.assertFalse(
+            (self.root / "sleeper.done").exists(),
+            "adapter waited until the nested runner's sleeper finished",
+        )
         self.assertFalse(alive, "the nested runner's sleeper survived the timeout")
         self.assertIn("timed out", errors.getvalue())
         self.assertEqual((self.root / "deadline").read_text().strip(), "1")
