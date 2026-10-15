@@ -8,6 +8,8 @@ alwaysApply: true
 
 - Catch specific exception types, never bare catch-all handlers
 - Let unexpected exceptions propagate
+- A check that cannot reach a verdict reports unknown or fails, never pass
+- A missing or stale result reads as failure
 - Narrow exception for outer-boundary process contracts.
 - Applies when a process boundary's caller reads non-zero exit OR invalid stdout as a silent-failure signal (agent hooks, network-protocol stdout contracts, IPC handlers)
 - A propagating unexpected exception silently disables the contract
@@ -25,6 +27,7 @@ alwaysApply: true
 - Never suppress a failure — no `|| true`, no `|| :`, no `2>/dev/null` standing in for a handler
 - A command that can legitimately fail gets an explicit `if` or `case` on its exit code, never blanket suppression
 - Distinguish an expected non-result from a tool failure — `grep` exits 1 on no-match and 2 on error, and `|| true` collapses both, so an unreadable file or a bad regex reads as "nothing found"
+- Capture a command substitution's failure explicitly with `if` or `|| rc=$?` where its status matters
 - Silencing a tool's diagnostic while explicitly handling its failure is not suppression: `cmd 2>/dev/null || { echo "<actionable message>" >&2; exit 1; }` replaces a worse message with a better one
 - Fail visibly does not require exit non-zero — best-effort work that legitimately continues past a failure emits a warning to stderr, never nothing
 - An `EXIT` trap's final command status becomes the script's exit status — end cleanup handlers with `return 0` so cleanup never rewrites the outcome

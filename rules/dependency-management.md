@@ -16,6 +16,8 @@ alwaysApply: true
 - No undeclared dependencies — if your code imports it, the manifest or script metadata lists it
 - Pin versions or use a lock file to ensure reproducible builds
 - Lock files are committed to the repo
+- A lock file is one this repo's build, test, or CI reads
+- Per-machine installer state (`skills-lock.json`) is not a lock file and may be gitignored
 - Separate test/dev dependencies from production dependencies using the project's convention (`testImplementation`, `devDependencies`, `[dependency-groups]`)
 - Every dependency must be installable in CI — if something exists as a package, install it properly
 
