@@ -71,7 +71,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 
 | Hook | Event | Description |
 |------|-------|-------------|
-| [session-start](hooks/session-start.sh) | SessionStart (native for Claude Code, portable elsewhere) | The plugin's only Tessl-declared SessionStart hook. Runs every hook in [hooks/session-start-hooks.txt](hooks/session-start-hooks.txt) and delivers all their statuses in one payload; `tessl hook run` keeps only a group's last output and strips `HERDR_ENV`. The rows below are its children. |
+| [session-start](hooks/session-start.sh) | SessionStart (native for Claude Code, portable elsewhere) | The plugin's only Tessl-declared SessionStart hook. Runs every hook in [hooks/session-start-hooks.txt](hooks/session-start-hooks.txt) and delivers all their statuses in one payload. The rows below are its children. See [ADR 0006](docs/adr/0006-native-aggregating-session-start.md). |
 | [check-policy-freshness](hooks/check-policy-freshness.sh) | SessionStart | Warns (throttled once a day per session directory) when installed Tessl plugins, third-party pins included, are behind the registry. Informative only. |
 | [check-git-sync](hooks/check-git-sync.sh) | SessionStart | Fetches origin (throttled once an hour per repo, repo hooks off, time-bounded without `timeout`) and fast-forwards a clean checked-out default branch that is strictly behind; reports every other drift. A Herdr worker never fetches. Never blocks. |
 | [check-tessl-latest](hooks/check-tessl-latest.sh) | SessionStart | Runs `tessl update --yes` in a consumer with `gamussa/*` dependencies and reports each one's version transition; flags a `gamussa/*` pin that is not `latest`. Never blocks. |
