@@ -19,7 +19,8 @@
 #   6. Child prints non-JSON     -> its own status line; other statuses kept.
 #   7. Nothing to report         -> empty stdout, exit 0.
 #   8. Hook list file            -> read in order; a missing list is reported.
-#   9. No jq on PATH             -> python3 fallback still delivers the statuses.
+#   9. No jq on PATH             -> one fixed status naming the jq install step,
+#                                   in both native and portable shape.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -65,7 +66,6 @@ main() {
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   [[ -r "$SCRIPT" ]] || die "aggregator not found at $SCRIPT"
   command -v jq >/dev/null 2>&1 || die "jq required for these tests"
-  command -v python3 >/dev/null 2>&1 || die "python3 required for these tests"
   TMP="$(mktemp -d -t session-start-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
   unset TESSL_AGENT HERDR_ENV SESSION_START_MODE SESSION_START_HOOKS
@@ -138,19 +138,19 @@ main() {
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("could not read its hook list")' >/dev/null 2>&1; then
     pass; else fail "missing list: expected a status line, got RC=$RC OUT=$OUT"; fi
 
-  # 9. No jq on PATH: python3 parses and encodes.
+  # 9. No jq on PATH: the children still run; one fixed status names jq.
   mk_case c9
-  child py.sh "printf '%s\n' '{\"additionalContext\": \"from-child\"}'"
-  local bin="$TMP/c9-bin" tool
+  child mark.sh "touch '$TMP/c9-ran'"
+  local bin="$TMP/c9-bin"
   mkdir -p "$bin" || die "c9 bin mkdir failed"
-  for tool in bash python3 printf; do
-    if command -v "$tool" >/dev/null 2>&1 && [[ -x "$(command -v "$tool")" ]]; then
-      ln -sf "$(command -v "$tool")" "$bin/$tool" || die "c9 link $tool failed"
-    fi
-  done
-  run SESSION_START_HOOKS="py.sh" PATH="$bin"
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "from-child"' >/dev/null 2>&1; then
-    pass; else fail "python3 fallback: expected the status without jq, got RC=$RC OUT=$OUT"; fi
+  ln -sf "$(command -v bash)" "$bin/bash" || die "c9 link bash failed"
+  ln -sf "$(command -v touch)" "$bin/touch" || die "c9 link touch failed"
+  run SESSION_START_HOOKS="mark.sh" PATH="$bin"
+  if [[ $RC -eq 0 && -e "$TMP/c9-ran" ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("jq is not installed")' >/dev/null 2>&1; then
+    pass; else fail "no jq (native): expected the child to run and a jq status, got RC=$RC OUT=$OUT"; fi
+  run SESSION_START_HOOKS="mark.sh" PATH="$bin" TESSL_AGENT=cursor
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("jq is not installed")' >/dev/null 2>&1; then
+    pass; else fail "no jq (portable): expected a consensus jq status, got RC=$RC OUT=$OUT"; fi
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"

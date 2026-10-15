@@ -25,8 +25,8 @@
 #           to rerun it, never dropped.
 #   stderr: each child's stderr, passed through, plus this script's warnings.
 #   exit  : always 0 — a failed child is reported, never a failed session start.
-#   needs : jq or python3 to read and encode JSON (jq first). The children run
-#           either way; with neither, a warning says the statuses were lost.
+#   needs : jq to read and encode JSON. The children run either way; without
+#           jq the payload is one fixed status naming the install step.
 #   env   : SESSION_START_HOOKS (space-separated filenames; tests only) overrides
 #           hooks/session-start-hooks.txt.
 set -euo pipefail
@@ -38,59 +38,28 @@ warn() { printf 'session-start: %s\n' "$1" >&2; }
 NATIVE_AGENTS=(claude-code)
 
 # Print one child output's additionalContext. 0 = printed; 1 = the output is not
-# one object with a string additionalContext; 2 = no parser could answer. The
+# one object with a string additionalContext; 2 = jq itself failed. The
 # trailing "x" keeps a status's own trailing newlines through $(...).
 context_of() { # <output>
   local out rc=0
-  if command -v jq >/dev/null 2>&1; then
-    # `fromjson?` yields nothing for non-JSON, so -e exits 4: the expected
-    # non-result. Any other non-zero exit is jq itself failing.
-    out="$(jq -e -R -s -j 'fromjson? | select(type == "object" and (.additionalContext | type) == "string") | .additionalContext + "x"' <<<"$1")" || rc=$?
-    case "$rc" in
-      0) printf '%s' "${out%x}"; return 0 ;;
-      4) return 1 ;;
-    esac
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    rc=0
-    out="$(python3 -c '
-import json, sys
-try:
-    doc = json.loads(sys.argv[1])
-except ValueError:
-    sys.exit(3)
-ctx = doc.get("additionalContext") if isinstance(doc, dict) else None
-if not isinstance(ctx, str):
-    sys.exit(3)
-sys.stdout.write(ctx + "x")
-' "$1")" || rc=$?
-    case "$rc" in
-      0) printf '%s' "${out%x}"; return 0 ;;
-      3) return 1 ;;
-    esac
-  fi
+  # `fromjson?` yields nothing for non-JSON, so -e exits 4: the expected
+  # non-result. Any other non-zero exit is jq itself failing.
+  out="$(jq -e -R -s -j 'fromjson? | select(type == "object" and (.additionalContext | type) == "string") | .additionalContext + "x"' <<<"$1")" || rc=$?
+  case "$rc" in
+    0) printf '%s' "${out%x}"; return 0 ;;
+    4) return 1 ;;
+  esac
   return 2
 }
 
-# Print the payload for <mode>. The payload is printed only once a tool produced
-# it, so a failed attempt never leaves partial output. 1 = both tools failed.
+# Print the payload for <mode>. The payload is printed only once jq produced
+# it, so a failed attempt never leaves partial output. 1 = jq failed.
 encode() { # <mode> <text>
   local out
-  if command -v jq >/dev/null 2>&1 && out="$(jq -n --arg m "$1" --arg c "$2" \
-      'if $m == "portable" then {additionalContext: $c} else {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}} end')"; then
-    printf '%s\n' "$out"
-    return 0
-  fi
-  if command -v python3 >/dev/null 2>&1 && out="$(python3 -c '
-import json, sys
-mode, text = sys.argv[1], sys.argv[2]
-doc = {"additionalContext": text} if mode == "portable" else {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
-print(json.dumps(doc))
-' "$1" "$2")"; then
-    printf '%s\n' "$out"
-    return 0
-  fi
-  return 1
+  out="$(jq -n --arg m "$1" --arg c "$2" \
+    'if $m == "portable" then {additionalContext: $c} else {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}} end')" || return 1
+  printf '%s\n' "$out"
+  return 0
 }
 
 main() {
@@ -134,8 +103,15 @@ main() {
     names+=("$name"); codes+=("$rc"); outputs+=("$out")
   done
 
-  if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-    warn "neither jq nor python3 is on PATH — the hooks ran, but their statuses cannot be delivered; install jq"
+  # Without jq no status can be read or encoded. The fixed payload needs no
+  # escaping, so it is printed as a literal.
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq is not on PATH — the hooks ran, but their statuses cannot be delivered; install jq"
+    if [[ "$mode" == portable ]]; then
+      printf '%s\n' '{"additionalContext":"Session-start status — session-start: jq is not installed, so no session-start status could be delivered. Install jq, then start a new session."}'
+    else
+      printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Session-start status — session-start: jq is not installed, so no session-start status could be delivered. Install jq, then start a new session."}}'
+    fi
     return 0
   fi
 
@@ -151,7 +127,7 @@ main() {
     case "$rc" in
       0) statuses+=("$ctx") ;;
       1) statuses+=("Session-start status — hook ${name} printed something other than one additionalContext object; run \`bash ${here}/${name}\` from this repo to see it.") ;;
-      *) statuses+=("Session-start status — session-start could not parse hook ${name}'s output: jq and python3 both failed. Repair one of them, then start a new session.") ;;
+      *) statuses+=("Session-start status — session-start could not parse hook ${name}'s output: jq failed. Repair jq, then start a new session.") ;;
     esac
   done
 
@@ -161,7 +137,7 @@ main() {
     joined+="${statuses[i]}"
   done
   encode "$mode" "$joined" ||
-    warn "neither jq nor python3 could encode the merged status — this session gets none; run \`bash ${here}/session-start.sh\` to see why"
+    warn "jq could not encode the merged status — this session gets none; run \`bash ${here}/session-start.sh\` to see why"
   return 0
 }
 
