@@ -113,8 +113,9 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
             contributors.add(row.get("agent"))
     by_name = {agent.name: agent for agent in agents}
     names = sorted(by_name if candidate_names is None else set(candidate_names))
-    kinds = {name: getattr(agent, "kind", None) for name, agent in by_name.items()}
-    contributor_kinds = sorted({kinds[name] for name in contributors if kinds.get(name)})
+    kinds = {name: kind for name, agent in by_name.items()
+             if isinstance(kind := getattr(agent, "kind", None), str) and kind}
+    contributor_kinds = sorted({kinds[name] for name in contributors if name in kinds})
     excluded = {role: [] for role in roles}
     familiarity = {role: {} for role in roles}
     # A soft preference, never an exclusion: a verifier on another model
