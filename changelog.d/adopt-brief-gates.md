@@ -3,6 +3,8 @@ bump: minor
 ---
 ### Added
 
+- **ADR 0005** (`docs/adr/0005-report-gate-lines.md`) records the report gate-line contract.
+- **A deletion is classified by its effect.** The reviewer brief reports every unexplained deleted file and classifies it under `rules/review-severity.md`: blocking when behavior or a contract changes, advisory when only an explanation is missing.
 - **Worker reports carry a machine-readable `## Gates` section, and the lead checks it in code.** The developer, tester (Modes B and C) and reviewer brief templates require one line per gate, `- <name> exit=<code> cmd=<exact command>`, with the real exit code of the final run or `unknown`. A new read-only `teamlead check-gates --report <path> [--require NAME]` command (`skills/herdr-teamlead/teamlead/gates.py`) exits non-zero when the section is missing, duplicated, empty, malformed, names a gate twice, lacks a required gate, or carries any non-zero or `unknown` exit. `record-report` now refuses an `approved` review whose gates are not green. `references/round-flow.md` Reading a Report says when the lead runs it. Adapted from drover's `bin/fleet-done` evidence gate and `skills/roles/coder.md` (`126def9`, `9757a55`): the recurring defect class was a report claiming more than ran, and prose acceptance could not catch it. No state record shape changed; historical imported reviews (`record-historical-review`) predate the contract and stay unchecked. Proven by `tests/test_gates.py` and `tests/test_recovery.py` `test_approved_review_requires_green_gate_lines`, both failing with the guard reverted.
 
 ### Changed

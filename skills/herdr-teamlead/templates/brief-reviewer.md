@@ -42,8 +42,9 @@ Do not fix what you find. Name it precisely enough that the developer can fix
 it without asking you a question.
 
 Never assert a negative ("X is unused", "nothing calls Y") without pasting the
-command that proves it and its output. A deleted file that no commit message
-or PR body explains is a blocking finding.
+command that proves it and its output. Report every deleted file that no commit
+message or PR body explains, and classify it by what removing it changes: blocking
+when behavior or a contract changes, advisory when only an explanation is missing.
 
 For each proposed correction, cite the accepted behavior it serves and describe
 the behavior the fix would add or restore. Identify a new guarantee or obligation
