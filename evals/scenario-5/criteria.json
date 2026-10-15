@@ -24,7 +24,7 @@
     },
     {
       "name": "Merge flags",
-      "description": "The merge command is `gh pr merge 47 --merge --delete-branch` (PR number 47, --merge flag, --delete-branch flag)",
+      "description": "The merge command is `gh pr merge 47 --repo gamussa/my-tessl-plugin --merge --delete-branch` (PR number 47, --repo naming the PR's repository, --merge flag, --delete-branch flag; flag order free). A merge without --repo scores 0: gh would target its default repository. Source: skills/release/SKILL.md Step 1 and Step 7",
       "max_score": 10
     },
     {
@@ -54,7 +54,7 @@
     },
     {
       "name": "Verify publish landed",
-      "description": "merge-plan.sh calls `skills/release/verify-publish-landed.sh` with workspace, plugin, the PRE baseline, and the publish run ID resolve-publish-run.sh returned, as its fourth argument. A call missing the run ID scores 0: the script rejects it. Source: skills/release/SKILL.md Step 7",
+      "description": "merge-plan.sh calls `skills/release/verify-publish-landed.sh` with workspace, plugin, the PRE baseline, the publish run ID resolve-publish-run.sh returned as its fourth argument, and owner `gamussa` and repo `my-tessl-plugin` as its fifth and sixth. A call missing the run ID or owner/repo scores 0: the script rejects it. Source: skills/release/SKILL.md Step 7",
       "max_score": 8
     },
     {
