@@ -345,6 +345,10 @@ What you decide, and it is the whole of your job here:
   `skills/herdr-teamlead/references/specialists.md`; the composer selects `brief-specialist.md`.
 - For specialist developer, reviewer or tester work: `SPECIALIST_CONTEXT` in
   the normal role brief, with the applicable expertise, inputs and capability gaps.
+- For a judge adjudication: `DISPUTE_KIND`, `QUESTION`, `POSITION_A`,
+  `POSITION_A_REPORT`, `POSITION_A_EVIDENCE`, `POSITION_B`,
+  `POSITION_B_REPORT`, `POSITION_B_EVIDENCE`, `INVESTIGATION_REPORT`,
+  `GOVERNING_RULES`, and `TREE` (see `skills/herdr-teamlead/SKILL.md` Step 11).
 - For a judge diagnosis under the role key `judge-diagnosis`:
   `INVESTIGATION_REPORT` (the assessed investigator report the judge rules on),
   `TASK`, `FIX_ROUNDS`, `REMAINING_WORK`, `ROUND_HISTORY`, `TREE`, and

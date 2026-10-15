@@ -17,9 +17,13 @@ your report file.
 
 **Position A** — {{POSITION_A}}
 Full report: `{{POSITION_A_REPORT}}`
+Cited evidence: {{POSITION_A_EVIDENCE}}
 
 **Position B** — {{POSITION_B}}
 Full report: `{{POSITION_B_REPORT}}`
+Cited evidence: {{POSITION_B_EVIDENCE}}
+
+Investigator report on the disputed facts: {{INVESTIGATION_REPORT}}
 
 ## Governing Rule
 
@@ -28,27 +32,31 @@ Full report: `{{POSITION_B_REPORT}}`
 Read it in full before forming a view. A ruling that does not cite the rule
 text it turns on is not a ruling.
 
-## Tree to Inspect
+## Tree to Check
 
-Read `{{TREE}}` to verify the facts either side claims — the diff, the test
-output, the file each position cites. It is already checked out; run no git
-command against it, and no git command against `{{SHARED_CHECKOUT}}`.
+`{{TREE}}` holds the cited files. It is already checked out; run no git command
+against it, and no git command against `{{SHARED_CHECKOUT}}`. Open only what a
+citation names: a file and line, a command and its output, or a revision.
+Never explore the tree beyond the citations.
 
 ## Method
 
 1. Read both reports in full, not a summary of either.
 2. Read the governing rule in full.
-3. Verify every contested fact against the tree yourself — do not take either
-   position's word for what a file, a test, or a diff says.
-4. Weigh the verified facts against the rule text alone, not against either
+3. Check each cited fact against the tree: the named line, output or revision
+   says what the position claims, or it does not. Take neither side's word.
+4. Weigh the checked facts against the rule text alone, not against either
    side's framing of it.
+5. A disputed fact with no citation, or one its citations cannot settle, gets
+   `insufficient` naming the facts needed. Do not dig for it yourself; an
+   investigator establishes it and the dispute returns to you with that report.
 
 ## Deliverable
 
 Your report opens with these three lines, in order:
 
 ```
-RULING: uphold A | uphold B | amend — <line> | blocked — <question>
+RULING: uphold A | uphold B | amend — <line> | insufficient — <facts needed> | blocked — <question>
 ACTION: <the minimal step that carries out the ruling>
 UNVERIFIED: <any claim you could not check against the tree, or "none">
 ```
@@ -56,12 +64,17 @@ UNVERIFIED: <any claim you could not check against the tree, or "none">
 `amend` names the amended line inline; give it precisely enough that the
 developer applies it without asking you a question.
 
-`blocked` is for a dispute you cannot settle from the tree and the rule text
-alone — a question only the operator can answer. Name that question inline.
-Reach for it rather than ruling on a fact you could not verify; a ruling the
-round has to unwind costs more than a question asked once. Follow the three lines
-with your numbered reasons — each reason ties a verified fact to the rule
-text.
+`insufficient` is for a fact the cited evidence cannot settle. Name each fact
+precisely enough for an investigator to establish it with citations. Reach for
+it rather than ruling on a fact you could not check; a ruling the round has to
+unwind costs more than one investigation.
+
+`blocked` is for a question only the operator can answer: authority, intent,
+or a choice no tree records. Name that question inline. A fact the tree can
+settle is `insufficient`, never `blocked`.
+
+Follow the three lines with your numbered reasons — each reason ties a checked
+citation to the rule text.
 
 Your ruling binds the round. Only the operator overrides it.
 
@@ -71,7 +84,7 @@ Write `{{REPORT}}` covering:
 
 - The three-line deliverable in full.
 - Your numbered reasons.
-- What you verified against the tree, and how.
+- Which citations you checked against the tree, and what each showed.
 
 Final chat message ends with exactly:
 

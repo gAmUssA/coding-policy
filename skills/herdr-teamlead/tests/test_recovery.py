@@ -796,6 +796,23 @@ class RecoveryTests(unittest.TestCase):
                 "previous_attempts": "Seven attempts", "progress": "Unchanged",
                 "change_in_approach": "Rewrite the parser", "judge_report": str(self.judge_report), "requested_by": REQUEST}, AT, "judge")
 
+    def test_an_uncompleted_ruling_cannot_be_cited_by_a_checkpoint(self):
+        # `insufficient` and `blocked` are not completed rulings: the first
+        # waits on an investigator and a re-dispatched judge, the second on the
+        # operator. The accepting direction is seed_checkpoint's `amend`.
+        self.exhaust()
+        self.consult_investigator("2026-02-03T09:30:00+00:00", "2026-02-03T09:45:00+00:00")
+        add_assignment(self.state, AT, "judge", "judge", task=TASK)
+        for ruling, message in (
+                ("insufficient — whether src/parser.py:40 strips quotes", "insufficient ruling needs the investigator"),
+                ("blocked — which boundary ships?", "blocked judge requires the operator")):
+            with self.subTest(ruling=ruling):
+                report = self.root / "uncompleted.md"
+                report.write_text("RULING: {}\nACTION: consult the investigator\nUNVERIFIED: none\n".format(ruling))
+                with self.assertRaisesRegex(UsageError, message):
+                    checkpoint(self.store, self.history, {**self.replay_data(), "judge_report": str(report)}, AT, "judge")
+                self.assertEqual(self.store["checkpoints"], [])
+
     def test_a_later_checkpoint_without_a_ruling_still_records(self):
         self.seed_checkpoint()
         for fix in (6, 7):
