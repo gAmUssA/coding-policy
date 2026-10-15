@@ -20,7 +20,7 @@ from tests import test_cli as fixture
 from tests import test_historical as historical_fixture
 from tests.fakes import FakeRunner, ScriptedReads, agent_json
 from tests.test_engagement import REQUIREMENT
-from tests.test_qualification import AT, qualified_tier
+from tests.tier_fixture import AT, tier_row
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -213,8 +213,7 @@ class SpecialistCliTest(fixture.CliCase):
 
     def seed_warm_consultation(self, *, assess=True, retire=True):
         self.bind()
-        tier = json.loads(json.dumps(qualified_tier()).replace("sonnet-5", "opus-5"))
-        tier["qualification"][0]["role"] = "advisor"
+        tier = {**tier_row(), "model": "opus-5"}
         self.settings["agents"] = self.settings["agents"][:1]
         self.settings["agents"][0]["tiers"] = {"architect": tier}
         self.config.write_text(json.dumps(self.settings))

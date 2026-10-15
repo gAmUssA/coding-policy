@@ -42,79 +42,66 @@
         "architect": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "reconciliation": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "test_plan": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "critic": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "review": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "hostile_verify": {
           "model": "opus-5",
           "effort": "xhigh",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "recheck": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_adjudication": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "lead": {
           "model": "opus-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "build": {
           "model": "sonnet-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "fix": {
           "model": "sonnet-5",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "mechanical": {
           "model": "claude-haiku-4-5",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_mechanics": {
           "model": "sonnet-5",
           "effort": "medium",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         }
       },
       "launch_args": [
@@ -146,80 +133,67 @@
         "architect": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "reconciliation": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "test_plan": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "critic": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "review": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "hostile_verify": {
           "model": "gpt-5.6-sol",
           "effort": "xhigh",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "recheck": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_adjudication": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "lead": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "build": {
           "model": "gpt-5.6-sol",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "fix": {
           "model": "gpt-5.6-sol",
           "effort": "medium",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "mechanical": {
           "model": "gpt-5.3-codex-spark",
           "effort": "low",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_mechanics": {
           "model": "gpt-5.3-codex-spark",
           "effort": "low",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         }
       },
       "launch_args": [
@@ -258,80 +232,67 @@
         "architect": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "reconciliation": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "test_plan": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "critic": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "review": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "hostile_verify": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "recheck": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_adjudication": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "lead": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "build": {
           "model": "grok-4.6",
           "effort": "high",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "fix": {
           "model": "grok-4.6",
           "effort": "medium",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "mechanical": {
           "model": "grok-4.6",
           "effort": "low",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         },
         "release_mechanics": {
           "model": "grok-4.6",
           "effort": "low",
-          "multiplier": 1.0,
-          "qualification": []
+          "multiplier": 1.0
         }
       },
       "launch_args": [

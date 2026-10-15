@@ -1,7 +1,7 @@
 ---
 name: herdr-teamlead
 description: >
-  Run Herdr rounds with on-demand specialists, qualified tiers, bounded briefs,
+  Run Herdr rounds with on-demand specialists, model tiers, bounded briefs,
   report verification, and release gates. Use for requests to dispatch the Herdr
   team, balance worker usage, collect reports, run or retrieve retrospectives,
   catch up on outstanding user attention, curate team lessons, or save and resume
@@ -196,14 +196,14 @@ assessment at an exhausted allowance. Pass the same `--judge-mode` to `apply`.
 On exit 1, resolve the diagnostic before continuing. Apply the Step 3 constraints in `skills/herdr-teamlead/references/round-setup.md`:
 exclude contributors from verification, reserve the developer through early fixes,
 preserve task identity and fix count, and reuse recorded correction bounds.
-Tier and qualification contracts:
+Tier contracts:
 
 ```text
 skills/herdr-teamlead/references/model-tiers.md
 skills/herdr-teamlead/references/dispatch-recovery.md
 ```
 
-`--preview-tiers` authorizes no dispatch. Save the plan and rationale.
+Save the plan and rationale.
 Proceed immediately to Step 4.
 
 ## Step 4 — Build the Review Package

@@ -6,7 +6,7 @@
 per-agent `tiers` and `launch_args`; schema 1 remains readable without tiers.
 The utility never rewrites the operator's config. Copy the example into a new
 file, preserve local agent names and UI options, then validate it with
-`teamlead.sh plan --preview-tiers` before replacing a working configuration.
+`teamlead.sh plan` before replacing a working configuration.
 
 Each `tiers` entry maps a round type to:
 
@@ -15,15 +15,15 @@ Each `tiers` entry maps a round type to:
   "model": "opus-5",
   "effort": "high",
   "multiplier": 1.0,
-  "billing_evidence": null,
-  "qualification": []
+  "billing_evidence": null
 }
 ```
 
 Omit `effort` for a model that accepts no effort control. Omit
-`billing_evidence` until measurements exist. An empty qualification array is
-unqualified, never a passing trial. The example carries no invented live
-measurement or qualification results.
+`billing_evidence` until measurements exist. The example carries no invented
+live measurement. A `qualification` field left from the retired validation
+battery is accepted and ignored (`RETIRED_TIER_FIELDS` in
+`skills/herdr-teamlead/teamlead/tiers.py`); delete it at the next config edit.
 
 Accepted round names, role mappings, model pins, effort enums, mechanical
 eligibility, risk escalation, and supported launch options are the constants
@@ -68,8 +68,7 @@ same-session restoration in `skills/herdr-teamlead/references/dispatch-recovery.
 operator expressly requires YOLO for that retained developer.
 
 Recheck model availability and CLI flag spellings when upgrading a worker's
-CLI or changing a model pin. Refresh the qualification for every changed
-model/effort/role configuration before using it live.
+CLI or changing a model pin.
 
 ## Planning and dispatch
 
@@ -103,21 +102,18 @@ both plan and apply for a fix; a plan made for a different fix context is
 refused. A new tiered role requires an explicit cost instead of inheriting an
 unrelated fallback weight.
 
-Default planning ranks only qualified candidates. `plan --preview-tiers` allows
-inspection before commissioning; it does not authorize live dispatch.
-
 Plan schema 4 carries `tiers`, `rounds`, and the task's `task_context` alongside `assignments`. Apply
 records the requested task phase as `round` and the selected config row as
 `tier_row`; escalation may select a stronger row and raise its effort. Apply
 recomputes the tier from current config and round inputs, refusing a stale or
 edited pair. `apply --dry-run` prints the requested tier and relaunch argv
 without contacting Herdr or writing state. It does not establish live
-qualification, readiness, process identity, or session continuity.
+readiness, process identity, or session continuity.
 
 The owner validates correction allowance before selecting tiers. A bounded
 approval does not lower a late correction's tier or reset its cumulative
 number. A fresh developer handoff after a required release clear uses the
-normal relaunch and qualification checks; verified retained fixes keep their
+normal relaunch checks; verified retained fixes keep their
 existing compatible model and effort.
 
 Fresh tiered dispatch verifies the worker is idle in the expected pane and
@@ -140,7 +136,7 @@ Tiered assignment messages include the selected model, effort, and an input
 message, COMMON.md, and the role brief, excluding the generated metadata
 footer. Workers report observed CLI version, tokens, compactions, and quota
 windows; unavailable observations remain unknown. These reports are
-measurements, not substitutes for launch proof or the paired battery.
+measurements, not substitutes for launch proof.
 
 The executable launch and verification contracts live in
 `skills/herdr-teamlead/teamlead/launch.py` and the argv builders in
@@ -187,55 +183,15 @@ Herdr team session. The shipped example therefore uses unknown attribution;
 its deterministic tests are synthetic evidence of behavior, not observations
 about provider billing. Do not copy test evidence into a live configuration.
 
-## Validation before live use
+## Model fit without a battery
 
-The lead collects a paired, blinded screen for each model/effort/role and then
-a separate promotion battery for finalists. Keep planted defects and expected
-severity out of both workers' prompts. Use the same prompt for the baseline
-and candidate in each pair, record both reports, and score blocker detection,
-severity, and judgment absorption against the hidden answer key. Fresh
-workers and separately enumerated cases prevent reuse of earlier answers.
+No trial battery gates a tier. Judgment rounds stay pinned to the top model
+at high effort or above, every other round's output is independently reviewed
+and tested, and the judge seat keeps its own pin. Launch-argv proof still
+binds every tiered dispatch to its configured model and effort.
 
-The operator records the real trial results in that tier's `qualification`
-array. Each record contains `schema_version`, `role`, `model`, `effort`,
-`screen`, `promotion`, and `canary`. Screen and promotion are arrays of:
-
-```json
-{
-  "case_id": "<stable hidden case identifier>",
-  "blinded": true,
-  "baseline": {
-    "model": "<baseline id>", "effort": "<effort or null>",
-    "cli_version": "<version>", "prompt_hash": "<SHA-256>",
-    "tokens": 100, "compactions": 0,
-    "window_before": "unknown", "window_after": "unknown",
-    "caught_blocker": true, "severity": "blocking", "absorbed_judgment": false
-  },
-  "candidate": {
-    "model": "<candidate id>", "effort": "<effort or null>",
-    "cli_version": "<version>", "prompt_hash": "<same SHA-256>",
-    "tokens": 100, "compactions": 0,
-    "window_before": "unknown", "window_after": "unknown",
-    "caught_blocker": true, "severity": "blocking", "absorbed_judgment": false
-  }
-}
-```
-
-Replace unknown window values with observed window maps when available.
-Missing measurements stay explicitly unknown; missing metadata never becomes
-a passing result. `canary` contains `at` (a timezone-aware timestamp) and
-`trials` using stable case IDs and identical prompt hashes from the recorded battery. Refresh it on the
-required cadence. The sample sizes, passing predicate, and validity window
-are the contract of `skills/herdr-teamlead/teamlead/qualification.py`.
-
-Apply checks the chosen model/effort/role against this evidence before any
-worker operation. A missing or expired record refuses live dispatch and
-names the required recovery. Dry-run remains available to inspect the launch
-plan. The existing pinned judge start path has its own launch proof and does
-not qualify a new rotating tier.
-
-The operator owns qualification and billing inputs inside config.json; these
-readers never write or migrate that file. Their evidence records use schema
-1. The state owner records the accepted qualification summary and launch
-proof in schema-5 assignment rows; see `state-schema.md` for migration and
-reader behavior.
+The operator owns billing inputs inside config.json; these readers never write
+or migrate that file. Billing evidence records use schema 1. The state owner
+records launch proof in assignment rows; rows written before the battery's
+retirement may also carry a `qualification` summary, which readers ignore. See
+`state-schema.md` for migration and reader behavior.

@@ -63,7 +63,9 @@ XHIGH_CONTEXT_BYTES = 250000
 BUILD_FAILED_GATES = 2
 MAX_MECHANICAL_RETRIES = 2
 MAX_MECHANICAL_REPAIRS = 1
-TIER_FIELDS = frozenset({"model", "effort", "multiplier", "billing_evidence", "qualification"})
+TIER_FIELDS = frozenset({"model", "effort", "multiplier", "billing_evidence"})
+#: Fields of retired contracts: still accepted in a tier row, never read.
+RETIRED_TIER_FIELDS = frozenset({"qualification"})
 MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
 LAUNCH_SWITCHES = {
     "claude": frozenset({"--dangerously-skip-permissions"}),
@@ -254,10 +256,9 @@ def parse_tiers(raw, kind):
     for round_type, entry in raw.items():
         if round_type not in ROUNDS:
             _error("Unknown round {!r}; use one of {}.".format(round_type, ", ".join(sorted(ROUNDS))))
-        if not isinstance(entry, dict) or set(entry) - TIER_FIELDS:
+        if not isinstance(entry, dict) or set(entry) - TIER_FIELDS - RETIRED_TIER_FIELDS:
             _error("Tier {!r} must contain only {}.".format(round_type, ", ".join(sorted(TIER_FIELDS))))
-        if not isinstance(entry.get("qualification", []), list):
-            _error("Tier qualification must be an array of recorded battery results.")
+        entry = {key: value for key, value in entry.items() if key not in RETIRED_TIER_FIELDS}
         model = entry.get("model")
         if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
             _error("Tier {!r} needs a model identifier, not a flag or command.".format(round_type))
@@ -359,7 +360,7 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
         # High risk also excludes a lower build/fix model, not only low effort.
         if tier["model"] not in TOP_MODELS[agent.kind]:
             if "review" not in agent.tiers:
-                raise MissingTierError("Agent {} has no review tier for high-risk work; add and qualify its review row before assigning it this round.".format(agent.name), {})
+                raise MissingTierError("Agent {} has no review tier for high-risk work; add its review row before assigning it this round.".format(agent.name), {})
             tier = dict(agent.tiers["review"])
             chosen_round = "review"
         if agent.kind in {"claude", "codex"} and tier["effort"] not in {"xhigh", "max"}:

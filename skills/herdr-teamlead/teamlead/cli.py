@@ -42,7 +42,6 @@ from .measure import (
 )
 from .planner import plan as build_plan
 from .tiers import MissingTierError, parse_launch_args, parse_tiers, select_tier
-from .qualification import require_qualification
 from .launch import start_worker, verify_running
 from .state import (
     add_assignment,
@@ -251,8 +250,8 @@ def build_parser():
     plan_parser.add_argument("--requirements", metavar="FILE",
                              help="Versioned per-role specialty, capabilities, independence and engagement requirements.")
     plan_parser.add_argument("--preview-tiers", action="store_true",
-                             help="Preview unqualified tiers. Live apply still requires complete qualification evidence.")
-    plan_parser.add_argument("--now", metavar="ISO-8601", help="Reference time for qualification expiry (default: current UTC time).")
+                             help="Retired: accepted and ignored. Planning no longer checks tier qualification.")
+    plan_parser.add_argument("--now", metavar="ISO-8601", help="Reference time for the plan (default: current UTC time).")
 
     apply_parser = sub.add_parser(
         "apply",
@@ -543,7 +542,7 @@ def _round_inputs(args, roles):
     return rounds
 
 
-def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualified_at=None, excludes=None):
+def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes=None):
     tiered = any(agent.tiers for agent in agents)
     if not tiered and not (judge and "judge" in roles):
         if rounds:
@@ -574,13 +573,6 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, qualifie
                 continue
             if tier is None:
                 continue
-            if qualified_at is not None:
-                evidence = [record for entry in agent.tiers.values() for record in entry.get("qualification", [])]
-                try:
-                    require_qualification({**tier, "qualification": evidence}, role, qualified_at)
-                except UsageError:
-                    # This candidate is ineligible; another qualified worker may fill the seat.
-                    continue
             candidates[role][agent.name] = {key: tier[key] for key in (
                 "round", "tier_row", "kind", "model", "effort", "multiplier", "billing_window", "effective_multiplier"
             )}
@@ -740,8 +732,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     )
     for role, names in constraints["exclude"].items():
         excludes[role] = sorted(set(excludes.get(role, [])) | set(names))
-    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge,
-                                      None if args.preview_tiers else (args.now or now_iso()), excludes=excludes)
+    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge, excludes=excludes)
 
     result = build_plan(
             roles,
@@ -1018,9 +1009,6 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             tiers=tiers,
             retrospective_guard=retrospective_runtime.Guard(state_path, state, client, agents_by_name, at,
                                                           task=args.task, retain=args.retain_context or args.retain_specialist, no_clear=args.no_clear),
-            qualifications={role: [record for entry in agents_by_name[name].tiers.values()
-                                   for record in entry.get("qualification", [])]
-                            for role, name in assignments.items()},
         )
     except TeamLeadError as exc:
         for identifier in prepared:

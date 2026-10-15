@@ -418,13 +418,12 @@ finish, apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/r
   at this step.
 - **Sent but not started** — inspect the pane; never re-dispatch on top of the
   message. Proceed to Step 9 for the roles that started.
-- **Retrospective, clear, composer, tier, qualification, or continuity refusal** — follow the
+- **Retrospective, clear, composer, tier, or continuity refusal** — follow the
   diagnostic and recorded dispatch outcome. Reconcile uncertainty before retrying;
   wait for roles whose records confirm dispatch.
 - **Unknown refusal** — report it verbatim and finish here.
 - **`--dry-run`** — inspect the context choice, requested tier, and relaunch
-  argv. It contacts no worker, writes no ledger, and proves no live tier or
-  qualification. Finish here.
+  argv. It contacts no worker, writes no ledger, and proves no live tier. Finish here.
 
 
 ## Ruling Outcomes

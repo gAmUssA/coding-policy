@@ -130,10 +130,9 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - A tier switch requires a worker relaunch at a cleared-round boundary
 - Retained fixes never change model or raise effort; preserve a verified compatible higher effort
 - Before relaunch, verify the idle worker, empty composer, pane occupant, and foreground PID
-- Before a new tier's live dispatch, require its paired validation battery and current canary
 - Record model, effort, launch argv, verified pair, and evidence source in the assignment ledger
 - Unmeasured tier billing windows remain `unknown`; no model name establishes free capacity
-- Metering and qualification contracts are in `skills/herdr-teamlead/references/model-tiers.md`
+- Metering contracts are in `skills/herdr-teamlead/references/model-tiers.md`
 
 ## Fix Loops
 
@@ -155,7 +154,7 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
   1. The owner ledger preserves the original task, base, preceding developer assignment, and actual next fix number
   2. The recorded cause is a confirmed release clear, an explicit operator recovery decision for the preserved missing-session assignment, a verified historical import of a completed operator-authorized manual correction, or an owner-verified automatic clear into another authorized role
   3. The next fix remains within the task's existing allowance and scope
-  4. The lead dispatches a fresh developer brief through the normal readiness, clear, tier, and qualification checks
+  4. The lead dispatches a fresh developer brief through the normal readiness, clear, and tier checks
   5. For a historical import, the owner verifies original task/scope/budget authorization, archived transport and report bytes, and the actual VCS base, head and diff
   6. For a historical import, the owner appends the actual count with null native-session proof
   7. For a historical import, the owner preserves prior rows

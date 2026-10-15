@@ -578,7 +578,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 if name not in tier_candidates.get(role, {}):
                     excluded[role] = sorted(set(excluded[role]) | {name})
             if all(name in excluded[role] for name in agents):
-                raise PlanError("No qualified tier is eligible for {!r}. Record its paired validation and current canary, check exclusions, or use --preview-tiers to inspect launches without dispatch.".format(role), {})
+                raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
 
     def candidate_cost(role, name):
         tier = (tier_candidates or {}).get(role, {}).get(name) or {}
