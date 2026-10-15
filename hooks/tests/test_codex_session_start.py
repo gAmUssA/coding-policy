@@ -12,7 +12,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
