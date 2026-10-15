@@ -52,6 +52,12 @@ description: Deterministic operations → script, reasoning → LLM, the regex t
   2. Failure emits no path, exits non-zero, and writes an actionable diagnostic to stderr
   3. The package contains the resolved commit range, commit list, diff stat, and patch
 - Every other skill script retains the JSON-producing requirement
+- Narrow exception for `hooks/bounded-run.sh` transparent deadline-wrapper stdout.
+- Preconditions (all required):
+  1. The script only runs another command under a deadline and passes that command's stdout and stderr through unmodified
+  2. Its own diagnostics go to stderr only
+  3. Its exit codes are documented in its header and tested: the command's own, 124 at the deadline, 125 on a usage error
+- Every other script keeps the JSON-producing requirement
 
 ## Black Box
 

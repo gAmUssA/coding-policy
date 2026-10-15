@@ -65,9 +65,10 @@ main() {
     return 0
   }
 
-  # 1. Pass-through.
-  rc=0; out="$(bash "$SCRIPT" 5 bash -c 'echo hello; exit 7' </dev/null 2>/dev/null)" || rc=$?
-  if [[ $rc -eq 7 && "$out" == "hello" ]]; then pass; else fail "pass-through: expected 'hello' and exit 7, got rc=$rc out=$out"; fi
+  # 1. Pass-through: stdout, stderr and the exit code arrive unmodified.
+  rc=0; out="$(bash "$SCRIPT" 5 bash -c 'echo hello; echo oops >&2; exit 7' </dev/null 2>"$TMP/err1")" || rc=$?
+  if [[ $rc -eq 7 && "$out" == "hello" && "$(cat "$TMP/err1")" == "oops" ]]; then
+    pass; else fail "pass-through: expected stdout 'hello', stderr 'oops' and exit 7, got rc=$rc out=$out err=$(cat "$TMP/err1")"; fi
 
   # 2. Deadline: the command waits on a grandchild sleeper.
   rc=0

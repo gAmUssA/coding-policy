@@ -12,8 +12,10 @@
 #   argv  : <seconds> <command> [args...] — seconds is a positive integer.
 #   stdin : passed to the command.
 #   stdout: the command's own stdout, unchanged.
-#   stderr: the command's own stderr, plus one diagnostic line when the
-#           deadline passed.
+#   stderr: the command's own stderr, unchanged, plus this runner's own
+#           diagnostics: one line when the deadline passed, and one warning
+#           when process states cannot be read. stdout is never JSON: this is
+#           the transparent-wrapper exception in rules/script-delegation.md.
 #   exit  : the command's own exit code once its whole process group has
 #           exited; 124 when the deadline passed with any group member still
 #           running (the `timeout` convention), including a leader that
