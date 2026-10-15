@@ -25,7 +25,7 @@ unchanged. Its canonical state path is the expanded, resolved path selected by
 `skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use.
 `config.json` is operator-owned under `rules/stateful-artifacts.md` Migration
 Policy's operator-authored configuration exception. Readable versions are 1 to
-4; every reader runs `validate_config_schema` in `teamlead/config.py` first.
+4; every reader runs `validate_config_schema` in `skills/herdr-teamlead/teamlead/config.py` first.
 Version gates:
 
 | Field | Needs `schema_version` |

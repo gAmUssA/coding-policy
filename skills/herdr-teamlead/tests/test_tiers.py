@@ -133,11 +133,10 @@ class TopModelPinsTest(unittest.TestCase):
                         top_models=top_models_for("claude", extra))
 
     def test_the_top_models_block_is_validated_strictly(self):
-        self.assertEqual(parse_top_models(None), {})
         self.assertEqual(parse_top_models({"claude": ["fable-5-1"], "grok": ["grok-5"]}),
                          {"claude": frozenset({"fable-5-1"}), "grok": frozenset({"grok-5"})})
         self.assertEqual(parse_top_models({"codex": ["gpt-6-astra"]}), {"codex": frozenset({"gpt-6-astra"})})
-        for raw in ([], "gpt-7", {"agy": ["gemini-3.1-pro"]}, {"codex": []}, {"codex": "gpt-7"},
+        for raw in (None, [], "gpt-7", {"agy": ["gemini-3.1-pro"]}, {"codex": []}, {"codex": "gpt-7"},
                     {"codex": [7]}, {"codex": [""]}, {"codex": ["-m"]}, {"codex": ["gpt 7"]},
                     {"codex": ["gpt-7", "gpt-7"]}):
             with self.subTest(raw=raw), self.assertRaises(ConfigError) as caught:

@@ -173,13 +173,12 @@ def parse_top_models(raw, source="config.json"):
     The ids extend TOP_MODELS for that kind. An id already built in is
     accepted, so a later built-in addition never breaks a config.
     """
-    if raw is None:
-        return {}
     kinds = ", ".join(sorted(TOP_MODELS))
     shape = ('write it as {{"codex": ["gpt-6-astra"]}}, keyed by {}, or remove it.'.format(kinds))
     if not isinstance(raw, dict):
+        found = "null" if raw is None else type(raw).__name__
         raise ConfigError("Config at {}: `top_models` is a JSON {}, not an object; {}".format(
-            source, type(raw).__name__, shape), {"source": source, "field": "top_models"})
+            source, found, shape), {"source": source, "field": "top_models"})
     result = {}
     for kind, ids in raw.items():
         where = "Config at {}: `top_models.{}`".format(source, kind)

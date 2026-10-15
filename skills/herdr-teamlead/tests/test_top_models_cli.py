@@ -12,13 +12,17 @@ LAUNCHER = Path(__file__).resolve().parents[1] / "teamlead.sh"
 AT = "2026-10-15T10:00:00+00:00"
 
 
-def _config(version, top_models=None, review_model="gpt-7-nova"):
+#: Marks `top_models` as omitted, so an explicit null can be written.
+_OMIT = object()
+
+
+def _config(version, top_models=_OMIT, review_model="gpt-7-nova"):
     """A codex worker whose review row names `review_model`; `top_models` only when given."""
     config = {"schema_version": version, "agents": [{
         "name": "codex", "kind": "codex", "usage_prompt": "/status", "usage_marker": "Weekly limit",
         "usage_read_source": "recent-unwrapped", "clear_prompt": "/new",
         "tiers": {"review": {"model": review_model, "effort": "high"}}}]}
-    if top_models is not None:
+    if top_models is not _OMIT:
         config["top_models"] = top_models
     return config
 
@@ -60,10 +64,14 @@ class TopModelsPlanTest(unittest.TestCase):
         self.assertIn("top_models.codex", message)
 
     def test_an_invalid_block_is_refused(self):
-        for block in ({"agy": ["gpt-7-nova"]}, {"codex": []}, {"codex": ["gpt-7-nova", "gpt-7-nova"]}):
+        for block in (None, {"agy": ["gpt-7-nova"]}, {"codex": []}, {"codex": ["gpt-7-nova", "gpt-7-nova"]}):
             with self.subTest(block=block):
                 message = self.refusal(self.plan(_config(4, block)))
                 self.assertIn("`top_models", message)
+
+    def test_an_explicit_null_block_is_refused_as_a_non_object(self):
+        message = self.refusal(self.plan(_config(4, None)))
+        self.assertIn("`top_models` is a JSON null, not an object", message)
 
     def test_an_under_versioned_block_is_refused_with_the_version_to_set(self):
         message = self.refusal(self.plan(_config(3, {"codex": ["gpt-7-nova"]})))
