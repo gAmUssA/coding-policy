@@ -230,9 +230,14 @@ def parse_config(payload, source="<memory>"):
             )
         name = entry["name"]
         if "tiers" in entry and version < 2:
-            raise ConfigError("Tier tables need config schema_version 2; upgrade the operator-owned config.", {"source": source})
+            raise ConfigError("Config at {}: agents[{}] declares `tiers`, which needs config schema_version 2; "
+                              "set \"schema_version\" to 2 or later in that file.".format(source, index),
+                              {"source": source, "index": index, "found": version, "expected": 2, "field": "tiers"})
         if "capabilities" in entry and version < 3:
-            raise ConfigError("Capability declarations need config schema_version 3; upgrade the operator-owned config without changing its existing launch or tier settings.", {"source": source})
+            raise ConfigError("Config at {}: agents[{}] declares `capabilities`, which needs config schema_version 3; "
+                              "set \"schema_version\" to 3 or later in that file without changing its existing "
+                              "launch or tier settings.".format(source, index),
+                              {"source": source, "index": index, "found": version, "expected": 3, "field": "capabilities"})
         capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(

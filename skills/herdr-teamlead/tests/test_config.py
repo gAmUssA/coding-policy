@@ -536,6 +536,34 @@ class TopModelsConfigTest(unittest.TestCase):
         self.assertTrue(all(agent.top_models for agent in agents if agent.kind in ("claude", "codex", "grok")))
 
 
+class VersionGateTest(unittest.TestCase):
+    """Operator-authored config: each version-gated field names the version to set."""
+
+    def test_each_gated_field_in_an_older_file_names_the_version_to_set(self):
+        tiers = {"build": {"model": "sonnet-5", "effort": "high"}}
+        for field, value, gate in (("tiers", tiers, 2), ("capabilities", ["ux"], 3)):
+            for version in range(1, gate):
+                payload = _agent_payload(**{field: value})
+                payload["schema_version"] = version
+                with self.subTest(field=field, version=version), self.assertRaises(ConfigError) as caught:
+                    parse_config(payload)
+                self.assertIn('set "schema_version" to {}'.format(gate), str(caught.exception))
+            payload = _agent_payload(**{field: value})
+            payload["schema_version"] = gate
+            self.assertEqual(len(parse_config(payload)), 1)
+        payload = dict(copy.deepcopy(VALID), schema_version=3, top_models={"codex": ["gpt-7-nova"]})
+        with self.assertRaises(ConfigError) as caught:
+            parse_config(payload)
+        self.assertIn('Set "schema_version": 4', str(caught.exception))
+
+    def test_ungated_fields_parse_at_every_version(self):
+        for version in (1, 2, 3, 4):
+            payload = _agent_payload(launch_args=["--dangerously-skip-permissions"], window_group="pool")
+            payload["schema_version"] = version
+            with self.subTest(version=version):
+                self.assertEqual(parse_config(payload)[0].launch_args, ("--dangerously-skip-permissions",))
+
+
 class JudgePinTest(unittest.TestCase):
     """The judge block meets the judgment floor of its agent's kind (#47)."""
 
