@@ -8,7 +8,8 @@ alwaysApply: true
 
 - Catch specific exception types, never bare catch-all handlers
 - Let unexpected exceptions propagate
-- A check that cannot reach a verdict reports unknown or fails, never pass; a missing or stale result reads as failure
+- A check that cannot reach a verdict reports unknown or fails, never pass
+- A missing or stale result reads as failure
 - Narrow exception for outer-boundary process contracts.
 - Applies when a process boundary's caller reads non-zero exit OR invalid stdout as a silent-failure signal (agent hooks, network-protocol stdout contracts, IPC handlers)
 - A propagating unexpected exception silently disables the contract

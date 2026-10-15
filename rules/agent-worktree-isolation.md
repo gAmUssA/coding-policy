@@ -16,7 +16,8 @@ alwaysApply: true
 - "Worktree" here means an additional working tree created via `git worktree add` — distinct from the base checkout, on its own branch, sharing the same `.git` object store
 - Agent tool's `isolation: "worktree"` parameter is the canonical mechanism for spawned subagents — it provisions a fresh worktree and cleans up on exit if the agent made no changes
 - For non-agent parallel work or human-launched second sessions, use `git worktree add -b <task-branch> ../<repo>-<task>` to create an isolated checkout on a new branch (or `git worktree add ../<repo>-<task> <existing-branch>` to attach to one that already exists), then `cd` in before any mutating operation
-- Restore or revert by path, never with a tree-wide git command (`checkout .`, `reset --hard`, `clean -fd`, pathless `stash`)
+- Undo a change to specific files by restoring those paths, never with a tree-wide git command (`checkout .`, `reset --hard`, `clean -fd`, pathless `stash`)
+- Syncing a diverged default branch is not such an undo; it follows `rules/sync-before-work.md`
 
 ## Cleanup
 

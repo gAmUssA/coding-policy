@@ -12,7 +12,8 @@ description: A change that crosses a module, service, or contract boundary is ma
 - Read the nearest instruction file (`AGENTS.md`, `CLAUDE.md`) in every affected module, plus the callers, the contract types, and the tests
 - State the map before the first edit — a few lines, not a design document
 - A consumer the map missed is a finding against the map, not a surprise to absorb silently
-- A new governed path for an action maps every other writer of the same object; the same change routes each through the new path or removes it
+- A new governed path for an action maps every other writer of the same object
+- The same change routes each of those writers through the new path or removes it
 
 ## Compatibility
 
