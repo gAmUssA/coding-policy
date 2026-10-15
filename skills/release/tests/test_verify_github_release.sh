@@ -550,6 +550,7 @@ test_missing_gh() {
   ) || rc=$?
   assert_eq "exit code" "2" "$rc" || return 1
   [[ "$stderr" == *"cli.github.com"* ]] || { echo "    FAIL: stderr should carry an install hint, got: ${stderr}" >&2; return 1; }
+  [[ "$stderr" == *"gh auth login --hostname github.com"* ]] || { echo "    FAIL: the login hint must be pinned to github.com, got: ${stderr}" >&2; return 1; }
 }
 run "missing gh exits 2 with an install hint" test_missing_gh
 

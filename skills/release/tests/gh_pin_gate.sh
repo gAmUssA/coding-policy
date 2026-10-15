@@ -60,3 +60,10 @@ gh_hints_pinned() {
     return 1
   fi
 }
+
+# Entry-point guard (rules/file-hygiene.md Standalone Scripts): this file only
+# defines helpers; running it directly would silently do nothing.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  echo "gh_pin_gate.sh defines test helpers; source it from a release test suite, never run it directly" >&2
+  exit 2
+fi

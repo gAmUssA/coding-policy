@@ -164,7 +164,7 @@ main() {
     exit 2
   fi
   if ! command -v gh >/dev/null 2>&1; then
-    echo "error: gh not found on PATH — install the GitHub CLI (https://cli.github.com) and run 'gh auth login'" >&2
+    echo "error: gh not found on PATH — install the GitHub CLI (https://cli.github.com) and run 'gh auth login --hostname github.com'" >&2
     exit 2
   fi
 
