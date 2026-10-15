@@ -356,6 +356,25 @@ class BadArgumentsTest(PreflightCase):
         self.assertEqual(json.loads(err)["error"], "config_error")
         self.assertEqual(self.runner.calls, [])
 
+    def test_a_judge_below_the_judgment_pins_is_refused_before_any_agent_call(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["judge"] = {"agent": "claude", "model": "sonnet-5", "effort": "max"}
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        code, _out, err = self.run_preflight(self.argv())
+        self.assertEqual(code, 1)
+        payload = json.loads(err)
+        self.assertEqual(payload["error"], "config_error")
+        self.assertIn("top_models.claude", payload["message"])
+        self.assertEqual(self.runner.calls, [])
+
+    def test_a_judge_on_a_current_top_model_passes_preflight(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["judge"] = {"agent": "claude", "model": "claude-fable-5-1", "effort": "max"}
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        code, out, err = self.run_preflight(self.argv())
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["verdict"], "ready")
+
     def test_a_missing_required_flag_is_an_argparse_error(self):
         with patch("sys.stderr", io.StringIO()):
             with self.assertRaises(SystemExit) as caught:

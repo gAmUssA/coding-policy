@@ -6,6 +6,9 @@
     "reviewer": 5,
     "judge": 15
   },
+  "top_models": {
+    "codex": ["gpt-6-astra", "gpt-6.1-sol"]
+  },
   "judge": {
     "agent": "judge",
     "model": "claude-fable-5-1",

@@ -17,18 +17,26 @@ from .billing import billing_window, effective_multiplier
 from .errors import ConfigError, HerdrError, UsageError
 
 
-#: A judgment pin moves only by a hand bump. Superseded ids stay listed so a
-#: config still naming them keeps parsing.
+#: Built-in judgment pins per kind. Superseded ids stay listed so a config
+#: still naming them keeps parsing. An operator's `top_models` block in
+#: config.json extends these sets (parse_top_models); it never replaces them.
 TOP_MODELS = {
-    "claude": frozenset({"opus-5", "claude-opus-5", "claude-opus-5-5"}),
-    "codex": frozenset({"gpt-5.6-sol"}),
+    "claude": frozenset({"opus-5", "claude-opus-5", "opus-5-5", "claude-opus-5-5", "claude-fable-5-1"}),
+    "codex": frozenset({"gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol"}),
     "grok": frozenset({"grok-4.6"}),
 }
+#: Codex `max` and `ultra` are the reasoning levels codex-cli 0.160.0 lists
+#: for its top models (`supported_reasoning_levels` in ~/.codex/models_cache.json).
 EFFORTS = {
     "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
-    "codex": frozenset({"low", "medium", "high", "xhigh"}),
+    "codex": frozenset({"low", "medium", "high", "xhigh", "max", "ultra"}),
     "grok": frozenset({"low", "medium", "high"}),
 }
+#: Efforts in ascending order; a judgment round needs `high` or above.
+EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max", "ultra")
+JUDGMENT_EFFORT_FLOOR = "high"
+#: High-risk work runs at `xhigh` or above where the kind supports it.
+HIGH_RISK_EFFORT_FLOOR = "xhigh"
 NO_EFFORT_MODELS = frozenset({"claude-haiku-4-5", "haiku-4.5"})
 JUDGMENT_ROUNDS = frozenset({
     "architect", "reconciliation", "critic", "review",
@@ -140,6 +148,68 @@ class MissingTierError(UsageError):
 
 def _error(message):
     raise ConfigError(message + " Update the agent's tiers in config.json.", {})
+
+
+def effort_at_or_above(effort, floor):
+    return effort in EFFORT_ORDER and EFFORT_ORDER.index(effort) >= EFFORT_ORDER.index(floor)
+
+
+def judgment_efforts(kind):
+    """The efforts of `kind` that meet the judgment floor, ascending."""
+    return [effort for effort in EFFORT_ORDER
+            if effort in EFFORTS.get(kind, frozenset()) and effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR)]
+
+
+def parse_top_models(raw, source="config.json"):
+    """Validate the optional `top_models` block: {kind: [model id, ...]}.
+
+    The ids extend TOP_MODELS for that kind. An id already built in is
+    accepted, so a later built-in addition never breaks a config.
+    """
+    if raw is None:
+        return {}
+    kinds = ", ".join(sorted(TOP_MODELS))
+    shape = ('write it as {{"codex": ["gpt-6-astra"]}}, keyed by {}, or remove it.'.format(kinds))
+    if not isinstance(raw, dict):
+        raise ConfigError("Config at {}: `top_models` is a JSON {}, not an object; {}".format(
+            source, type(raw).__name__, shape), {"source": source, "field": "top_models"})
+    result = {}
+    for kind, ids in raw.items():
+        where = "Config at {}: `top_models.{}`".format(source, kind)
+        if kind not in TOP_MODELS:
+            raise ConfigError("{} names an unknown kind; `top_models` accepts {}.".format(where, kinds),
+                              {"source": source, "field": "top_models", "kind": kind})
+        if not isinstance(ids, list) or not ids:
+            raise ConfigError("{} must be a non-empty array of model ids; {}".format(where, shape),
+                              {"source": source, "field": "top_models", "kind": kind})
+        for model in ids:
+            if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
+                raise ConfigError("{} holds {!r}; each entry is a model id such as \"gpt-6-astra\", "
+                                  "never a flag or command.".format(where, model),
+                                  {"source": source, "field": "top_models", "kind": kind})
+        if len(set(ids)) != len(ids):
+            raise ConfigError("{} lists a model id twice; keep one entry per id.".format(where),
+                              {"source": source, "field": "top_models", "kind": kind})
+        result[kind] = frozenset(ids)
+    return result
+
+
+def top_models_for(kind, extra=None):
+    """Built-in pins for `kind` plus the operator's `top_models` additions."""
+    return TOP_MODELS.get(kind, frozenset()) | (extra or {}).get(kind, frozenset())
+
+
+def judgment_refusal(subject, kind, model, effort, top_models, details):
+    """A ConfigError naming who was refused, on what, and what is accepted."""
+    return ConfigError(
+        "{} cannot use model {!r} at effort {!r}: {} judgment work accepts models {} at effort {}. "
+        "Use an accepted model and effort, or add the model to `top_models.{}` in config.json "
+        "(it extends the built-in list).".format(
+            subject, model, effort, kind, ", ".join(sorted(top_models)),
+            ", ".join(judgment_efforts(kind)), kind),
+        {**details, "kind": kind, "model": model, "effort": effort,
+         "accepted_models": sorted(top_models), "accepted_efforts": judgment_efforts(kind)},
+    )
 
 
 def parse_launch_args(args, kind):
@@ -272,8 +342,12 @@ def verify_worker_permissions(kind, argv):
         raise HerdrError("Worker launch arguments do not prove YOLO mode. " + recovery, {})
 
 
-def parse_tiers(raw, kind):
-    """Validate an optional per-agent {round: tier} table; never invent rows."""
+def parse_tiers(raw, kind, top_models=None, agent=None):
+    """Validate an optional per-agent {round: tier} table; never invent rows.
+
+    `top_models` is the agent's effective judgment pin set (top_models_for);
+    None means the built-in set.
+    """
     if raw is None:
         return {}
     if kind not in TOP_MODELS:
@@ -296,10 +370,12 @@ def parse_tiers(raw, kind):
                 _error("Haiku accepts no effort flag; omit effort for its Claude tier.")
         elif not isinstance(effort, str) or effort not in EFFORTS[kind]:
             _error("Tier {!r} needs an explicit effort from {}.".format(round_type, sorted(EFFORTS[kind])))
+        pins = TOP_MODELS[kind] if top_models is None else top_models
         if round_type in JUDGMENT_ROUNDS and (
-            model not in TOP_MODELS[kind] or effort not in {"high", "xhigh", "max"}
+            model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR)
         ):
-            _error("Judgment round {!r} must use the pinned top model at high or above.".format(round_type))
+            raise judgment_refusal("Agent {!r} judgment round {!r}".format(agent or kind, round_type),
+                                   kind, model, effort, pins, {"agent": agent or kind, "round": round_type})
         multiplier = entry.get("multiplier", 1.0)
         if isinstance(multiplier, bool) or not isinstance(multiplier, (int, float)):
             _error("Tier multiplier must be a finite positive number.")
@@ -390,13 +466,14 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     )
     if needs_xhigh:
         # High risk also excludes a lower build/fix model, not only low effort.
-        if tier["model"] not in TOP_MODELS[agent.kind]:
+        pins = getattr(agent, "top_models", None) or TOP_MODELS[agent.kind]
+        if tier["model"] not in pins:
             if "review" not in agent.tiers:
                 raise MissingTierError("Agent {} has no review tier for high-risk work; add its review row before assigning it this round.".format(agent.name), {})
             tier = dict(agent.tiers["review"])
             chosen_round = "review"
-        if agent.kind in {"claude", "codex"} and tier["effort"] not in {"xhigh", "max"}:
-            tier["effort"] = "xhigh"
+        if agent.kind in {"claude", "codex"} and not effort_at_or_above(tier["effort"], HIGH_RISK_EFFORT_FLOOR):
+            tier["effort"] = HIGH_RISK_EFFORT_FLOOR
         elif agent.kind == "grok" and tier["effort"] != "high":
             # Grok's ceiling is high; a cheaper row escalates to it.
             tier["effort"] = "high"

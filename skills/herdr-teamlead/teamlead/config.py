@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .errors import ConfigError, TeamLeadError
 from .herdr import SLASH_DELIVERIES, SLASH_DELIVERY_PASTE
-from .tiers import parse_launch_args, parse_tiers
+from .tiers import EFFORTS, TOP_MODELS, judgment_refusal, parse_launch_args, parse_tiers, parse_top_models, top_models_for, effort_at_or_above, JUDGMENT_EFFORT_FLOOR
 
 CONFIG_SCHEMA_VERSION = 3
 READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3})
@@ -61,9 +61,10 @@ class Agent:
         "tiers",
         "launch_args",
         "capabilities",
+        "top_models",
     )
 
-    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=()):
+    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=(), top_models=None):
         self.name = name
         self.kind = kind
         self.usage_prompt = usage_prompt
@@ -94,6 +95,10 @@ class Agent:
         self.tiers = tiers or {}
         self.launch_args = tuple(launch_args)
         self.capabilities = tuple(capabilities)
+        # Effective judgment pins for this agent's kind: the built-in set
+        # plus the config's `top_models` additions. Not part of as_dict: it
+        # is config-wide, never an agent field.
+        self.top_models = frozenset(top_models) if top_models is not None else TOP_MODELS.get(kind, frozenset())
         # "paste" (agent prompt) or "type" (pane send-text plus Enter).
         self.slash_delivery = slash_delivery
         # The prompt glyph that marks the composer row, so teamlead can see
@@ -182,6 +187,8 @@ def parse_config(payload, source="<memory>"):
             ),
             {"source": source, "found": version, "expected": CONFIG_SCHEMA_VERSION},
         )
+
+    extra_top_models = parse_top_models(payload.get("top_models"), source)
 
     raw_agents = payload.get("agents")
     if not isinstance(raw_agents, list) or not raw_agents:
@@ -325,7 +332,9 @@ def parse_config(payload, source="<memory>"):
                 composer_ignore_dim=ignore_dim,
                 model_label=model_label,
                 window_group=window_group,
-                tiers=parse_tiers(entry.get("tiers"), entry["kind"]),
+                tiers=parse_tiers(entry.get("tiers"), entry["kind"],
+                                  top_models_for(entry["kind"], extra_top_models), name),
+                top_models=top_models_for(entry["kind"], extra_top_models),
                 launch_args=parse_launch_args(entry.get("launch_args", []), entry["kind"]),
                 capabilities=capabilities,
                 slash_enter_count=enters,
@@ -380,10 +389,9 @@ def load_config(path):
     return parse_config(_read_config(path), source=str(path))
 
 
-#: Reasoning-effort levels `claude --effort` accepts. A tier may name no
-#: effort at all: claude-haiku-4-5 takes no effort flag, and a model that
-#: does not accept one must not be forced to carry a value here.
-VALID_JUDGE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+#: Reasoning-effort levels any supported CLI accepts. A judge whose agent is
+#: configured must also meet that kind's judgment floor (parse_judge).
+VALID_JUDGE_EFFORTS = frozenset().union(*EFFORTS.values())
 
 
 class Judge:
@@ -452,12 +460,31 @@ def parse_judge(payload, source="<memory>"):
             ),
             {"source": source, "effort": effort},
         )
+    _check_judge_pin(payload, raw["agent"], raw["model"], effort, source)
     # Legacy banner_pattern is ignored: a screen cannot prove launch flags.
     return Judge(
         agent=raw["agent"],
         model=raw["model"],
         effort=effort,
     )
+
+
+def _check_judge_pin(payload, agent, model, effort, source):
+    """Hold the judge to its agent kind's judgment pins and effort floor.
+
+    The judge seat is the most capable model available, so it meets the same
+    floor as a judgment round. A judge whose agent is not configured cannot be
+    seated, and its kind is unknown: that block is left to the planner.
+    """
+    entries = payload.get("agents")
+    kind = next((entry.get("kind") for entry in entries if isinstance(entry, dict) and entry.get("name") == agent),
+                None) if isinstance(entries, list) else None
+    if kind not in TOP_MODELS:
+        return
+    pins = top_models_for(kind, parse_top_models(payload.get("top_models"), source))
+    if model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR) or effort not in EFFORTS[kind]:
+        raise judgment_refusal("Config at {}: the `judge` seat on agent {!r}".format(source, agent),
+                               kind, model, effort or None, pins, {"source": source, "agent": agent, "round": "judge"})
 
 
 def load_judge(path):

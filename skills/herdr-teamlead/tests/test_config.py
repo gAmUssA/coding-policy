@@ -466,6 +466,108 @@ class ParseJudgeTest(unittest.TestCase):
         self.assertEqual(judge.effort, "max")
 
 
+def _tiered_payload(top_models=None, judge=None, review_model="gpt-7-nova"):
+    """A schema-2 config whose codex worker pins `review_model` for review."""
+    payload = copy.deepcopy(VALID)
+    payload["schema_version"] = 2
+    payload["agents"][1]["tiers"] = {"review": {"model": review_model, "effort": "high"}}
+    payload["agents"].append(dict(copy.deepcopy(VALID["agents"][0]), name="judge"))
+    if top_models is not None:
+        payload["top_models"] = top_models
+    if judge is not None:
+        payload["judge"] = judge
+    return payload
+
+
+class TopModelsConfigTest(unittest.TestCase):
+    """`top_models` extends the built-in judgment pins for every reader (#47)."""
+
+    def test_configured_ids_admit_a_judgment_row_and_reach_the_agent(self):
+        agents = parse_config(_tiered_payload(top_models={"codex": ["gpt-7-nova"]}))
+        codex = agents[1]
+        self.assertEqual(codex.tiers["review"]["model"], "gpt-7-nova")
+        self.assertIn("gpt-7-nova", codex.top_models)
+        self.assertIn("gpt-6-astra", codex.top_models)
+        self.assertNotIn("gpt-7-nova", agents[0].top_models)
+
+    def test_without_configured_ids_the_row_is_refused_with_the_fix(self):
+        with self.assertRaises(ConfigError) as caught:
+            parse_config(_tiered_payload())
+        message = str(caught.exception)
+        for fragment in ("'codex'", "'review'", "'gpt-7-nova'", "top_models.codex", "gpt-6-astra"):
+            self.assertIn(fragment, message)
+
+    def test_an_invalid_block_is_refused_even_without_tiers(self):
+        for raw in ({"agy": ["x"]}, {"codex": []}, {"codex": ["a", "a"]}, ["gpt-7-nova"]):
+            payload = copy.deepcopy(VALID)
+            payload["top_models"] = raw
+            with self.subTest(raw=raw), self.assertRaises(ConfigError) as caught:
+                parse_config(payload)
+            self.assertIn("top_models", str(caught.exception))
+
+    def test_a_config_without_the_block_keeps_parsing(self):
+        self.assertEqual(len(parse_config(VALID)), 2)
+
+    def test_the_shipped_example_extends_the_pins(self):
+        example = _example_config()
+        self.assertIn("top_models", example)
+        agents = parse_config(example)
+        self.assertTrue(all(agent.top_models for agent in agents if agent.kind in ("claude", "codex", "grok")))
+
+
+class JudgePinTest(unittest.TestCase):
+    """The judge block meets the judgment floor of its agent's kind (#47)."""
+
+    def _judge(self, model, effort=None, top_models=None):
+        block = {"agent": "judge", "model": model}
+        if effort is not None:
+            block["effort"] = effort
+        return parse_judge(_tiered_payload(top_models=top_models, judge=block, review_model="gpt-6-astra"))
+
+    def test_current_top_models_at_high_or_above_are_valid(self):
+        for model, effort in (("claude-opus-5", "max"), ("claude-fable-5-1", "max"), ("opus-5-5", "high"),
+                              ("claude-opus-5-5", "xhigh")):
+            with self.subTest(model=model):
+                judge = self._judge(model, effort)
+                assert judge is not None
+                self.assertEqual((judge.model, judge.effort), (model, effort))
+
+    def test_a_lower_model_or_effort_is_refused_with_the_fix(self):
+        for model, effort in (("sonnet-5", "max"), ("claude-opus-5", "medium"), ("claude-opus-5", None),
+                              ("claude-haiku-4-5", None), ("gpt-6-astra", "high")):
+            with self.subTest(model=model, effort=effort), self.assertRaises(ConfigError) as caught:
+                self._judge(model, effort)
+            message = str(caught.exception)
+            for fragment in ("judge", repr(model), "top_models.claude", "claude-fable-5-1"):
+                self.assertIn(fragment, message)
+
+    def test_configured_ids_extend_the_judge_pin(self):
+        with self.assertRaises(ConfigError):
+            self._judge("claude-fable-6", "max")
+        judge = self._judge("claude-fable-6", "max", top_models={"claude": ["claude-fable-6"]})
+        assert judge is not None
+        self.assertEqual(judge.model, "claude-fable-6")
+
+    def test_a_codex_judge_takes_its_own_kinds_efforts(self):
+        payload = _tiered_payload(review_model="gpt-6-astra",
+                                  judge={"agent": "codex", "model": "gpt-6.1-sol", "effort": "ultra"})
+        judge = parse_judge(payload)
+        assert judge is not None
+        self.assertEqual(judge.effort, "ultra")
+        payload["judge"]["effort"] = "medium"
+        with self.assertRaises(ConfigError):
+            parse_judge(payload)
+
+    def test_the_load_path_validates_the_judge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps(_tiered_payload(review_model="gpt-6-astra",
+                                                       judge={"agent": "judge", "model": "sonnet-5", "effort": "max"})),
+                            encoding="utf-8")
+            with self.assertRaises(ConfigError):
+                load_judge(path)
+
+
 class WindowGroupTest(unittest.TestCase):
     """`window_group` links workers that draw on one usage window."""
 

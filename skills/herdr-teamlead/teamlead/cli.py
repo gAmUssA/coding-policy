@@ -1314,6 +1314,7 @@ def cmd_preflight(args, client=None, warn=None, trace=None):
     """Gather every pre-planning fact; a stop verdict still exits 0."""
     preflight.validate(args)
     load_config(_config_path(args))
+    load_judge(_config_path(args))
     at = args.now or now_iso()
     measure_args = SimpleNamespace(**vars(args))
     measure_args.agents = None
