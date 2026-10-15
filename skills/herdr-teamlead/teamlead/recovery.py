@@ -14,6 +14,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 from .errors import UsageError
+from . import gates
 from .chronology import assignment_after, latest_assignment, timestamp
 
 
@@ -1071,6 +1072,8 @@ def record_report(store, data, at):
     evidence, body = receipt(data["report"])
     if data["head_revision"] not in body:
         raise UsageError("The review report does not name the recorded full head SHA; collect the current-tip report before recording it.", {})
+    if data["verdict"] == "approved":
+        gates.require_green(body, "An approved review")
     result = {"schema_version": RECOVERY_SCHEMA_VERSION, "at": at, **data, "evidence": evidence}
     if record.get("report") and record["report"] != result:
         _event(store, at, "review_superseded", record["task"], {"dispatch": record["id"], "previous": record["report"]})

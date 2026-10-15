@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from . import __version__
 from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
-from . import attention, composition, engagement, historical, memory, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
+from . import attention, composition, engagement, gates, historical, memory, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
 from .errors import PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
@@ -367,6 +367,10 @@ def build_parser():
     report_parser.add_argument("--pane", required=True)
     report_parser.add_argument("--report", required=True)
     report_parser.add_argument("--lines", type=int, required=True)
+
+    gates_parser = sub.add_parser("check-gates", parents=[common], help="Exit non-zero unless a report's `## Gates` lines are present, well-formed and all exit 0.")
+    gates_parser.add_argument("--report", required=True, metavar="PATH", help="Absolute path of the worker report to check.")
+    gates_parser.add_argument("--require", action="append", default=[], metavar="NAME", help="A gate name the report must list; repeatable.")
 
     for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist"):
         record_parser = sub.add_parser(command, parents=[common], help="Record owner-managed {} evidence.".format(command))
@@ -1345,6 +1349,13 @@ def cmd_probe_report(args, client=None, warn=None, trace=None):
     return report_delivery.probe(client, args.agent, args.pane, args.report, sys.stdin.read().rstrip("\n"), args.lines), None
 
 
+def cmd_check_gates(args, client=None, warn=None, trace=None):
+    evidence, body = recovery.receipt(args.report)
+    result = {**evidence, **gates.check(body, args.require)}
+    failure = None if result["ok"] else {"error": "gates_not_green", "message": "Do not accept this report; send it back as a fix round naming: {}.".format("; ".join(result["failures"])), "details": {"failures": result["failures"]}}
+    return result, failure
+
+
 def cmd_memory(args, client=None, warn=None, trace=None):
     return memory.run_command(args, _state_path(args), args.now or now_iso()), None
 
@@ -1378,6 +1389,7 @@ COMMANDS = {
     "validate-partition": cmd_validate_partition,
     "start-judge": cmd_start_judge,
     "probe-report": cmd_probe_report,
+    "check-gates": cmd_check_gates,
     **{command: cmd_retrospective for command in ("retro-check", "retro-record", "retro-list", "retro-show")},
     **{command: cmd_memory for command in memory.COMMANDS},
     **{command: cmd_attention for command in attention.COMMANDS},
@@ -1402,7 +1414,7 @@ def main(argv=None, stdout=None, stderr=None, client=None):
     try:
         # Commands that may migrate or write state share its canonical lock.
         # Dry runs, probes, and retrospective reads remain read-only.
-        readonly = args.command in {"probe-report", "detect-triggers", "validate-partition", "retro-check", "retro-list", "retro-show"} or getattr(args, "dry_run", False)
+        readonly = args.command in {"probe-report", "check-gates", "detect-triggers", "validate-partition", "retro-check", "retro-list", "retro-show"} or getattr(args, "dry_run", False)
         separate_owner = args.command in memory.COMMANDS | attention.COMMANDS | SUPERVISION_COMMANDS | restoration.COMMANDS
         lock = nullcontext() if readonly or separate_owner else state_lock(retrospective.canonical_state(_state_path(args)))
         with lock:

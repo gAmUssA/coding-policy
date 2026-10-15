@@ -124,6 +124,12 @@ All references to the round log here mean that ledger.
 A report is the worker's only channel to the lead. Read all of it, every time —
 a `## BLOCKED` section can sit under a report that otherwise reads as finished.
 
+- **Gate lines** — run `teamlead.sh check-gates --report <path>` on every
+  developer report and tester Mode B/C report before accepting it. On a
+  developer report, any failure records `needs_work` and goes back as a fix
+  round. On a tester report, a missing or malformed line records `needs_work`;
+  a red gate is a blocking finding against the branch. `record-report` refuses
+  an `approved` review whose gates are not green.
 - **Blocking findings present** — take Step 10's bounded fix path under
   `skills/herdr-teamlead/references/team-operation.md` Fix Loops. Keep a stable task identifier and
   advance its fix counter; changing worker or scope never restarts it.
