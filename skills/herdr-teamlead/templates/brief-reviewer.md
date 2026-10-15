@@ -41,6 +41,10 @@ Expected range: `{{REVIEW_BASE}}..{{REVIEW_HEAD}}`.
 Do not fix what you find. Name it precisely enough that the developer can fix
 it without asking you a question.
 
+Never assert a negative ("X is unused", "nothing calls Y") without pasting the
+command that proves it and its output. A deleted file that no commit message
+or PR body explains is a blocking finding.
+
 For each proposed correction, cite the accepted behavior it serves and describe
 the behavior the fix would add or restore. Identify a new guarantee or obligation
 explicitly; a severity label cannot authorize it. Compare repeated findings on
@@ -65,6 +69,9 @@ Write `{{REPORT}}` covering:
 - The design note or review content in full, or a link plus its substance.
 - Every finding with its severity label.
 - What you deliberately did not flag, and why.
+- A `## Gates` section: one line per check you ran against the reviewed tip,
+  with its real exit code. `record-report` refuses an approval whose line is
+  missing or non-zero: `- <name> exit=<code> cmd=<exact command>`
 
 Final chat message ends with exactly:
 

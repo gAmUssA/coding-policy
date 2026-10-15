@@ -78,14 +78,10 @@ to know goes in the report.
   scripts sit beside it in that directory.
 - Read the repo's contributor instructions and configured checks to identify
   its gates. Run the checks required for your assignment and report their results.
-- Never suppress an error. No `|| true`, no `2>/dev/null` standing in for a
-  handler, no empty catch.
-- Every shipped module gets deterministic, outcome-based tests. No wall-clock
-  dependence, no self-generated random inputs.
-- One logical change per commit. Imperative subject, body says why.
-- PR title is `<type>(<scope>): <imperative summary>`. The PR body follows the
-  repo's template and carries no AI attribution or tool disclosure
-  (`rules/commit-conventions.md` No AI Attribution).
+- `rules/error-handling.md`, `rules/testing-standards.md` and
+  `rules/commit-conventions.md` bind every change, commit and PR you make.
+- Never print the environment or process argv: no `env`, `printenv`, or `ps`
+  with a command column.
 
 ## Reporting
 
@@ -123,9 +119,11 @@ to know goes in the report.
   Never quote another attempt's completion marker in your final message.
 - Never ask the lead a question and wait. Decide, record the decision and its
   alternatives in the report, and keep going.
-- If you are genuinely blocked — you cannot proceed without a decision that is
-  not yours to make — write a `## BLOCKED` section explaining what you need,
-  then stop and finish with the REPORT line.
+- If you are genuinely blocked — the next step needs someone else — write a
+  `## BLOCKED` section naming that person and the exact action you need, then
+  stop and finish with the REPORT line.
+- A finding against your own branch, including a review's blocking finding,
+  is your work, never a blocker.
 - Never start work outside your brief.
 - Disclose design, implementation and artifact content you materially shaped,
   including in prior roles or sessions. The lead records contribution history

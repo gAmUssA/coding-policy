@@ -84,7 +84,9 @@ Write `{{REPORT}}` covering:
 - Which mode and scope you ran, and the verified commit SHA.
 - The package path and its full BASE/HEAD commit IDs for Mode C.
 - The criterion-to-test map, or the verification result per criterion.
-- Every gate command and its output summary.
+- For Modes B and C, a `## Gates` section: one line per gate, the real exit
+  code of its final run, `unknown` if it never finished:
+  `- <name> exit=<code> cmd=<exact command>`
 - Every finding with its severity label.
 - The patch path, when you produced one.
 
