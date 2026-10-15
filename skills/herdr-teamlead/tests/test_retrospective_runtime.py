@@ -240,7 +240,14 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
             guard.before_launch(self.steps[0])
         self.assertEqual(self.runner.writes(), [])
 
+    def pin_codex_judge(self):
+        """The current config's judge block, matching the plans below."""
+        config = json.loads(self.config.read_text())
+        config["judge"] = {"agent": "codex", "model": "gpt-5.6-sol", "effort": "high"}
+        self.config.write_text(json.dumps(config))
+
     def test_first_judge_start_bridges_only_same_task_and_tier(self):
+        self.pin_codex_judge()
         self.path = self.root / "new-team.json"
         self.state = empty_state()
         plan = self.root / "judge-plan.json"
@@ -269,6 +276,7 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
         # coding-policy#399: a judge seat is dispatch too; the gate that
         # refuses `apply` on an unanswered decision refuses `start-judge`.
         from teamlead import attention
+        self.pin_codex_judge()
         self.path = self.root / "gated-team.json"
         plan = self.root / "gated-judge-plan.json"
         plan.write_text(json.dumps({"assignments": {"judge": "codex"},

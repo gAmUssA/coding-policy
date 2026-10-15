@@ -52,15 +52,30 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
 ''', encoding="utf-8")
         self.fake.chmod(0o755)
 
-    def run_launcher(self, model="claude-fable-5-1", effort: str | None = "max", kind="claude", launch_args=None, **env):
+    def write_config(self, model, effort, kind, judge=None, agent_kind=None):
+        """The current operator config start-judge reads: one judge agent and its block."""
+        config = {"schema_version": 2, "agents": [{
+            "name": "judge", "kind": agent_kind or kind, "usage_prompt": "/usage", "usage_marker": "Current week",
+            "usage_read_source": "visible", "clear_prompt": "/clear"}]}
+        block = {"agent": "judge", "model": model}
+        if effort is not None:
+            block["effort"] = effort
+        config["judge"] = block if judge is None else judge
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+
+    def run_launcher(self, model="claude-fable-5-1", effort: str | None = "max", kind="claude", launch_args=None,
+                     config_judge=None, config_kind=None, write_config=True, **env):
         self.log.unlink(missing_ok=True)
+        self.config = self.root / "config.json"
+        if write_config:
+            self.write_config(model, effort, kind, config_judge, config_kind)
         launch_state = self.root / ("state-" + str(len(list(self.root.glob("state-*.retrospectives")))) + ".json")
         # The plan carries the seat's declared mode (#425); these fixtures
         # exercise adjudication, which carries no assessment requirement.
         self.plan.write_text(json.dumps({"schema_version": 3, "assignments": {"judge": "judge"},
             "judge": {"agent": "judge", "model": model, "effort": effort, "mode": "adjudication",
                       "launch_args": launch_args or []}}), encoding="utf-8")
-        return subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", kind,
+        return subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", kind, "--config", str(self.config),
                                "--state", str(launch_state), "--now", "2026-09-09T10:00:00+00:00", "--task", "judge-fixture"],
             env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log), **env},
             capture_output=True, text=True, check=False)
@@ -73,15 +88,51 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
         self.assertEqual(proof["verified"]["argv"], ["claude", "--dangerously-skip-permissions", "--model", "claude-fable-5-1", "--effort", "max"])
         self.assertEqual(json.loads(self.log.read_text())[7:], ["--", "--dangerously-skip-permissions", "--model", "claude-fable-5-1", "--effort", "max"])
 
-    def test_no_effort_model_and_each_supported_cli(self):
-        for model, effort, kind in (("claude-haiku-4-5", None, "claude"),
-                                    ("gpt-5.6-sol", "xhigh", "codex"), ("grok-4.6", "high", "grok")):
+    def test_each_supported_cli_on_a_pinned_judge(self):
+        for model, effort, kind in (("claude-opus-5-5", "high", "claude"),
+                                    ("gpt-6.1-sol", "ultra", "codex"), ("grok-4.6", "high", "grok")):
             with self.subTest(kind=kind):
                 result = self.run_launcher(model, effort, kind)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)["effort"], effort)
                 expected = {"claude": "--dangerously-skip-permissions", "codex": "--dangerously-bypass-approvals-and-sandbox", "grok": "--always-approve"}[kind]
                 self.assertIn(expected, json.loads(result.stdout)["verified"]["argv"])
+
+    def test_a_plan_that_differs_from_the_current_judge_config_never_starts(self):
+        current = {"agent": "judge", "model": "claude-opus-5", "effort": "max"}
+        cases: tuple[tuple[str, dict[str, str] | None, str | None], ...] = (
+            ("model", current, None),
+            ("effort", dict(current, model="claude-fable-5-1", effort="high"), None),
+            ("agent", dict(current, agent="other", model="claude-fable-5-1"), None),
+            ("kind", None, "codex"))
+        for label, config_judge, config_kind in cases:
+            with self.subTest(differs=label):
+                result = self.run_launcher(config_judge=config_judge, config_kind=config_kind)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("config_error", result.stderr)
+                self.assertFalse(self.log.exists(), "no worker may start on a stale judge plan")
+
+    def test_a_judge_below_the_judgment_floor_never_starts(self):
+        for model, effort in (("claude-haiku-4-5", None), ("sonnet-5", "max"), ("claude-opus-5", "medium")):
+            with self.subTest(model=model, effort=effort):
+                result = self.run_launcher(model, effort)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("top_models.claude", result.stderr)
+                self.assertFalse(self.log.exists())
+
+    def test_a_missing_config_or_judge_block_never_starts(self):
+        result = self.run_launcher(write_config=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("config", result.stderr)
+        self.assertFalse(self.log.exists())
+        self.write_config("claude-fable-5-1", "max", "claude")
+        config = json.loads(self.config.read_text())
+        del config["judge"]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        result = self.run_launcher(write_config=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("judge", result.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_judge_restrictive_launch_options_refuse_before_transport(self):
         result = self.run_launcher(launch_args=["--permission-mode", "plan"])
