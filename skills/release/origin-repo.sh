@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Name the GitHub repository a checkout's `origin` remote points at.
 #
-# Every `gh` call in the release flow passes `--repo <owner>/<repo>` from this
-# script, never gh's own default: without `--repo`, gh targets
+# Every `gh` call in the release flow passes `--repo github.com/<owner>/<repo>`
+# (the `target` field) from this script, never gh's own default: without
+# `--repo`, gh targets
 # `gh repo set-default`, which in a fork can be the upstream parent — a PR,
 # merge, or secret landing in a repository the operator does not own
-# (rules/external-repo-contributions.md).
+# (rules/external-repo-contributions.md). The target is host-qualified: a
+# hostless `--repo <owner>/<repo>` lets GH_HOST redirect the call to another
+# server (docs/adr/0008-origin-binds-github-operations.md).
 #
 # Accepted origin URL forms, each with or without a trailing `.git` or `/`:
 #   https://[<userinfo>@]github.com/<owner>/<repo>
@@ -17,7 +20,9 @@
 #
 # Usage: origin-repo.sh [checkout]
 #   checkout  the git checkout to read; defaults to the current directory
-# Out:   one JSON object on stdout — {"repo": "<owner>/<repo>", "owner": "...", "name": "..."}
+# Out:   one JSON object on stdout —
+#          {"repo": "<owner>/<repo>", "owner": "...", "name": "...",
+#           "host": "github.com", "target": "github.com/<owner>/<repo>"}
 #        stderr carries diagnostics only, never the remote URL (it can carry
 #        credentials), and never suggests a command that prints it
 #        (`git remote -v`, `git remote get-url`); remediation sets a known URL.
@@ -88,7 +93,8 @@ main() {
     fi
   done <<<"$push_urls"
 
-  jq -cn --arg o "$owner" --arg n "$name" '{repo: "\($o)/\($n)", owner: $o, name: $n}'
+  jq -cn --arg o "$owner" --arg n "$name" --arg h "$GITHUB_HOST" \
+    '{repo: "\($o)/\($n)", owner: $o, name: $n, host: $h, target: "\($h)/\($o)/\($n)"}'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -60,7 +60,7 @@ run() {
 # expect_repo <url> <owner/name>
 expect_repo() {
   repo_with "$1"; run "$D"
-  if [[ $RC -eq 0 ]] && jq -e --arg r "$2" '.repo == $r and (.owner + "/" + .name) == $r' <<<"$OUT" >/dev/null; then pass
+  if [[ $RC -eq 0 ]] && jq -e --arg r "$2" '.repo == $r and (.owner + "/" + .name) == $r and .host == "github.com" and .target == "github.com/" + $r' <<<"$OUT" >/dev/null; then pass
   else fail "url $1: RC=$RC OUT=$OUT ERR=$ERR"; fi
 }
 
