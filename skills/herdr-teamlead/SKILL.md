@@ -467,7 +467,7 @@ Plan the pinned judge against Step 12's fresh snapshot:
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/teamlead.sh" plan [--config <config-file>] \
   --roles judge --judge-mode <adjudication|diagnosis> \
-  --snapshot <step-14-measure-output> --task <task-id>
+  --snapshot <step-12-measure-output> --task <task-id>
 ```
 
 `adjudication` for a dispute, `diagnosis` for an exhausted allowance — the same
@@ -486,7 +486,7 @@ For an empty shell pane, complete retrospective checks for the start and run:
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/start-judge-worker.sh" \
-  <step-15-plan-file> <pane> [claude|codex|grok] --task <task-id> \
+  <step-13-plan-file> <pane> [claude|codex|grok] --task <task-id> \
   [--config <config-file>] [--state <state-file>]
 ```
 
