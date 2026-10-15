@@ -19,6 +19,9 @@ class JudgeLauncherTest(unittest.TestCase):
         self.plan = self.root / "plan.json"
         self.log = self.root / "calls.json"
         self.fake = self.root / "herdr"
+        self.xdg = self.root / "xdg"
+        self.xdg.mkdir()
+        self.config = self.root / "config.json"
         self.fake.write_text("#!" + sys.executable + '''
 import json, os, sys
 from pathlib import Path
@@ -64,7 +67,7 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
         self.config.write_text(json.dumps(config), encoding="utf-8")
 
     def run_launcher(self, model="claude-fable-5-1", effort: str | None = "max", kind="claude", launch_args=None,
-                     config_judge=None, config_kind=None, write_config=True, **env):
+                     config_judge=None, config_kind=None, write_config=True, pass_config=True, **env):
         self.log.unlink(missing_ok=True)
         self.config = self.root / "config.json"
         if write_config:
@@ -75,10 +78,45 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
         self.plan.write_text(json.dumps({"schema_version": 3, "assignments": {"judge": "judge"},
             "judge": {"agent": "judge", "model": model, "effort": effort, "mode": "adjudication",
                       "launch_args": launch_args or []}}), encoding="utf-8")
-        return subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", kind, "--config", str(self.config),
+        config_args = ["--config", str(self.config)] if pass_config else []
+        return subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", kind, *config_args,
                                "--state", str(launch_state), "--now", "2026-09-09T10:00:00+00:00", "--task", "judge-fixture"],
-            env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log), **env},
+            env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log),
+                 "XDG_CONFIG_HOME": str(self.xdg), **env},
             capture_output=True, text=True, check=False)
+
+    def write_default_config(self, model, effort):
+        """The default-path config (`$XDG_CONFIG_HOME/teamlead/config.json`) with another judge."""
+        default = self.xdg / "teamlead" / "config.json"
+        default.parent.mkdir(parents=True, exist_ok=True)
+        saved, self.config = self.config, default
+        self.write_config(model, effort, "claude")
+        self.config = saved
+
+    def test_a_non_default_config_reaches_start_judge(self):
+        self.write_default_config("claude-opus-5", "max")
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["model"], "claude-fable-5-1")
+
+    def test_omitting_the_planning_config_compares_against_the_default_and_refuses(self):
+        self.write_default_config("claude-opus-5", "max")
+        result = self.run_launcher(pass_config=False)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("config_error", result.stderr)
+        self.assertIn(str(self.xdg), result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_config_is_part_of_the_launcher_contract(self):
+        usage = subprocess.run(["bash", str(SUT)], capture_output=True, text=True, check=False)
+        self.assertEqual(usage.returncode, 2)
+        self.assertIn("--config FILE", usage.stderr)
+        missing = subprocess.run(["bash", str(SUT), str(self.plan), "w1:p2", "claude", "--config"],
+                                 env={**os.environ, "HERDR_BIN": str(self.fake), "FAKE_LOG": str(self.log)},
+                                 capture_output=True, text=True, check=False)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("--config needs a file path", missing.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_launch_proves_model_and_effort_without_a_banner(self):
         result = self.run_launcher()

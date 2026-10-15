@@ -98,10 +98,14 @@ run the preflight on every round start, resume, and return from a later step:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight [--config <config-file>] \
   --repo <repo-path> --slug <owner/repo> \
   [--base <recorded-base> [--head <pushed-head>] [--planned <planned.json>]]
 ```
+
+A round on a non-default config passes the same `--config <config-file>` to
+every `preflight`, `measure`, `plan`, `start-judge-worker.sh` and `apply` call;
+the default is `$XDG_CONFIG_HOME/teamlead/config.json`.
 
 Emits one JSON with `roster`, `authority`, `retrospective`, `headroom`,
 `triggers`, `verdict`, `stops` and `read_next`. The headroom fact is a `measure`
@@ -186,7 +190,7 @@ skills/herdr-teamlead/references/review-partition.md
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" plan [--config <config-file>] \
   --roles <role[,role...]> [--requirements <requirements.json>] \
   [--exclude <role>=<agent>[,<agent>...]]... [--judge-mode adjudication|diagnosis] \
   [--round <role>=<round-type>] [--round-context <evidence.json>] \
@@ -293,7 +297,7 @@ dispatch. Apply rechecks coverage before worker input. Dry runs prove no coverag
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" apply \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" apply [--config <config-file>] \
   --assignments <plan-file> \
   --brief <role>=<path> [--brief <role>=<path>]... \
   --report <role>=<report> [--report <role>=<report>]... \
@@ -449,7 +453,8 @@ CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/teamlead.sh" measure
 ```
 
-Emits and saves the snapshot under Step 2's headroom contract; exit 1 names
+Add the round's `--config <config-file>` when it is not the default. Emits and
+saves the snapshot under Step 2's headroom contract; exit 1 names
 `failed_agents`. Resolve any unreadable judge window before planning. Pass the
 fresh snapshot to Step 13; never reuse the earlier reading as affordability
 proof. Proceed immediately to Step 13.
@@ -460,7 +465,7 @@ Plan the pinned judge against Step 12's fresh snapshot:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" plan \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" plan [--config <config-file>] \
   --roles judge --judge-mode <adjudication|diagnosis> \
   --snapshot <step-14-measure-output> --task <task-id>
 ```
@@ -481,11 +486,13 @@ For an empty shell pane, complete retrospective checks for the start and run:
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/start-judge-worker.sh" \
-  <step-15-plan-file> <pane> [claude|codex|grok] --task <task-id> [--state <state-file>]
+  <step-15-plan-file> <pane> [claude|codex|grok] --task <task-id> \
+  [--config <config-file>] [--state <state-file>]
 ```
 
 Starts the pinned judge and verifies launch argv, on the mode Step 13 recorded
-in the plan. The header owns the contract.
+in the plan. Pass the config Step 13 planned with; a judge tier or agent kind
+that differs from that file's `judge` block is refused. The header owns the contract.
 
 - **Exit 0** — proceed immediately to Step 15 with `--no-clear`.
 - **Any non-zero** — report the diagnostic and finish here without briefing
@@ -497,7 +504,7 @@ Use Step 13's plan under Step 8's dispatch contract:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
-bash "$CP/skills/herdr-teamlead/teamlead.sh" apply \
+bash "$CP/skills/herdr-teamlead/teamlead.sh" apply [--config <config-file>] \
   --assignments <plan-file> \
   --brief judge=<round>-judge.md --report judge=<absolute-report-path> \
   --common <path-to-COMMON.md> --judge-mode <adjudication|diagnosis> \

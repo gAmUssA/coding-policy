@@ -127,7 +127,8 @@ and report their diagnostic; never fabricate a history or overwrite the index.
 
 Run the installed `skills/herdr-teamlead/teamlead.sh` with an explicit `bash`
 interpreter, using the plugin root resolved in the skill. Every command accepts
-the team's same `--state <state-file>`. The command's help owns optional flags and
+the team's same `--state <state-file>`, and a round on a non-default config
+passes its same `--config <config-file>` to `retro-check` and `retro-record`. The command's help owns optional flags and
 the exact output envelope; the state schema documents persisted fields.
 
 1. Prepare a JSON request with `transitions`, an array of planned worker changes.
