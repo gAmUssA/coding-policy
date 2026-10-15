@@ -203,6 +203,49 @@ class CodexSessionStart(unittest.TestCase):
             self.assertEqual(adapter.main(), 1)
         self.assertIn("timed out", errors.getvalue())
 
+    def test_timeout_survives_eperm_from_an_unsignalable_group(self):
+        # macOS answers EPERM to killpg while the group's members cannot take a
+        # signal yet. The first group signal is refused that way; the adapter
+        # still reports the timeout and leaves no member of the group behind.
+        (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
+        adapter = self.load_adapter()
+        killpg = os.killpg
+        groups: list[int] = []
+
+        def refuse_once(pgid: int, sig: int) -> None:
+            groups.append(pgid)
+            if len(groups) == 1:
+                raise PermissionError(1, "Operation not permitted")
+            killpg(pgid, sig)
+
+        communicate = subprocess.Popen[str].communicate
+        calls: list[float | None] = []
+
+        def time_out(
+            process: subprocess.Popen[str],
+            input: str | None = None,
+            timeout: float | None = None,
+        ) -> tuple[str, str]:
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
+            return communicate(process, input=input, timeout=5)
+
+        errors = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["hook", "check.sh"]),
+            patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
+            patch.object(subprocess.Popen, "communicate", time_out),
+            patch.object(os, "killpg", refuse_once),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(adapter.main(), 1)
+        self.assertIn("timed out", errors.getvalue())
+        self.assertNotIn("Operation not permitted", errors.getvalue())
+        # Gone, or only unreaped zombies left (macOS answers those EPERM).
+        with self.assertRaises((ProcessLookupError, PermissionError)):
+            killpg(groups[0], 0)
+
     def test_timeout_reaps_a_nested_deadline_runners_group(self):
         # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
         # (patched to 1s) holds an 8s sleeper in the runner's separate process
@@ -231,7 +274,8 @@ class CodexSessionStart(unittest.TestCase):
         try:
             os.kill(pid, 0)
             alive = True
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
+            # Gone, or a zombie awaiting its reaper (macOS answers EPERM).
             alive = False
         if alive:
             os.kill(pid, signal.SIGKILL)
@@ -298,8 +342,9 @@ class CodexSessionStart(unittest.TestCase):
                 os.close(pipe)
                 try:
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    # Expected after successful process-group cleanup.
+                except (ProcessLookupError, PermissionError):
+                    # Expected after successful process-group cleanup; macOS
+                    # answers EPERM for a zombie awaiting its reaper.
                     continue
 
 

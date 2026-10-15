@@ -84,22 +84,25 @@ def policy_context(manifest: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def signal_group(pgid: int, sig: signal.Signals) -> bool:
-    """Send sig to the group; False when no member is left."""
+def signal_group(pgid: int, sig: int) -> bool:
+    """Send sig to the group; False when no member is left.
+
+    macOS answers EPERM while the group's members exist but cannot take a
+    signal yet (a child still between fork and exec, or only zombies left):
+    the group still counts as present and the caller's poll retries.
+    """
     try:
         os.killpg(pgid, sig)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
 def group_alive(pgid: int) -> bool:
     """True while any member of the group exists (signal 0 probes only)."""
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+    return signal_group(pgid, 0)
 
 
 def stop_group(process: subprocess.Popen[str]) -> None:
