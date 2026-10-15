@@ -55,11 +55,13 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
 ''', encoding="utf-8")
         self.fake.chmod(0o755)
 
-    def write_config(self, model, effort, kind, judge=None, agent_kind=None):
+    def write_config(self, model, effort, kind, judge=None, agent_kind=None, launch_args=None):
         """The current operator config start-judge reads: one judge agent and its block."""
         config = {"schema_version": 2, "agents": [{
             "name": "judge", "kind": agent_kind or kind, "usage_prompt": "/usage", "usage_marker": "Current week",
             "usage_read_source": "visible", "clear_prompt": "/clear"}]}
+        if launch_args is not None:
+            config["agents"][0]["launch_args"] = launch_args
         block = {"agent": "judge", "model": model}
         if effort is not None:
             block["effort"] = effort
@@ -67,11 +69,12 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
         self.config.write_text(json.dumps(config), encoding="utf-8")
 
     def run_launcher(self, model="claude-fable-5-1", effort: str | None = "max", kind="claude", launch_args=None,
-                     config_judge=None, config_kind=None, write_config=True, pass_config=True, **env):
+                     config_judge=None, config_kind=None, write_config=True, pass_config=True,
+                     config_launch_args=None, **env):
         self.log.unlink(missing_ok=True)
         self.config = self.root / "config.json"
         if write_config:
-            self.write_config(model, effort, kind, config_judge, config_kind)
+            self.write_config(model, effort, kind, config_judge, config_kind, config_launch_args)
         launch_state = self.root / ("state-" + str(len(list(self.root.glob("state-*.retrospectives")))) + ".json")
         # The plan carries the seat's declared mode (#425); these fixtures
         # exercise adjudication, which carries no assessment requirement.
@@ -106,6 +109,28 @@ print(json.dumps({"result": {"agent": {"name": args[2], "agent": kind,
         self.assertIn("config_error", result.stderr)
         self.assertIn(str(self.xdg), result.stderr)
         self.assertFalse(self.log.exists())
+
+    def test_matching_launch_args_start_with_the_configured_options(self):
+        cases = (("--no-alt-screen", "matching", ["--no-alt-screen"], ["--no-alt-screen"]),
+                 ("yolo-equivalent", "normalized", [], ["--dangerously-bypass-approvals-and-sandbox"]))
+        for label, _, planned, current in cases:
+            with self.subTest(case=label):
+                result = self.run_launcher("gpt-6.1-sol", "xhigh", "codex", launch_args=planned,
+                                           config_launch_args=current)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = json.loads(result.stdout)["verified"]["argv"]
+                self.assertEqual(argv[:2], ["codex", "--dangerously-bypass-approvals-and-sandbox"])
+                self.assertEqual("--no-alt-screen" in argv, "--no-alt-screen" in current)
+
+    def test_stale_launch_args_never_start(self):
+        for planned, current in (([], ["--no-alt-screen"]), (["--no-alt-screen"], [])):
+            with self.subTest(planned=planned, current=current):
+                result = self.run_launcher("gpt-6.1-sol", "xhigh", "codex", launch_args=planned,
+                                           config_launch_args=current)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("config_error", result.stderr)
+                self.assertIn("launch_args", result.stderr)
+                self.assertFalse(self.log.exists(), "no worker may start on stale launch options")
 
     def test_config_is_part_of_the_launcher_contract(self):
         usage = subprocess.run(["bash", str(SUT)], capture_output=True, text=True, check=False)

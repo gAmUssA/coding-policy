@@ -41,7 +41,7 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields
+from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
 from .launch import start_worker, verify_running
 from .state import (
     add_assignment,
@@ -1223,8 +1223,10 @@ def _require_current_judge(args, tier):
     """The plan's judge tier must be the current config's pinned judge.
 
     Reads config.json before any Herdr contact: the judge block and its
-    agent's kind must match the plan's agent, model, effort and --kind, and
-    the pair must meet the effective judgment floor (`top_models` included).
+    agent's kind and launch options must match the plan's agent, model,
+    effort, --kind and launch_args, and the pair must meet the effective
+    judgment floor (`top_models` included). Returns the configured agent the
+    worker is launched from.
     """
     path = _config_path(args)
     agents = {agent.name: agent for agent in load_config(path)}
@@ -1251,6 +1253,16 @@ def _require_current_judge(args, tier):
         raise judgment_refusal("Config at {}: the `judge` seat on agent {!r}".format(path, judge.agent),
                                agent.kind, judge.model, effort, agent.top_models,
                                {"source": str(path), "agent": judge.agent, "round": "judge"})
+    # Normalized: YOLO spellings and equivalent permission pairs compare equal.
+    planned_args = worker_launch_args(agent.kind, parse_launch_args(tier.get("launch_args", []), agent.kind))
+    current_args = worker_launch_args(agent.kind, agent.launch_args)
+    if planned_args != current_args:
+        raise ConfigError("Plan judge launch_args {} differ from agent {!r}'s current launch_args {} at {}; "
+                          "re-run plan --roles judge.".format(json.dumps(planned_args), agent.name,
+                                                              json.dumps(current_args), path),
+                          {"source": str(path), "agent": agent.name, "planned_launch_args": planned_args,
+                           "current_launch_args": current_args})
+    return agent
 
 
 def cmd_start_judge(args, client=None, warn=None, trace=None):
@@ -1263,10 +1275,11 @@ def cmd_start_judge(args, client=None, warn=None, trace=None):
     # The plan carries the mode the lead declared; the flag overrides it, and
     # neither present is a refusal rather than a default (#425).
     judge_mode = recovery.require_judge_mode(_judge_mode_for(args, document))
-    _require_current_judge(args, tier)
+    configured = _require_current_judge(args, tier)
     parsed = parse_tiers({"build": {"model": tier.get("model"), "effort": tier.get("effort")}}, args.kind)["build"]
-    agent = SimpleNamespace(name=tier["agent"], kind=args.kind, idle_markers=(), working_markers=(),
-                            launch_args=parse_launch_args(tier.get("launch_args", []), args.kind))
+    # Launched from the current config; _require_current_judge proved the plan matches it.
+    agent = SimpleNamespace(name=configured.name, kind=configured.kind, idle_markers=(), working_markers=(),
+                            launch_args=configured.launch_args)
     client = client if client is not None else _client(args, trace=trace)
     state_path = _state_path(args)
     state = retrospective_runtime.read_history(state_path)

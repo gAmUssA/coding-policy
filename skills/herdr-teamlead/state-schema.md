@@ -75,9 +75,10 @@ declared `adjudication` or `diagnosis` — beside them; a plan without that seat
 omits the object. Writer: `plan`, from its own `--judge-mode`. Readers:
 `start-judge` and `apply`, which use the recorded mode and refuse a supplied
 one that differs from it. Before any Herdr contact, `start-judge` reads the
-current config and refuses a plan whose judge agent, model, effort or `--kind`
-differs from the configured judge block and its agent's kind, or whose pair
-misses the effective judgment floor; re-plan after a config change. A version-5 plan carries no `mode`; its readers
+current config and refuses a plan whose judge agent, model, effort, `--kind` or
+normalized `launch_args` differs from the configured judge block and its
+agent, or whose pair misses the effective judgment floor; re-plan after a
+config change. The worker launches with the current config's `launch_args`. A version-5 plan carries no `mode`; its readers
 refuse the start rather than defaulting one, since the choice decides which
 pre-dispatch gate the seat is held to. Model and effort become explicit launch flags. Legacy `banner_pattern`
 values are ignored: proof comes from launch or live process argv. The planner

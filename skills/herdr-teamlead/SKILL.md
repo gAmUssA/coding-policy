@@ -491,8 +491,8 @@ bash "$CP/skills/herdr-teamlead/start-judge-worker.sh" \
 ```
 
 Starts the pinned judge and verifies launch argv, on the mode Step 13 recorded
-in the plan. Pass the config Step 13 planned with; a judge tier or agent kind
-that differs from that file's `judge` block is refused. The header owns the contract.
+in the plan. Pass the config Step 13 planned with; a judge tier, agent kind or
+launch options that differ from that file are refused. The header owns the contract.
 
 - **Exit 0** — proceed immediately to Step 15 with `--no-clear`.
 - **Any non-zero** — report the diagnostic and finish here without briefing
