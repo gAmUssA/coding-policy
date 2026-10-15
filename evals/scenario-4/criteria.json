@@ -29,7 +29,7 @@
     },
     {
       "name": "CODEX_AUTH_JSON secret command",
-      "description": "onboarding-plan.md includes `gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json` (or the same command with an explicit `--repo acme-org/acme-payments`). Source: skills/onboard-repo/SKILL.md Step 4",
+      "description": "onboarding-plan.md includes `gh secret set CODEX_AUTH_JSON --repo github.com/acme-org/acme-payments < ~/.codex/auth.json` (`-R` in place of `--repo` and any flag order are fine). The command without `--repo`, or with the hostless `--repo acme-org/acme-payments`, scores 0: gh would pick its default repository, or GH_HOST could send the credential to another server. Source: skills/onboard-repo/SKILL.md Step 4; docs/adr/0008-origin-binds-github-operations.md",
       "max_score": 12
     },
     {
