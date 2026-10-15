@@ -7,6 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import hashlib
 import io
 import json
 import unittest
@@ -429,6 +430,32 @@ class RecoveryCommandTests(fixture.CliCase):
             "supersedes": "diag-cap:plan"})
         self.assertEqual(code, 1)
         self.assertIn("pinned judge", err)
+
+    def approval_record(self, gate):
+        self.seed_cap()
+        extra = ["--correction-plan", "two-fixes", "--work", str(self.work)]
+        code, out, err = self.invoke(self.apply_args("developer", 6, *extra), self.fresh_client("fix-5", "fix-6"))
+        self.assertEqual(code, 0, err)
+        review = self.tmp / "review-approved.md"
+        review.write_text("Reviewed head " + HEAD + "\nNo blocking findings.\n\n## Gates\n\n" + gate + "\n")
+        return {"dispatch": json.loads(out)["applied"][0]["dispatch_id"], "head_revision": HEAD, "verdict": "approved",
+                "review_mode": "full", "reviewer": "codex", "report": str(review), "changed_paths": ["src/parser.py"]}
+
+    def test_record_report_cli_records_an_approval_with_green_gates(self):
+        record = self.approval_record("- tests exit=0 cmd=bash scripts/run-tests.sh")
+        code, _, err = self.owner("record-report", record)
+        self.assertEqual(code, 0, err)
+        saved = next(row for row in self.saved()["recovery"]["dispatches"] if row["id"] == record["dispatch"])["report"]
+        self.assertEqual((saved["verdict"], saved["review_mode"], saved["reviewer"]), ("approved", "full", "codex"))
+        self.assertEqual(saved["evidence"]["sha256"], hashlib.sha256(Path(record["report"]).read_bytes()).hexdigest())
+
+    def test_record_report_cli_refuses_an_approval_with_a_red_gate(self):
+        record = self.approval_record("- tests exit=1 cmd=bash scripts/run-tests.sh")
+        before = self.state.read_bytes()
+        code, _, err = self.owner("record-report", record)
+        self.assertEqual(code, 1)
+        self.assertIn("gate tests exit=1", err)
+        self.assertEqual(self.state.read_bytes(), before)
 
     def test_two_extra_fixes_use_one_approval_with_actual_blocking_review_between(self):
         self.seed_cap()
