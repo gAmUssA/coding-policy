@@ -56,7 +56,8 @@
 #           in hooks/state-schema.md: one line "<schema_version> <checked_at>".
 #           A worker or unproven-role session never writes it.
 #   env   : SYNC_THROTTLE_HOURS (default 1), SYNC_FETCH_TIMEOUT (seconds, default
-#           10), SESSION_START_MODE (set to "portable" by hooks/session-start.sh
+#           10, capped at two thirds of SESSION_START_CHILD_DEADLINE_SEC, which
+#           hooks/session-start.sh sets to this hook's own deadline), SESSION_START_MODE (set to "portable" by hooks/session-start.sh
 #           under `tessl hook run`), SYNC_STATE_DIR (tests), SYNC_NOW (test-only
 #           injected clock; defaults to `date +%s`).
 set -euo pipefail
@@ -382,6 +383,14 @@ main() {
 
     # Zero or a non-number would switch the bound off; fall back to the default.
     [[ "$FETCH_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || FETCH_TIMEOUT=10
+    # Under hooks/session-start.sh this hook has its own deadline. Keep the
+    # fetch's deadline at two thirds of it, so the fetch is stopped and
+    # reported here before the outer deadline stops the whole hook.
+    if [[ "${SESSION_START_CHILD_DEADLINE_SEC:-}" =~ ^[1-9][0-9]*$ ]] \
+       && (( FETCH_TIMEOUT * 3 > SESSION_START_CHILD_DEADLINE_SEC * 2 )); then
+      FETCH_TIMEOUT=$(( SESSION_START_CHILD_DEADLINE_SEC * 2 / 3 ))
+      (( FETCH_TIMEOUT >= 1 )) || FETCH_TIMEOUT=1
+    fi
     build_fetch "$FETCH_TIMEOUT" "$here"
     # A fetch failure (offline, auth, timeout) is a no-op, not a broken session —
     # warn and let the unverified-sync branch below report it. Comparing against

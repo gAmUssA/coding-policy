@@ -21,7 +21,8 @@
 #           capped by what is left of TOTAL_BUDGET_SEC; its process group is
 #           killed at the deadline. A child past its deadline, or one never
 #           started because the total budget was spent, gets its own status
-#           line, and the list continues.
+#           line, and the list continues. The child sees its deadline as
+#           SESSION_START_CHILD_DEADLINE_SEC.
 #   stdout: one JSON object whose additionalContext joins every child's
 #           additionalContext with a blank line, in hooks/session-start-hooks.txt
 #           order. Nothing when no child reported. A child that exits non-zero or
@@ -129,6 +130,8 @@ main() {
       continue
     fi
     budget=$(( left < child_budget ? left : child_budget ))
+    # A child with deadlines of its own keeps them inside this one.
+    export SESSION_START_CHILD_DEADLINE_SEC="$budget"
     runner=()
     if (( has_runner )); then runner=(bash "${here}/bounded-run.sh" "$budget"); fi
     rc=0

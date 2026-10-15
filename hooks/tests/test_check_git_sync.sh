@@ -33,6 +33,9 @@
 #                       still ends the fetch ("not verified", exit 0) within the guard.
 #   1h. ssh deadline -> an ssh that connects and then hangs is killed at the
 #                       fetch deadline ("not verified", exit 0), with no timeout on PATH.
+#   1i. Nested deadline -> SESSION_START_CHILD_DEADLINE_SEC=3 caps a 60s
+#                       SYNC_FETCH_TIMEOUT, so the hung fetch ends inside the
+#                       hook's own deadline.
 #   2. Up to date    -> emits a marker "in sync" status, exit 0.
 #   3. Throttle      -> with a fixed injected clock: a call inside the window
 #                       skips the fetch and reports "not verified" (never a
@@ -318,6 +321,33 @@ while True:
   if (( done1h )) && [[ $rc1h -eq 0 && -n "$hang_pid" ]] && ! kill -0 "$hang_pid" 2>/dev/null \
      && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
     pass; else fail "ssh deadline: expected the hung ssh killed and 'not verified' with exit 0 within ${STALL_GUARD_SEC}s, got done=$done1h rc=$rc1h hang=$hang_pid OUT=$OUT"; fi
+  if [[ -n "$hang_pid" ]] && kill -0 "$hang_pid" 2>/dev/null; then
+    kill "$hang_pid" || echo "warn: could not stop the hung ssh $hang_pid" >&2
+  fi
+
+  # 1i. The aggregator's child deadline caps the fetch deadline: with 3s for
+  # the whole hook, a 60s fetch deadline must not apply. Same hung ssh as 1h.
+  mk_origin o1i
+  clone_from "$BARE" "$TMP/r1i"
+  g -C "$TMP/r1i" remote set-url origin "ssh://fake.invalid/repo.git" || die "r1i set-url failed"
+  rm -f "$TMP/hang-ssh.pid" || die "could not reset hang-ssh.pid"
+  local t1i=$SECONDS rc1i=0
+  ( cd "$TMP/r1i" && env SYNC_STATE_DIR="$TMP/s1i" SYNC_FETCH_TIMEOUT=60 SESSION_START_CHILD_DEADLINE_SEC=3 GIT_SSH_COMMAND="$TMP/hang-ssh" PATH="$bin" bash "$SCRIPT" </dev/null >"$TMP/r1i.out" 2>/dev/null ) &
+  hook_pid=$!; local done1i=0
+  for (( i = 0; i < STALL_GUARD_SEC * 10; i++ )); do
+    if ! kill -0 "$hook_pid" 2>/dev/null; then done1i=1; break; fi
+    sleep 0.1
+  done
+  if (( ! done1i )); then
+    kill "$hook_pid" || echo "warn: could not kill the stalled hook $hook_pid" >&2
+  fi
+  wait "$hook_pid" || rc1i=$?
+  local took1i=$(( SECONDS - t1i ))
+  OUT="$(cat "$TMP/r1i.out")"
+  if (( done1i )) && [[ $rc1i -eq 0 ]] && (( took1i <= 6 )) && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1; then
+    pass; else fail "nested deadline: expected the fetch capped below 3s and 'not verified' with exit 0, got done=$done1i rc=$rc1i took=${took1i}s OUT=$OUT"; fi
+  hang_pid=""
+  [[ -r "$TMP/hang-ssh.pid" ]] && hang_pid="$(cat "$TMP/hang-ssh.pid")"
   if [[ -n "$hang_pid" ]] && kill -0 "$hang_pid" 2>/dev/null; then
     kill "$hang_pid" || echo "warn: could not stop the hung ssh $hang_pid" >&2
   fi

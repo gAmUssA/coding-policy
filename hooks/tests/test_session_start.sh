@@ -29,6 +29,8 @@
 #                                   tessl.json and a recording fake `tessl`:
 #                                   portable mode never runs `tessl update` and
 #                                   never claims "latest"; native mode updates.
+#  14. Child deadline env      -> each child sees its own deadline as
+#                                   SESSION_START_CHILD_DEADLINE_SEC.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -209,6 +211,14 @@ main() {
         pass; else fail "native check-tessl-latest: expected tessl update and a transition, got RC=$RC log=$(cat "$log" 2>/dev/null) OUT=$OUT"; fi
     fi
   done
+
+  # 14. The child's deadline is exported to it.
+  mk_case c14
+  # shellcheck disable=SC2016 # expands inside the generated child, not here
+  child dl.sh 'jq -n --arg c "deadline=${SESSION_START_CHILD_DEADLINE_SEC-unset}" '"'"'{additionalContext: $c}'"'"
+  run SESSION_START_HOOKS="dl.sh" SESSION_START_CHILD_BUDGET_SEC=7
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext == "deadline=7"' >/dev/null 2>&1; then
+    pass; else fail "child deadline env: expected deadline=7, got RC=$RC OUT=$OUT"; fi
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"
