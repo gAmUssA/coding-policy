@@ -25,6 +25,12 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/verify-publish-landed.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: verify-publish-landed.sh not executable at $SCRIPT" >&2; exit 2; }
 
@@ -59,7 +65,7 @@ run() {
 # MOCK_REGISTRY_VERSION is the latest published version the versions API
 # (`tessl api v1/tiles/<ws>/<tile>/versions`) reports. Tests set these
 # per-scenario.
-gh() {
+_gh_mock() {
   case "$1" in
     run)
       local subcmd="$2"
@@ -99,6 +105,7 @@ gh() {
     *) echo "mock gh: unsupported invocation: $*" >&2; return 2 ;;
   esac
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # Emit a versions-API page whose maximum version is $1. Includes a lower
 # entry (and lists them oldest-first) so the script's max-selection jq is
@@ -419,13 +426,13 @@ t_output_is_valid_json_with_documented_shape() {
 # origin's repository: a bare `gh run view`/`watch`/`list` reads gh's default
 # repository, which in a fork can be the upstream parent.
 # all_run_hints_bound <text>: 0 when the text quotes at least one
-# 'gh run ...' command and every one carries --repo acme/widgets.
+# 'gh run ...' command and every one carries --repo github.com/acme/widgets.
 all_run_hints_bound() {
   local hints
   hints=$(grep -o "'gh run [^']*'" <<<"$1")
   [[ -n "$hints" ]] || { echo "    FAIL: no quoted 'gh run ...' hint in: $1" >&2; return 1; }
-  if grep -v -- "--repo acme/widgets" <<<"$hints"; then
-    echo "    FAIL: the hint(s) above lack --repo acme/widgets" >&2
+  if grep -v -- "--repo github.com/acme/widgets" <<<"$hints"; then
+    echo "    FAIL: the hint(s) above lack --repo github.com/acme/widgets" >&2
     return 1
   fi
 }

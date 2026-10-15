@@ -96,7 +96,7 @@ main() {
     # sees every candidate. gh's `--jq` is internal to gh; this script
     # does NOT depend on the system `jq` binary being installed.
     matches=$(gh run list \
-      --repo "${owner}/${repo}" \
+      --repo "github.com/${owner}/${repo}" \
       --branch "$ref" \
       --workflow "$workflow" \
       --limit "$RUN_LIST_LIMIT" \
@@ -105,11 +105,11 @@ main() {
     if [[ -n "$matches" ]]; then
       match_count=$(printf '%s\n' "$matches" | wc -l | tr -d ' ')
       if (( match_count > 1 )); then
-        echo "error: ${match_count} '${workflow}' push-event runs match commit ${head_sha} on ref ${ref} in ${owner}/${repo}: $(printf '%s' "$matches" | tr '\n' ' ')— resolve by hand with 'gh run view <id>' and watch the intended run, or delete the duplicate ref push that created the second run" >&2
+        echo "error: ${match_count} '${workflow}' push-event runs match commit ${head_sha} on ref ${ref} in ${owner}/${repo}: $(printf '%s' "$matches" | tr '\n' ' ')— resolve by hand with 'gh run view <id> --repo github.com/${owner}/${repo}' and watch the intended run, or delete the duplicate ref push that created the second run" >&2
         exit 1
       fi
       if ! [[ "$matches" =~ ^[0-9]+$ ]]; then
-        echo "error: expected numeric run id from gh, got: '${matches}' — inspect 'gh run list ... --json databaseId,headSha,event,headBranch' to diagnose" >&2
+        echo "error: expected numeric run id from gh, got: '${matches}' — inspect 'gh run list --repo github.com/${owner}/${repo} --branch ${ref} --workflow \"${workflow}\" --json databaseId,headSha,event,headBranch' to diagnose" >&2
         exit 1
       fi
       printf '{"database_id": %s}\n' "$matches"
@@ -131,7 +131,7 @@ main() {
     elapsed=$(( elapsed + sleep_for ))
   done
 
-  echo "error: no '${workflow}' push-event run found for commit ${head_sha} on ref ${ref} in ${owner}/${repo} after ${BUDGET_SEC}s — inspect 'gh run list --repo ${owner}/${repo} --branch ${ref} --workflow \"${workflow}\" --limit ${RUN_LIST_LIMIT}' to diagnose (workflow may have failed to enqueue, or the commit may not have triggered it on that ref)" >&2
+  echo "error: no '${workflow}' push-event run found for commit ${head_sha} on ref ${ref} in ${owner}/${repo} after ${BUDGET_SEC}s — inspect 'gh run list --repo github.com/${owner}/${repo} --branch ${ref} --workflow \"${workflow}\" --limit ${RUN_LIST_LIMIT}' to diagnose (workflow may have failed to enqueue, or the commit may not have triggered it on that ref)" >&2
   exit 1
 }
 

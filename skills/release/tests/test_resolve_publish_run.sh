@@ -54,6 +54,12 @@ set -uo pipefail
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
 
+# The github.com host pin: every gh call this suite's mock sees passes the
+# gate first, with GH_HOST pointing at another server (gh_pin_gate.sh).
+# shellcheck source=skills/release/tests/gh_pin_gate.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh_pin_gate.sh" \
+  || { echo "fatal: cannot source gh_pin_gate.sh" >&2; exit 2; }
+
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/resolve-publish-run.sh"
 [[ -x "$SCRIPT" ]] || { echo "fatal: resolve-publish-run.sh not executable at $SCRIPT" >&2; exit 2; }
 command -v jq >/dev/null || { echo "fatal: jq is required — the transport mock filters fixtures with it" >&2; exit 2; }
@@ -192,7 +198,7 @@ run() {
 # Reproduces real gh's two-stage behavior: `--branch` narrows the
 # listing server-side, then `--jq` runs over what survives. Records each
 # invocation's arguments so tests can assert the ref actually requested.
-gh() {
+_gh_mock() {
   [[ "$1" == "run" && "$2" == "list" ]] || { echo "mock gh: unexpected invocation: $*" >&2; return 99; }
   echo "call" >> "$MOCK_GH_CALLS_FILE"
   echo "$*" >> "$MOCK_GH_ARGS_FILE"
@@ -224,6 +230,7 @@ gh() {
   fi
   jq -r "$filter" <<<"$payload"
 }
+gh() { gh_pin_gate _gh_mock "$@"; }
 
 # Mock `sleep` — record the requested duration (one per line) without
 # actually waiting. Tests sum these to verify the loop respects the
@@ -425,6 +432,7 @@ test_ambiguous_matches_refused() {
   assert_eq "stdout must carry no id" "" "$(database_id_of "$out")" || return 1
   echo "$stderr" | grep -q "34188269042" || { echo "    FAIL: diagnostic should name the first candidate, got: ${stderr}" >&2; return 1; }
   echo "$stderr" | grep -q "34199999999" || { echo "    FAIL: diagnostic should name the second candidate, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "two matching runs are refused, not silently narrowed" test_ambiguous_matches_refused
 
@@ -437,6 +445,7 @@ test_budget_exhausted() {
   [[ $rc -ne 0 ]] || { echo "    FAIL: expected non-zero exit, got 0" >&2; return 1; }
   echo "$stderr" | grep -q "$SHA_MERGE" || { echo "    FAIL: stderr missing SHA, got: ${stderr}" >&2; return 1; }
   echo "$stderr" | grep -q "$WORKFLOW" || { echo "    FAIL: stderr missing workflow name, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr"
 }
 run "budget exhausted exits non-zero with diagnostic" test_budget_exhausted
 
@@ -530,6 +539,7 @@ test_non_numeric_run_id_rejected() {
   stderr=$(main jbaruch coding-policy "$SHA_MERGE" "$WORKFLOW" 2>&1 >/dev/null) || rc=$?
   assert_eq "exit code" "1" "$rc" || return 1
   echo "$stderr" | grep -q "expected numeric run id" || { echo "    FAIL: stderr should explain numeric validation, got: ${stderr}" >&2; return 1; }
+  gh_hints_pinned "$stderr" || return 1
 }
 run "non-numeric run id rejected with diagnostic" test_non_numeric_run_id_rejected
 

@@ -169,10 +169,10 @@ main() {
   # bare 1 — a publish-landed conjunction silently reported as a generic
   # failure. Cleanup reports on cleanup, never on the outcome.
   trap cleanup_err_file EXIT
-  conclusion=$(gh run view "$run_id" --repo "${owner}/${repo}" --json conclusion --jq '.conclusion' 2>"$err_file") \
-    || { local err; err=$(cat "$err_file"); echo "error: 'gh run view ${run_id} --repo ${owner}/${repo}' failed: ${err} — verify (1) the run ID is correct (cross-check 'gh run list --repo ${owner}/${repo} --workflow <publish-workflow-name> --branch main --limit 10'), (2) 'gh auth status' shows you're authenticated against the right host, then re-run; if the run failed at the GitHub side, inspect with 'gh run view ${run_id} --repo ${owner}/${repo} --log-failed'" >&2; exit 2; }
+  conclusion=$(gh run view "$run_id" --repo "github.com/${owner}/${repo}" --json conclusion --jq '.conclusion' 2>"$err_file") \
+    || { local err; err=$(cat "$err_file"); echo "error: 'gh run view ${run_id} --repo github.com/${owner}/${repo}' failed: ${err} — verify (1) the run ID is correct (cross-check 'gh run list --repo github.com/${owner}/${repo} --workflow <publish-workflow-name> --branch main --limit 10'), (2) 'gh auth status --hostname github.com' shows you're authenticated against the right host, then re-run; if the run failed at the GitHub side, inspect with 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed'" >&2; exit 2; }
   if [[ -z "$conclusion" || "$conclusion" == "null" ]]; then
-    echo "error: 'gh run view ${run_id} --repo ${owner}/${repo}' reports no terminal conclusion (got: '${conclusion}') — run is still in flight; run 'gh run watch ${run_id} --repo ${owner}/${repo}' first, then re-run this script" >&2
+    echo "error: 'gh run view ${run_id} --repo github.com/${owner}/${repo}' reports no terminal conclusion (got: '${conclusion}') — run is still in flight; run 'gh run watch ${run_id} --repo github.com/${owner}/${repo}' first, then re-run this script" >&2
     exit 2
   fi
 
@@ -201,7 +201,7 @@ main() {
   # different, interleaved run.
   if [[ "$conclusion" != "success" ]]; then
     emit_and_exit "false" \
-      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --repo ${owner}/${repo} --log-failed' to diagnose" \
+      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed' to diagnose" \
       "$conclusion" "$pre" "$current" 1
   fi
 

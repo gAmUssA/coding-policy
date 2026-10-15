@@ -46,8 +46,8 @@ main() {
     || { echo "error: jq is not installed; install with 'brew install jq' (macOS) or 'apt install jq' (Debian/Ubuntu) and re-run" >&2; return 2; }
 
   local payload
-  payload=$("$gh" run view "$run_id" -R "${owner}/${repo}" --json status,conclusion,jobs) \
-    || { echo "error: gh run view ${run_id} failed — check gh auth and connectivity, then re-run; the outcome is unknown" >&2; return 2; }
+  payload=$("$gh" run view "$run_id" -R "github.com/${owner}/${repo}" --json status,conclusion,jobs) \
+    || { echo "error: gh run view ${run_id} --repo github.com/${owner}/${repo} failed — check 'gh auth status --hostname github.com' and connectivity, then re-run; the outcome is unknown" >&2; return 2; }
 
   local fields
   fields=$(jq -r --arg step "$PUBLISH_STEP_NAME" '
@@ -55,19 +55,19 @@ main() {
        ([.jobs[]?.steps[]? | select(.name == $step)] | length),
        ([.jobs[]?.steps[]? | select(.name == $step) | .conclusion // ""] | first // "")]
       | @tsv' <<<"$payload" 2>/dev/null) \
-    || { echo "error: gh run view ${run_id} returned an unparseable payload — re-run; the outcome is unknown" >&2; return 2; }
+    || { echo "error: gh run view ${run_id} --repo github.com/${owner}/${repo} returned an unparseable payload — re-run; the outcome is unknown" >&2; return 2; }
 
   local status conclusion count step
   IFS=$'\t' read -r status conclusion count step <<<"$fields"
   if [[ "$status" != "completed" ]]; then
-    echo "error: run ${run_id} is '${status:-unknown}', not completed — watch it to completion (gh run watch ${run_id}) and re-run" >&2
+    echo "error: run ${run_id} is '${status:-unknown}', not completed — watch it to completion (gh run watch ${run_id} --repo github.com/${owner}/${repo}) and re-run" >&2
     return 2
   fi
 
   local outcome rc=0
   if [[ "$conclusion" != "success" ]]; then
     outcome="failed"; rc=1
-    echo "run ${run_id} concluded '${conclusion}' — a failed release; inspect it with gh run view ${run_id} --log-failed" >&2
+    echo "run ${run_id} concluded '${conclusion}' — a failed release; inspect it with gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed" >&2
   elif [[ "$count" != "1" ]]; then
     outcome="ambiguous"; rc=1
     echo "run ${run_id} has ${count} steps named '${PUBLISH_STEP_NAME}' (expected exactly 1) — check .github/workflows/publish.yml" >&2
@@ -76,7 +76,7 @@ main() {
       success) outcome="published" ;;
       skipped) outcome="no_publication" ;;
       *) outcome="failed"; rc=1
-         echo "run ${run_id}'s '${PUBLISH_STEP_NAME}' step concluded '${step}' — a failed release; inspect it with gh run view ${run_id} --log-failed" >&2 ;;
+         echo "run ${run_id}'s '${PUBLISH_STEP_NAME}' step concluded '${step}' — a failed release; inspect it with gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed" >&2 ;;
     esac
   fi
 
