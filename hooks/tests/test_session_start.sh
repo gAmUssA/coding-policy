@@ -21,6 +21,10 @@
 #   8. Hook list file            -> read in order; a missing list is reported.
 #   9. No jq on PATH             -> one fixed status naming the jq install step,
 #                                   in both native and portable shape.
+#  11. Stalled child           -> reporting/stalled/reporting: the stalled child
+#                                   is stopped at its deadline (its descendants
+#                                   too), reported, and both other statuses arrive.
+#  12. Total budget spent       -> a later child is reported as not run.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -43,6 +47,7 @@ mk_case() {
   CASE="$TMP/$1/hooks"
   mkdir -p "$CASE" || die "mk_case $1: mkdir failed"
   cp "$SCRIPT" "$CASE/session-start.sh" || die "mk_case $1: copy failed"
+  cp "$RUNNER" "$CASE/bounded-run.sh" || die "mk_case $1: runner copy failed"
 }
 
 # child <name> <body>: a fake child hook in the current case.
@@ -65,6 +70,8 @@ main() {
   SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/session-start.sh"
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   [[ -r "$SCRIPT" ]] || die "aggregator not found at $SCRIPT"
+  RUNNER="$(dirname "$SCRIPT")/bounded-run.sh"
+  [[ -r "$RUNNER" ]] || die "deadline runner not found at $RUNNER"
   command -v jq >/dev/null 2>&1 || die "jq required for these tests"
   TMP="$(mktemp -d -t session-start-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
@@ -145,12 +152,35 @@ main() {
   mkdir -p "$bin" || die "c9 bin mkdir failed"
   ln -sf "$(command -v bash)" "$bin/bash" || die "c9 link bash failed"
   ln -sf "$(command -v touch)" "$bin/touch" || die "c9 link touch failed"
+  ln -sf "$(command -v sleep)" "$bin/sleep" || die "c9 link sleep failed"
   run SESSION_START_HOOKS="mark.sh" PATH="$bin"
   if [[ $RC -eq 0 && -e "$TMP/c9-ran" ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("jq is not installed")' >/dev/null 2>&1; then
     pass; else fail "no jq (native): expected the child to run and a jq status, got RC=$RC OUT=$OUT"; fi
   run SESSION_START_HOOKS="mark.sh" PATH="$bin" TESSL_AGENT=cursor
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("jq is not installed")' >/dev/null 2>&1; then
     pass; else fail "no jq (portable): expected a consensus jq status, got RC=$RC OUT=$OUT"; fi
+
+  # 11. reporting / stalled / reporting under a 1s child deadline.
+  mk_case c11
+  ctx_child a.sh "Session-start status — A"
+  # shellcheck disable=SC2016 # expands inside the generated child, not here
+  child stall.sh 'sleep 30 & echo $! > "'"$TMP"'/c11-gc.pid"; wait'
+  ctx_child c.sh "Session-start status — C"
+  local t0=$SECONDS gc
+  run SESSION_START_HOOKS="a.sh stall.sh c.sh" SESSION_START_CHILD_BUDGET_SEC=1
+  local took=$(( SECONDS - t0 ))
+  gc="$(cat "$TMP/c11-gc.pid")" || die "c11 grandchild pid missing"
+  if [[ $RC -eq 0 ]] && (( took <= 8 )) && ! kill -0 "$gc" 2>/dev/null \
+     && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("^Session-start status — A\n\n") and test("hook stall.sh ran past its deadline") and test("Session-start status — C$")' >/dev/null 2>&1; then
+    pass; else fail "stalled child: expected A, a deadline line, C within 8s and a dead grandchild, got RC=$RC took=${took}s OUT=$OUT"; fi
+
+  # 12. The total budget runs out before the last child starts.
+  mk_case c12
+  child slow.sh "sleep 2"
+  ctx_child late.sh "Session-start status — late"
+  run SESSION_START_HOOKS="slow.sh late.sh" SESSION_START_BUDGET_SEC=1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("hook late.sh did not run") and (test("Session-start status — late") | not)' >/dev/null 2>&1; then
+    pass; else fail "budget spent: expected late.sh reported as not run, got RC=$RC OUT=$OUT"; fi
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"

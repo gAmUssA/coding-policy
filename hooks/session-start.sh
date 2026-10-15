@@ -17,6 +17,11 @@
 #
 # Contract:
 #   stdin : SessionStart JSON — not read; each child gets /dev/null.
+#   time  : each child runs under hooks/bounded-run.sh with CHILD_BUDGET_SEC,
+#           capped by what is left of TOTAL_BUDGET_SEC; its process group is
+#           killed at the deadline. A child past its deadline, or one never
+#           started because the total budget was spent, gets its own status
+#           line, and the list continues.
 #   stdout: one JSON object whose additionalContext joins every child's
 #           additionalContext with a blank line, in hooks/session-start-hooks.txt
 #           order. Nothing when no child reported. A child that exits non-zero or
@@ -28,10 +33,16 @@
 #   needs : jq to read and encode JSON. The children run either way; without
 #           jq the payload is one fixed status naming the install step.
 #   env   : SESSION_START_HOOKS (space-separated filenames; tests only) overrides
-#           hooks/session-start-hooks.txt.
+#           hooks/session-start-hooks.txt. SESSION_START_CHILD_BUDGET_SEC and
+#           SESSION_START_BUDGET_SEC (tests only) override the budgets.
 set -euo pipefail
 
 warn() { printf 'session-start: %s\n' "$1" >&2; }
+
+#: Seconds one child may run. Matches the Codex adapter's per-hook deadline.
+CHILD_BUDGET_SEC=45
+#: Seconds all children together may run.
+TOTAL_BUDGET_SEC=120
 
 #: Agents whose native SessionStart entry runs this script with the session's
 #: environment; the portable run defers to it.
@@ -64,6 +75,10 @@ encode() { # <mode> <text>
 
 main() {
   local mode=native agent here src dir name out rc ctx joined="" i
+  local child_budget="${SESSION_START_CHILD_BUDGET_SEC:-$CHILD_BUDGET_SEC}"
+  local total_budget="${SESSION_START_BUDGET_SEC:-$TOTAL_BUDGET_SEC}"
+  local start budget left has_runner=0
+  local -a runner=()
   local -a hooks=() names=() codes=() outputs=() statuses=()
 
   if [[ -n "${TESSL_AGENT:-}" ]]; then
@@ -96,10 +111,28 @@ main() {
     statuses+=("Session-start status — session-start could not read its hook list at ${here}/session-start-hooks.txt; reinstall the plugin.")
   fi
 
+  [[ "$child_budget" =~ ^[1-9][0-9]*$ ]] || child_budget=$CHILD_BUDGET_SEC
+  [[ "$total_budget" =~ ^[1-9][0-9]*$ ]] || total_budget=$TOTAL_BUDGET_SEC
+  if [[ -r "${here}/bounded-run.sh" ]]; then
+    has_runner=1
+  else
+    warn "deadline runner ${here}/bounded-run.sh is missing — reinstall the plugin; children run without a deadline"
+  fi
+
   # Run every child first, so a missing JSON tool never stops one from acting.
+  # Codes: the child's own exit, 124 past its deadline, -1 never started.
+  start=$SECONDS
   for name in ${hooks[@]+"${hooks[@]}"}; do
+    left=$(( total_budget - (SECONDS - start) ))
+    if (( left <= 0 )); then
+      names+=("$name"); codes+=(-1); outputs+=("")
+      continue
+    fi
+    budget=$(( left < child_budget ? left : child_budget ))
+    runner=()
+    if (( has_runner )); then runner=(bash "${here}/bounded-run.sh" "$budget"); fi
     rc=0
-    out="$(bash "${here}/${name}" </dev/null)" || rc=$?
+    out="$(${runner[@]+"${runner[@]}"} bash "${here}/${name}" </dev/null)" || rc=$?
     names+=("$name"); codes+=("$rc"); outputs+=("$out")
   done
 
@@ -117,6 +150,14 @@ main() {
 
   for (( i = 0; i < ${#names[@]}; i++ )); do
     name="${names[i]}"
+    if [[ "${codes[i]}" == -1 ]]; then
+      statuses+=("Session-start status — hook ${name} did not run: the ${total_budget}s session-start budget was spent; run \`bash ${here}/${name}\` from this repo.")
+      continue
+    fi
+    if [[ "${codes[i]}" == 124 ]] && (( has_runner )); then
+      statuses+=("Session-start status — hook ${name} ran past its deadline and was stopped; run \`bash ${here}/${name}\` from this repo to see where it waits.")
+      continue
+    fi
     if [[ "${codes[i]}" != 0 ]]; then
       statuses+=("Session-start status — hook ${name} exited ${codes[i]}; run \`bash ${here}/${name}\` from this repo to see why.")
       continue
