@@ -27,6 +27,10 @@
 #                       or the fast-forward.
 #   1e2. Ignored file -> origin starts tracking a path holding ignored local
 #                       data: no fast-forward, a report, and the data intact.
+#   1e3. fsmonitor   -> a repo-configured core.fsmonitor program never runs
+#                       during the status check or the fast-forward.
+#   1e4. Local filter -> a filter command in repo-local config refuses the
+#                       fast-forward; the filter never runs and main stays put.
 #   1f. ssh bound    -> ConnectTimeout reaches the plain default ssh only; a
 #                       custom ssh (GIT_SSH_COMMAND or core.sshCommand, simple
 #                       variant) that rejects extra arguments still fetches.
@@ -241,6 +245,37 @@ main() {
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("left unmoved") and test("refused")' >/dev/null 2>&1 \
      && [[ "$(cat "$TMP/r1e2/precious")" == "local data" && "$(git -C "$TMP/r1e2" rev-parse main)" == "$before1e2" ]]; then
     pass; else fail "ignored file: expected a refused fast-forward and intact local data, got RC=$RC OUT=$OUT data=$(cat "$TMP/r1e2/precious")"; fi
+
+  # 1e3. core.fsmonitor names a program git runs on every index refresh.
+  mk_origin o1e3
+  clone_from "$BARE" "$TMP/r1e3"
+  commit_push "$SEED" "c2"
+  printf '#!/bin/sh\ntouch "%s/ran-fsmonitor"\nexit 1\n' "$TMP" > "$TMP/fsmonitor-hook" || die "write fsmonitor hook failed"
+  chmod +x "$TMP/fsmonitor-hook" || die "chmod fsmonitor hook failed"
+  g -C "$TMP/r1e3" config core.fsmonitor "$TMP/fsmonitor-hook" || die "r1e3 fsmonitor config failed"
+  touch -t 202001010000 "$TMP/r1e3/f" || die "touch r1e3/f failed"
+  run "$TMP/r1e3" "$TMP/s1e3"
+  if [[ $RC -eq 0 && ! -e "$TMP/ran-fsmonitor" ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
+    pass; else fail "fsmonitor: expected a fast-forward with the fsmonitor program never run, got RC=$RC ran=$([[ -e "$TMP/ran-fsmonitor" ]] && echo yes || echo no) OUT=$OUT"; fi
+
+  # 1e4. A smudge filter from repo-local config would run on the fast-forward's
+  # checkout of a file the new .gitattributes routes through it.
+  mk_origin o1e4
+  clone_from "$BARE" "$TMP/r1e4"
+  printf '* filter=probe\n' > "$SEED/.gitattributes" || die "seed attributes write failed"
+  printf 'payload\n' > "$SEED/data" || die "seed data write failed"
+  g -C "$SEED" add .gitattributes data || die "seed add failed"
+  g -C "$SEED" commit -q -m "route through probe" || die "seed commit failed"
+  g -C "$SEED" push -q origin main || die "seed push failed"
+  printf '#!/bin/sh\ntouch "%s/ran-filter"\ncat\n' "$TMP" > "$TMP/filter-probe" || die "write filter probe failed"
+  chmod +x "$TMP/filter-probe" || die "chmod filter probe failed"
+  g -C "$TMP/r1e4" config filter.probe.smudge "$TMP/filter-probe" || die "r1e4 smudge config failed"
+  g -C "$TMP/r1e4" config filter.probe.clean "$TMP/filter-probe" || die "r1e4 clean config failed"
+  local before1e4; before1e4="$(git -C "$TMP/r1e4" rev-parse main)" || die "r1e4 rev-parse failed"
+  run "$TMP/r1e4" "$TMP/s1e4"
+  if [[ $RC -eq 0 && ! -e "$TMP/ran-filter" && "$(git -C "$TMP/r1e4" rev-parse main)" == "$before1e4" ]] \
+     && printf '%s' "$OUT" | jq -e '.additionalContext | test("left unmoved") and test("filter command")' >/dev/null 2>&1; then
+    pass; else fail "local filter: expected a refused fast-forward with the filter never run, got RC=$RC ran=$([[ -e "$TMP/ran-filter" ]] && echo yes || echo no) OUT=$OUT"; fi
 
   # 1f. The OpenSSH connect bound goes only to the plain default `ssh`. A
   # recording "ssh" first on PATH logs its argv and fails ("not verified").

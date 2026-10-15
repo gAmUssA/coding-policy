@@ -64,13 +64,23 @@ set -euo pipefail
 
 warn() { printf 'check-git-sync: %s\n' "$1" >&2; }
 
+# Every git call against the repo goes through here, so repo-local config can
+# run no command of its own: no hooks (`reference-transaction`,
+# `post-index-change`, `post-merge`), no `core.fsmonitor` program on an index
+# refresh, and no automatic gc/maintenance started by fetch or merge.
+# Transport settings (credential helpers, a custom ssh) stay as configured:
+# they are how this remote is reached, exactly as a hand-run `git fetch`.
+safe_git() {
+  git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false "$@"
+}
+
 # Does a ref exist? `git show-ref --verify --quiet` exits 0 (exists) or 1 (the
 # expected "absent / malformed name" no-result); any other exit is a real git
 # failure — surface it and treat the ref as absent so best-effort work continues
 # visibly (rules/error-handling.md — distinguish a non-result from a tool error).
 ref_exists() { # <fully-qualified-ref>
   local rc=0
-  git show-ref --verify --quiet "$1" || rc=$?
+  safe_git show-ref --verify --quiet "$1" || rc=$?
   if (( rc == 0 )); then return 0; fi
   if (( rc != 1 )); then
     warn "git show-ref failed (exit ${rc}) checking $1 — treating the ref as absent"
@@ -114,9 +124,9 @@ herdr_role() {
   fi
 
   local git_dir common_dir rc=0
-  git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || rc=$?
+  git_dir="$(safe_git rev-parse --absolute-git-dir 2>/dev/null)" || rc=$?
   if (( rc == 0 )); then
-    common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || rc=$?
+    common_dir="$(safe_git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || rc=$?
   fi
   if (( rc != 0 )); then
     warn "git rev-parse failed (exit ${rc}) — cannot tell a Herdr worker from the lead; not fetching"
@@ -140,7 +150,7 @@ herdr_role() {
 # and returns 1, never swallowed as "up to date".
 drift_counts() { # <default-branch>
   local db="$1" counts
-  if ! counts="$(git rev-list --left-right --count "refs/heads/${db}...refs/remotes/origin/${db}" 2>/dev/null)"; then
+  if ! counts="$(safe_git rev-list --left-right --count "refs/heads/${db}...refs/remotes/origin/${db}" 2>/dev/null)"; then
     warn "could not compare ${db} against origin/${db} — run \`git status\` to inspect; skipping sync check"
     return 1
   fi
@@ -168,7 +178,7 @@ build_fetch() { # <seconds> <hooks-dir>
     envs=(env "GIT_SSH_COMMAND=ssh -o ConnectTimeout=${secs} -o ServerAliveInterval=5 -o ServerAliveCountMax=2")
     for key in core.sshCommand ssh.variant; do
       rc=0
-      git config --get "$key" >/dev/null || rc=$?
+      safe_git config --get "$key" >/dev/null || rc=$?
       if (( rc == 0 )); then
         envs=()
       elif (( rc != 1 )); then
@@ -182,7 +192,7 @@ build_fetch() { # <seconds> <hooks-dir>
   else
     warn "deadline runner ${runner} is missing — reinstall the plugin; this fetch has only git's own stall limits"
   fi
-  FETCH_CMD+=(${envs[@]+"${envs[@]}"} git -c core.hooksPath=/dev/null -c http.lowSpeedLimit=1000 -c "http.lowSpeedTime=${secs}" fetch --quiet origin)
+  FETCH_CMD+=(${envs[@]+"${envs[@]}"} git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -c http.lowSpeedLimit=1000 -c "http.lowSpeedTime=${secs}" fetch --quiet origin)
 }
 
 # Fast-forward the checked-out default branch to origin's, or say why not.
@@ -195,7 +205,7 @@ build_fetch() { # <seconds> <hooks-dir>
 fast_forward() { # <default-branch>
   local db="$1" current="" out rc=0
   FF_WHY=""
-  current="$(git symbolic-ref --quiet --short HEAD)" || rc=$?
+  current="$(safe_git symbolic-ref --quiet --short HEAD)" || rc=$?
   if (( rc > 1 )); then
     warn "git symbolic-ref HEAD failed (exit ${rc}) — ${db} was not fast-forwarded"
     FF_WHY="the checked-out branch could not be read"
@@ -205,8 +215,22 @@ fast_forward() { # <default-branch>
     FF_WHY="\`${db}\` is not the checked-out branch here"
     return 1
   fi
+  # A filter driver from repo-local config runs on checkout (smudge) and on an
+  # index refresh (clean), and git has no switch that turns filters off
+  # without changing the checked-out bytes. Report instead of moving.
   rc=0
-  out="$(git -c core.hooksPath=/dev/null status --porcelain --untracked-files=no)" || rc=$?
+  out="$(safe_git config --local --get-regexp '^filter\..*\.(clean|smudge|process)$')" || rc=$?
+  if (( rc == 0 )); then
+    out="${out%%$'\n'*}"
+    FF_WHY="this repository's own config defines a filter command (${out%% *}), which a checkout would run"
+    return 1
+  elif (( rc != 1 )); then
+    warn "git config --local filter lookup failed (exit ${rc}) — ${db} was not fast-forwarded"
+    FF_WHY="the filter-driver check failed"
+    return 1
+  fi
+  rc=0
+  out="$(safe_git status --porcelain --untracked-files=no)" || rc=$?
   if (( rc != 0 )); then
     warn "git status failed (exit ${rc}) — ${db} was not fast-forwarded"
     FF_WHY="\`git status\` failed"
@@ -217,7 +241,7 @@ fast_forward() { # <default-branch>
     return 1
   fi
   rc=0
-  out="$(git -c core.hooksPath=/dev/null merge --ff-only --no-overwrite-ignore --quiet "refs/remotes/origin/${db}" 2>&1)" || rc=$?
+  out="$(safe_git merge --ff-only --no-overwrite-ignore --quiet "refs/remotes/origin/${db}" 2>&1)" || rc=$?
   if (( rc != 0 )); then
     warn "fast-forward of ${db} refused (exit ${rc}): ${out//$'\n'/ }"
     FF_WHY="git refused the fast-forward (see the stderr warning)"
@@ -247,7 +271,7 @@ main() {
   # git repository") — the expected non-repo session. Proceed only on a literal
   # "true"; a bare repo / gitdir ("false") and the non-repo case are silent
   # no-ops, and an unexpected value is surfaced.
-  inside="$(git rev-parse --is-inside-work-tree 2>/dev/null)" || inside="__notrepo__"
+  inside="$(safe_git rev-parse --is-inside-work-tree 2>/dev/null)" || inside="__notrepo__"
   case "$inside" in
     true) : ;;
     false|__notrepo__) return 0 ;;
@@ -258,7 +282,7 @@ main() {
   # for the documented "No such remote" (silent no-op); any other non-zero is a
   # real git failure and is surfaced (rules/error-handling.md).
   rc=0
-  git remote get-url origin >/dev/null 2>&1 || rc=$?
+  safe_git remote get-url origin >/dev/null 2>&1 || rc=$?
   if (( rc != 0 )); then
     if (( rc == 2 )); then return 0; fi
     warn "git remote get-url origin failed (exit ${rc}) — run \`git remote -v\` to inspect; skipping sync check"
@@ -277,7 +301,7 @@ main() {
   # default" (rules/error-handling.md — distinguish an expected non-result from a
   # tool failure).
   db=""
-  if db="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+  if db="$(safe_git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
     db="${db#origin/}"
   else
     rc=$?
@@ -331,7 +355,7 @@ main() {
 
   # Per-repo throttle stamp, keyed by the toplevel path so sibling clones throttle
   # independently. cksum gives a stable filename-safe key for an arbitrary path.
-  if ! top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  if ! top="$(safe_git rev-parse --show-toplevel 2>/dev/null)"; then
     warn "git rev-parse --show-toplevel failed — keying the throttle stamp on \$PWD instead"
     top="$PWD"
   fi
