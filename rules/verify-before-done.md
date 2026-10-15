@@ -16,6 +16,7 @@ description: Done means a shown passing run — execute the thing, show the outp
 
 - Failing output is reported verbatim — the command, the exit code, the error text
 - A skipped step is named as skipped, never folded into "done"
+- Exit 126 or 127 from a wrapped command means it did not run — report it as skipped, never as a test result
 - No "verified" without the command and its result in the same report
 - A partial result is reported as partial: what passed, what failed, what was not attempted
 - Never invent a PR URL, a CI result, a run id, or a registry state — report only what a command returned

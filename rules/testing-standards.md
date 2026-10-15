@@ -35,6 +35,8 @@ alwaysApply: true
 - A new or changed guard ships with a test feeding it one input it must reject and one input it must accept
 - Use real historical artifacts as those inputs where they exist
 - A guard tested in one direction alone is untested
+- The accept case runs through the guard's documented entry point: the hook as the agent invokes it, the CLI, the workflow
+- A config change is tested in every environment class it reaches
 
 ## Stack Conventions
 
@@ -55,6 +57,8 @@ alwaysApply: true
 - If an internal refactor breaks your tests, the tests were testing the wrong thing
 - Mock at the process boundary — the network, the clock, the filesystem, a paid external service — never the code under test's own collaborators
 - A test whose mocks outnumber its assertions tests the mocks
+- A boundary mock proves shape, never validity — text crossing a boundary (SQL, an API request) runs once against the real counterparty or a contract recorded from it
+- A status write ships with a test where its dependency fails and the recorded status is failed or unknown
 - A test that never runs the code under test, or observes none of its outcomes, is documentation, never a test
 - A raised error, a crash, or a timeout is an observed outcome
 - Assert a value that encodes a product decision as a literal, never as a value recomputed by the code under test
@@ -74,6 +78,7 @@ alwaysApply: true
 - Control the clock: inject or freeze "now" (a passed-in reference date, a mocked time source, a `Clock` instance) so a test green today is green every day
 - Fixed past dates as fixtures are fine — the ban is on time-relative values that rot as the run date advances
 - Flaky tests are bugs — diagnose the root cause, don't retry and hope
+- A non-deterministic evaluation (an eval, a model or tier trial) runs at least 3 times and reports the spread, never the best run
 - Narrow exception for property-based tests whose generated inputs come from a pinned seed.
 - Applies when a generative testing library (Kotest property tests, Hypothesis, fast-check, SwiftCheck) explores many cases per run under a fixed seed
 - Preconditions (all required):
@@ -89,4 +94,5 @@ alwaysApply: true
 - For binary files that can't be built programmatically, download them from a URL during test setup
 - Each test must run independently — no shared mutable state between tests
 - Test order must not matter
+- Tests never read machine-local paths (a home directory, a user's reports directory)
 - Clean up after yourself: temporary files, database state, mock patches
