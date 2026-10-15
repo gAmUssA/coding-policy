@@ -227,7 +227,7 @@ worker; a changed candidate requires a fresh handoff. Follow the owner checks in
 `skills/herdr-teamlead/references/dispatch-recovery.md` instead of treating a warm pane as dispatch proof.
 
 `--roles` keys the output document. Configured `role_costs` calibrate its costs.
-`skills/herdr-teamlead/teamlead/composition.py` owns capability, contribution and familiarity evidence;
+`skills/herdr-teamlead/teamlead/composition.py` owns capability, contribution, familiarity and model-family evidence;
 `skills/herdr-teamlead/teamlead/planner.py` owns affordability, fill order and headroom optimization.
 The same eligibility checks run before unsent apply. Familiarity reflects a
 matching dispatch, never expertise or completed work. Requirements do not change
@@ -239,8 +239,8 @@ fixes; pass that same number at dispatch. Register the original task/base with
 `teamlead task` and use the same `--task` on plan and apply. Authorized extra
 fixes also share `--correction-plan` and `--work`; their owner-managed bounds
 are documented in `skills/herdr-teamlead/references/dispatch-recovery.md`. Keep YOLO mode and supported
-UI options across worker restarts. The config, round-input, billing-evidence,
-and qualification contracts are in:
+UI options across worker restarts. The config, round-input, and
+billing-evidence contracts are in:
 
 ```text
 skills/herdr-teamlead/references/model-tiers.md
@@ -250,8 +250,6 @@ Save the output to a file for dispatch. Relay the `rationale` lines to the user
 as the round's role announcement: they name the weight behind each seat, the
 exclusions applied, and any worker whose headroom reading is stale. Proceed
 immediately to Step 4.
-
-Default planning excludes unqualified tiers. Use `plan --preview-tiers` only to inspect an uncommissioned table; live dispatch still requires qualification.
 
 ## Step 4 — Build the Review Package
 

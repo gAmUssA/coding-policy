@@ -8,7 +8,7 @@ Never trim or merge legacy identities. Retained fixes dispatch developer alone
 with `--retain-context`; other roles use their own dispatch context. Developer retention
 requires matching confirmed history, live native-session continuity, and a
 compatible verified tier. Missing evidence requires owner recovery, preserving
-the original record and counter. Tiered dispatch requires current qualification.
+the original record and counter.
 
 After a recorded release clear, dispatch the next developer correction fresh
 within the same task and allowance. No context-change permission is required.
@@ -49,10 +49,10 @@ tier proof. Staffing follows `skills/herdr-teamlead/references/round-setup.md` S
 Follow the owner diagnostics before retrying.
 This mode carries no developer correction parameters and cannot replace the
 developer's retained-fix path. A dry run checks recorded prerequisites but proves
-no live session, current qualification or permission flags.
+no live session or permission flags.
 
 Live apply still enforces the retrospective cadence, YOLO launch proof, readiness,
-composer and qualification gates. Its successful result records retained context
+and composer gates. Its successful result records retained context
 and the original requirements; it proves dispatch only. Use normal report
 observation and a new assessment for the follow-up.
 
@@ -368,8 +368,8 @@ A recovery an earlier release recorded on such a row keeps reading.
 
 Continue with the same task, next fix, correction plan and `--work FILE` in
 plan and normal apply. Omit `--retain-context` and `--no-clear`. Apply rechecks
-receipts and the recorded work, performs live readiness, automatic clear, tier
-and qualification checks, then counts its one confirmed developer dispatch.
+receipts and the recorded work, performs live readiness, automatic clear and tier
+checks, then counts its one confirmed developer dispatch.
 An identical completed retry returns the recorded result without sending again.
 Carry the earlier reports, blocking findings, original base and cumulative count
 in the fresh brief. Full independent review and testing of the corrected tip,

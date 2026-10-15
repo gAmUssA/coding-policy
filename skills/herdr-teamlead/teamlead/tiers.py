@@ -1,8 +1,8 @@
 """Round-tier policy and exact launch-argument verification for #324.
 
 The table is operator-owned configuration, never a per-dispatch model
-override. Judgment rounds cannot lower the pinned model or effort. Cheap
-mechanical work requires the research predicate in full. Model availability
+override. Judgment rounds cannot lower the pinned model or effort. A
+developer's cheap mechanical round requires the research predicate in full. Model availability
 and subscription attribution are separate: see billing.py for the latter.
 
 Only installed, documented CLI kinds have launch adapters. Antigravity's
@@ -17,8 +17,10 @@ from .billing import billing_window, effective_multiplier
 from .errors import ConfigError, HerdrError, UsageError
 
 
+#: A judgment pin moves only by a hand bump. Superseded ids stay listed so a
+#: config still naming them keeps parsing.
 TOP_MODELS = {
-    "claude": frozenset({"opus-5", "claude-opus-5"}),
+    "claude": frozenset({"opus-5", "claude-opus-5", "claude-opus-5-5"}),
     "codex": frozenset({"gpt-5.6-sol"}),
     "grok": frozenset({"grok-4.6"}),
 }
@@ -29,14 +31,29 @@ EFFORTS = {
 }
 NO_EFFORT_MODELS = frozenset({"claude-haiku-4-5", "haiku-4.5"})
 JUDGMENT_ROUNDS = frozenset({
-    "architect", "reconciliation", "test_plan", "critic", "review",
-    "hostile_verify", "recheck", "release_adjudication", "lead",
+    "architect", "reconciliation", "critic", "review",
+    "hostile_verify", "recheck", "release_adjudication",
 })
-ROUNDS = JUDGMENT_ROUNDS | {"build", "fix", "mechanical", "release_mechanics"}
+#: Non-judgment rounds carry no top-model floor. `consultation` gathers
+#: evidence and decides nothing; `test_plan` prepares and passes nothing;
+#: `coordination` is the lead's seat. `lead` is the coordination round's
+#: earlier name, kept so a config still carrying that row parses.
+ROUNDS = JUDGMENT_ROUNDS | {
+    "build", "fix", "mechanical", "release_mechanics", "consultation", "test_plan", "coordination", "lead",
+}
+#: Each seat defaults to the cheapest round its contract allows. A judgment
+#: round is requested explicitly with `--round ROLE=ROUND`.
 DEFAULT_ROUNDS = {
     "developer": "build", "tester": "hostile_verify", "reviewer": "review",
-    "release": "release_adjudication", "architect": "architect",
-    "critic": "critic", "lead": "lead",
+    "release": "release_mechanics", "architect": "architect",
+    "critic": "critic", "lead": "coordination",
+    "advisor": "consultation", "investigator": "consultation",
+}
+#: A default round whose row a worker's table lacks falls back to the row
+#: that role defaulted to before, when that row exists, so an existing table
+#: keeps dispatching unchanged until the operator adds the cheaper row.
+LEGACY_DEFAULT_ROUNDS = {
+    "release": "release_adjudication", "lead": "lead",
     "advisor": "architect", "investigator": "reconciliation",
 }
 ROLE_ROUNDS = {
@@ -45,9 +62,9 @@ ROLE_ROUNDS = {
     "reviewer": frozenset({"architect", "reconciliation", "critic", "review", "recheck"}),
     "release": frozenset({"release_adjudication", "release_mechanics"}),
     "architect": frozenset({"architect", "reconciliation"}),
-    "critic": frozenset({"critic"}), "lead": frozenset({"lead"}),
-    "advisor": frozenset({"architect"}),
-    "investigator": frozenset({"reconciliation"}),
+    "critic": frozenset({"critic"}), "lead": frozenset({"coordination", "lead"}),
+    "advisor": frozenset({"consultation", "architect"}),
+    "investigator": frozenset({"consultation", "reconciliation"}),
 }
 MECHANICAL_TASKS = frozenset({
     "rebase", "restack", "apply_exact_patch", "docs_only", "check_rerun",
@@ -63,7 +80,9 @@ XHIGH_CONTEXT_BYTES = 250000
 BUILD_FAILED_GATES = 2
 MAX_MECHANICAL_RETRIES = 2
 MAX_MECHANICAL_REPAIRS = 1
-TIER_FIELDS = frozenset({"model", "effort", "multiplier", "billing_evidence", "qualification"})
+TIER_FIELDS = frozenset({"model", "effort", "multiplier", "billing_evidence"})
+#: Fields of retired contracts: still accepted in a tier row, never read.
+RETIRED_TIER_FIELDS = frozenset({"qualification"})
 MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
 LAUNCH_SWITCHES = {
     "claude": frozenset({"--dangerously-skip-permissions"}),
@@ -102,6 +121,17 @@ RESUME_REFUSALS = {
     "grok": frozenset({"-c", "--continue", "--fork-session", "-s", "--session-id", "--restore-code", "-w", "--worktree"}),
 }
 SESSION_UUID = re.compile(r"[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}\Z")
+
+
+def without_retired_fields(tier):
+    """A copy of a recorded tier minus retired-contract fields; None stays None.
+
+    Pre-upgrade dispatch evidence keeps its original bytes; only the copy
+    promoted into a current assignment row loses the retired fields.
+    """
+    if not isinstance(tier, dict):
+        return tier
+    return {key: value for key, value in tier.items() if key not in RETIRED_TIER_FIELDS}
 
 
 class MissingTierError(UsageError):
@@ -254,10 +284,9 @@ def parse_tiers(raw, kind):
     for round_type, entry in raw.items():
         if round_type not in ROUNDS:
             _error("Unknown round {!r}; use one of {}.".format(round_type, ", ".join(sorted(ROUNDS))))
-        if not isinstance(entry, dict) or set(entry) - TIER_FIELDS:
+        if not isinstance(entry, dict) or set(entry) - TIER_FIELDS - RETIRED_TIER_FIELDS:
             _error("Tier {!r} must contain only {}.".format(round_type, ", ".join(sorted(TIER_FIELDS))))
-        if not isinstance(entry.get("qualification", []), list):
-            _error("Tier qualification must be an array of recorded battery results.")
+        entry = {key: value for key, value in entry.items() if key not in RETIRED_TIER_FIELDS}
         model = entry.get("model")
         if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
             _error("Tier {!r} needs a model identifier, not a flag or command.".format(round_type))
@@ -333,6 +362,9 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     # Selection preserves the true cumulative number for authorized recovery.
     if fix_round is not None and (type(fix_round) is not int or fix_round < 1):
         raise UsageError("Fix round must be a positive integer; preserve the task counter.", {})
+    legacy = LEGACY_DEFAULT_ROUNDS.get(role)
+    if round_type is None and legacy in agent.tiers and DEFAULT_ROUNDS[role] not in agent.tiers:
+        round_type = legacy
     round_type = round_type or ("fix" if role == "developer" and fix_round else DEFAULT_ROUNDS.get(role))
     if not isinstance(round_type, str) or round_type not in ROLE_ROUNDS.get(role, frozenset()):
         raise UsageError("Round {!r} cannot perform role {!r}; choose its documented round type.".format(round_type, role), {})
@@ -344,7 +376,9 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     if chosen_round not in agent.tiers:
         raise MissingTierError("Agent {} has no {!r} tier; add the required row before planning.".format(agent.name, chosen_round), {})
     tier = dict(agent.tiers[chosen_round])
-    if round_type in {"mechanical", "release_mechanics"} and not mechanical_allowed(context):
+    # Only a developer's mechanical round needs the predicate. A release
+    # round's loud failure is the release skill's own gates.
+    if round_type == "mechanical" and not mechanical_allowed(context):
         raise UsageError("Mechanical eligibility is unproven or an escape condition fired; use a judgment round with a fresh brief.", {})
     risks = context.get("risk_flags", [])
     if not isinstance(risks, list) or any(not isinstance(flag, str) or not flag for flag in risks):
@@ -353,17 +387,19 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
         len(set(risks)) >= XHIGH_MIN_RISKS
         or _nonnegative_int(context, "input_bytes") > XHIGH_CONTEXT_BYTES
         or context.get("prior_high_miss") is True
-        or round_type == "hostile_verify"
     )
     if needs_xhigh:
         # High risk also excludes a lower build/fix model, not only low effort.
         if tier["model"] not in TOP_MODELS[agent.kind]:
             if "review" not in agent.tiers:
-                raise MissingTierError("Agent {} has no review tier for high-risk work; add and qualify its review row before assigning it this round.".format(agent.name), {})
+                raise MissingTierError("Agent {} has no review tier for high-risk work; add its review row before assigning it this round.".format(agent.name), {})
             tier = dict(agent.tiers["review"])
             chosen_round = "review"
         if agent.kind in {"claude", "codex"} and tier["effort"] not in {"xhigh", "max"}:
             tier["effort"] = "xhigh"
+        elif agent.kind == "grok" and tier["effort"] != "high":
+            # Grok's ceiling is high; a cheaper row escalates to it.
+            tier["effort"] = "high"
     return {
         **tier, "round": round_type, "tier_row": chosen_round, "kind": agent.kind,
         "billing_window": billing_window(tier), "effective_multiplier": effective_multiplier(tier),

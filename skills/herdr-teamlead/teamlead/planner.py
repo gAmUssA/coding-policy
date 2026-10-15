@@ -101,20 +101,25 @@ DEFAULT_ROLE_COSTS = {
 DEFAULT_ROLE_COST = 8.0
 
 
-def _sort_key(name, headroom, cost, role, counts, floor, familiarity=None):
-    """Rank one candidate for one role. Lower sorts first."""
+def _sort_key(name, headroom, cost, role, counts, floor, familiarity=None, same_family=None):
+    """Rank one candidate for one role. Lower sorts first.
+
+    `same_family` is `{role: {agent: 1 when it shares a model family with the
+    task's contributors}}`: a tie-break after headroom, before rotation.
+    """
     if familiarity is not None:
         affordable = headroom is not None and float(headroom) - cost >= 0
         # Continuity is useful only inside an affordable, eligible field. It
         # never elevates an exhausted or unmeasured worker over usable capacity.
         affinity = familiarity.get(role, {}).get(name, 0) if affordable else 0
         return (0 if affordable else 1, -affinity,
-                *_sort_key(name, headroom, cost, role, counts, floor))
+                *_sort_key(name, headroom, cost, role, counts, floor, same_family=same_family))
+    family = (same_family or {}).get(role, {}).get(name, 0)
     if headroom is None:
-        return (1, 0.0, 0.0, 0, name)
+        return (1, 0.0, 0.0, family, 0, name)
     projected = float(headroom) - cost
     team_min = projected if floor is None else min(floor, projected)
-    return (0, -team_min, -projected, counts.get(role, {}).get(name, 0), name)
+    return (0, -team_min, -projected, family, counts.get(role, {}).get(name, 0), name)
 
 
 def _headroom_of(name, record, warn):
@@ -423,7 +428,7 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
         )
 
 
-def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None):
+def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
     `counts` is `{role: {agent: times_held}}` from the state ledger; omit it
@@ -445,7 +450,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
     plan against whatever the snapshot holds. `operator_exclude` is the
     exclusion map as the operator typed it, before a caller merges its own
     generated bars into `exclude`; omit it when `exclude` carries only what
-    the operator asked for.
+    the operator asked for. `same_family` is the model-family tie-break from
+    `composition.selection_constraints`; omit it to rank without one.
 
     Raises PlanError when there are no roles, no agents, fewer agents than
     roles, an exclusion naming a role nobody is assigning, or a role whose
@@ -578,7 +584,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 if name not in tier_candidates.get(role, {}):
                     excluded[role] = sorted(set(excluded[role]) | {name})
             if all(name in excluded[role] for name in agents):
-                raise PlanError("No qualified tier is eligible for {!r}. Record its paired validation and current canary, check exclusions, or use --preview-tiers to inspect launches without dispatch.".format(role), {})
+                raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
 
     def candidate_cost(role, name):
         tier = (tier_candidates or {}).get(role, {}).get(name) or {}
@@ -609,7 +615,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         ranked = sorted(
             (name for name in remaining if name not in barred),
             key=lambda name: _sort_key(name, headrooms[name], candidate_cost(role, name), role, counts, floor,
-                                      familiarity if role in (requirements or {}) else None),
+                                      familiarity if role in (requirements or {}) else None, same_family),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
         # who still can without stranding a later role. First candidate that

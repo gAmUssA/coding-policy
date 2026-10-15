@@ -284,7 +284,7 @@ class EngagementTest(unittest.TestCase):
         migrated, usable = load_state_checked(self.path)
         self.assertTrue(usable)
         self.assertEqual(migrated["specialist_assessments"], [])
-        self.assertEqual(migrated["assignments"][0], {**original, "schema_version": 6,
+        self.assertEqual(migrated["assignments"][0], {**original, "schema_version": 7,
                                                     "requirements": None, "reviewer_scope": "unknown"})
         self.assertEqual(migrated["recovery"]["schema_version"], 9)
 

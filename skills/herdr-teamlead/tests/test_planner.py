@@ -1129,5 +1129,32 @@ class SpecialistOrderingTest(unittest.TestCase):
         self.assertEqual(result["assignments"], {"advisor": "worker"})
 
 
+class ModelFamilyTieBreakTest(unittest.TestCase):
+    """A verifier on another model family is preferred only among equals."""
+
+    FAMILY = {"reviewer": {"codex": 0, "claude": 1, "claude2": 1}}
+
+    def test_equal_headroom_prefers_the_other_family_over_name_and_rotation(self):
+        baseline = plan(["reviewer"], snapshot(claude=50, codex=50))
+        self.assertEqual(baseline["assignments"], {"reviewer": "claude"})
+        result = plan(["reviewer"], snapshot(claude=50, codex=50), same_family=self.FAMILY)
+        self.assertEqual(result["assignments"], {"reviewer": "codex"})
+        rotated = plan(["reviewer"], snapshot(claude=50, codex=50), counts={"reviewer": {"claude": 0, "codex": 3}},
+                       same_family=self.FAMILY)
+        self.assertEqual(rotated["assignments"], {"reviewer": "codex"})
+
+    def test_more_headroom_still_outranks_the_family_preference(self):
+        result = plan(["reviewer"], snapshot(claude=60, codex=50), same_family=self.FAMILY)
+        self.assertEqual(result["assignments"], {"reviewer": "claude"})
+
+    def test_a_same_family_candidate_is_still_seated_when_it_is_the_only_one(self):
+        result = plan(["reviewer"], snapshot(claude=50, claude2=40), same_family=self.FAMILY)
+        self.assertEqual(result["assignments"], {"reviewer": "claude"})
+
+    def test_roles_outside_the_map_rank_unchanged(self):
+        result = plan(["developer"], snapshot(claude=50, codex=50), same_family=self.FAMILY)
+        self.assertEqual(result["assignments"], {"developer": "claude"})
+
+
 if __name__ == "__main__":
     unittest.main()

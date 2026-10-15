@@ -86,8 +86,20 @@ def _contributor(row, assessment=None):
             or row.get("role") == "reviewer" and row.get("reviewer_scope") != "verification")
 
 
+def _recorded_kind(row):
+    """The worker kind a ledger row or dispatch recorded, or None."""
+    result = row.get("result") if isinstance(row.get("result"), dict) else {}
+    for tier in (row.get("tier"), result.get("tier")):
+        if isinstance(tier, dict) and isinstance(tier.get("kind"), str) and tier["kind"]:
+            return tier["kind"]
+    for provider in (row.get("provider"), result.get("provider")):
+        if isinstance(provider, str) and provider:
+            return provider
+    return None
+
+
 def selection_constraints(roles, agents, requirements, history, task, dispatches=(), assessments=(), candidate_names=None):
-    """Return hard exclusions and a dispatch-familiarity hint, without I/O.
+    """Return hard exclusions, a dispatch-familiarity hint and a model-family hint, without I/O.
 
     Callers merge exclusions with explicit author exclusions and use the same
     result before planning and before an unsent apply. Same-task possible
@@ -103,22 +115,47 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
         roles, task,
     )
     by_assignment = {row["assignment_index"]: row for row in assessments}
-    contributors = {row["agent"] for row in assessments
-                    if task and row.get("task") == task and row["contribution"] in {"design", "implementation"}}
+    contributors = set()
+    # The model family each contributor worked on, as the ledger recorded it.
+    recorded = {}
+
+    def contributed(row):
+        contributors.add(row.get("agent"))
+        kind = _recorded_kind(row)
+        if kind:
+            recorded.setdefault(row.get("agent"), set()).add(kind)
+
+    for row in assessments:
+        if task and row.get("task") == task and row["contribution"] in {"design", "implementation"}:
+            index = row.get("assignment_index")
+            source = history[index] if isinstance(index, int) and 0 <= index < len(history) else None
+            contributed({**(source if isinstance(source, dict) else {}), "agent": row["agent"]})
     for index, row in enumerate(history):
         if task and row.get("task") == task and _contributor(row, by_assignment.get(index)):
-            contributors.add(row.get("agent"))
+            contributed(row)
     for row in dispatches:
         if task and row.get("task") == task and _contributor(row, by_assignment.get(row.get("assignment_index"))):
-            contributors.add(row.get("agent"))
+            contributed(row)
     by_name = {agent.name: agent for agent in agents}
     names = sorted(by_name if candidate_names is None else set(candidate_names))
+    kinds = {name: kind for name, agent in by_name.items()
+             if isinstance(kind := getattr(agent, "kind", None), str) and kind}
+    # Current config stands in only for a contributor with no recorded kind.
+    contributor_kinds = sorted({kind for found in recorded.values() for kind in found}
+                               | {kinds[name] for name in contributors - set(recorded) if name in kinds})
     excluded = {role: [] for role in roles}
     familiarity = {role: {} for role in roles}
+    # A soft preference, never an exclusion: a verifier on another model
+    # family shares fewer blind spots with the task's contributors.
+    same_family = {role: {} for role in roles}
     rationale = []
     for role in roles:
         requirement = normalized.get(role)
         independent = role in {"reviewer", "tester"} or requirement is not None and requirement["independent"]
+        if role in {"reviewer", "tester"} and contributor_kinds:
+            same_family[role] = {name: int(kinds.get(name) in contributor_kinds) for name in names}
+            rationale.append("{} prefers a model family other than {} (the task's contributors) as a tie-break after headroom; never an exclusion.".format(
+                role, ", ".join(contributor_kinds)))
         for name in names:
             agent = by_name.get(name)
             # With no configured agents at all there is no config to be
@@ -148,4 +185,4 @@ def selection_constraints(roles, agents, requirements, history, task, dispatches
                 role, requirement["specialty"], requirement["engagement"]))
         if independent and task:
             rationale.append("{} independence also requires the lead's exclusions for external authors and contributions missing task/proposal provenance.".format(role))
-    return {"exclude": excluded, "familiarity": familiarity, "rationale": rationale}
+    return {"exclude": excluded, "familiarity": familiarity, "same_family": same_family, "rationale": rationale}

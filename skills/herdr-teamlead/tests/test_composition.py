@@ -232,5 +232,55 @@ class EligibilityTest(unittest.TestCase):
         self.assertEqual(constraints["familiarity"]["advisor"], {})
 
 
+class ModelFamilyHintTest(unittest.TestCase):
+    """The family hint marks verifiers sharing a contributor's model kind."""
+
+    def agents(self):
+        return [SimpleNamespace(name="author", kind="claude", capabilities=()),
+                SimpleNamespace(name="sibling", kind="claude", capabilities=()),
+                SimpleNamespace(name="zeta", kind="codex", capabilities=())]
+
+    def history(self):
+        return [{"task": "onboarding", "role": "developer", "agent": "author", "status": "applied"}]
+
+    def test_verifiers_sharing_a_contributor_family_are_marked_never_excluded(self):
+        result = selection_constraints(["reviewer", "tester"], self.agents(), {}, self.history(), "onboarding")
+        for role in ("reviewer", "tester"):
+            with self.subTest(role=role):
+                self.assertEqual(result["same_family"][role], {"author": 1, "sibling": 1, "zeta": 0})
+                self.assertEqual(result["exclude"][role], ["author"])
+        self.assertTrue(any("model family other than claude" in line for line in result["rationale"]))
+
+    def test_no_contributor_history_or_other_roles_carry_no_hint(self):
+        empty = selection_constraints(["reviewer"], self.agents(), {}, [], "onboarding")
+        self.assertEqual(empty["same_family"], {"reviewer": {}})
+        self.assertFalse(any("model family" in line for line in empty["rationale"]))
+        developer = selection_constraints(["developer"], self.agents(), {}, self.history(), "onboarding")
+        self.assertEqual(developer["same_family"], {"developer": {}})
+
+    def test_a_reconfigured_contributor_keeps_the_family_it_worked_on(self):
+        # "author" built the task on codex and was later reconfigured to claude.
+        history = [{"task": "onboarding", "role": "developer", "agent": "author", "status": "applied",
+                    "tier": {"kind": "codex", "model": "gpt-5.6-sol"}}]
+        result = selection_constraints(["reviewer"], self.agents(), {}, history, "onboarding")
+        self.assertEqual(result["same_family"]["reviewer"], {"author": 0, "sibling": 0, "zeta": 1})
+
+    def test_a_removed_contributor_still_marks_its_recorded_family(self):
+        history = [{"task": "onboarding", "role": "developer", "agent": "retired", "status": "applied",
+                    "result": {"tier": {"kind": "codex"}}}]
+        dispatches = [{"task": "onboarding", "role": "developer", "agent": "gone", "status": "applied",
+                       "provider": "grok"}]
+        agents = self.agents() + [SimpleNamespace(name="grokker", kind="grok", capabilities=())]
+        result = selection_constraints(["tester"], agents, {}, history, "onboarding", dispatches=dispatches)
+        self.assertEqual(result["same_family"]["tester"],
+                         {"author": 0, "grokker": 1, "sibling": 0, "zeta": 1})
+
+    def test_the_hint_reorders_an_equal_headroom_plan(self):
+        constraints = selection_constraints(["reviewer"], self.agents(), {}, self.history(), "onboarding")
+        result = plan(["reviewer"], snapshot(author=90, sibling=50, zeta=50), exclude=constraints["exclude"],
+                      same_family=constraints["same_family"])
+        self.assertEqual(result["assignments"], {"reviewer": "zeta"})
+
+
 if __name__ == "__main__":
     unittest.main()

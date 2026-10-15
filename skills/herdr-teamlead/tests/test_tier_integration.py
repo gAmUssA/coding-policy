@@ -14,7 +14,7 @@ from teamlead.planner import plan
 from teamlead.state import add_assignment, empty_state, load_state_checked, role_counts
 from tests.fakes import FakeRunner, PhasedReads, agent_json, composer_reads, composer_screen, ok_json
 from tests.test_cli import CliCase, CONFIG
-from tests.test_qualification import AT, qualified_tier
+from tests.tier_fixture import AT, tier_row
 
 
 class TierIntegrationTest(CliCase):
@@ -23,7 +23,7 @@ class TierIntegrationTest(CliCase):
         self.settings = copy.deepcopy(CONFIG)
         self.settings["schema_version"] = 2
         self.settings["agents"] = self.settings["agents"][:1]
-        self.settings["agents"][0]["tiers"] = {"build": qualified_tier()}
+        self.settings["agents"][0]["tiers"] = {"build": tier_row()}
         self.write_config()
 
     def write_config(self):
@@ -33,7 +33,9 @@ class TierIntegrationTest(CliCase):
         return ["apply", *self.base(), "--assignments", json.dumps(document or {"developer": "claude"}),
                 "--common", str(self.common), *self.brief_args("developer"), "--now", AT, "--composer-settle", "0"]
 
-    def test_planner_skips_unqualified_seat_with_more_headroom(self):
+    def test_planner_ranks_tiered_seats_by_headroom_without_qualification(self):
+        # The retired battery once skipped a seat whose row carried no recorded
+        # trials; headroom alone now ranks configured rows.
         other = copy.deepcopy(self.settings["agents"][0])
         other["name"] = "spare"
         other["tiers"]["build"]["qualification"] = []
@@ -43,26 +45,29 @@ class TierIntegrationTest(CliCase):
         rc, output, error = self.run_cli(["plan", *self.base(), "--roles", "developer",
                                         "--snapshot", str(self.snapshot), "--now", AT])
         self.assertEqual(rc, 0, error)
-        self.assertEqual(json.loads(output)["assignments"], {"developer": "claude"})
+        self.assertEqual(json.loads(output)["assignments"], {"developer": "spare"})
 
-    def test_unqualified_live_dispatch_refuses_before_any_herdr_call(self):
-        self.settings["agents"][0]["tiers"]["build"]["qualification"] = []
-        self.write_config()
-        runner = FakeRunner()
-        rc, output, error = self.run_cli(self.apply_args(), client=HerdrClient("herdr", runner))
-        self.assertEqual(rc, 1)
-        self.assertIn("paired promotion", error)
-        self.assertEqual(output, "")
-        self.assertEqual(runner.calls, [])
-        self.assertFalse(self.state.exists())
+    def test_a_retired_qualification_field_is_accepted_and_ignored(self):
+        for recorded in ([], [{"schema_version": 1, "role": "developer"}], "legacy"):
+            with self.subTest(recorded=recorded):
+                self.settings["agents"][0]["tiers"]["build"]["qualification"] = recorded
+                self.write_config()
+                self.out.seek(0)
+                self.out.truncate()
+                rc, output, error = self.run_cli(["plan", *self.base(), "--roles", "developer",
+                                                "--snapshot", str(self.snapshot), "--now", AT])
+                self.assertEqual(rc, 0, error)
+                tier = json.loads(output)["tiers"]["developer"]
+                self.assertEqual((tier["model"], tier["effort"]), ("sonnet-5", "high"))
+                self.assertNotIn("qualification", tier)
 
-    def test_unqualified_default_plan_refuses_with_preview_recovery(self):
-        self.settings["agents"][0]["tiers"]["build"]["qualification"] = []
+    def test_an_unknown_tier_field_is_still_refused(self):
+        self.settings["agents"][0]["tiers"]["build"]["qualifcation"] = []
         self.write_config()
         rc, _, error = self.run_cli(["plan", *self.base(), "--roles", "developer",
                                     "--snapshot", str(self.snapshot), "--now", AT])
         self.assertEqual(rc, 1)
-        self.assertIn("--preview-tiers", error)
+        self.assertIn("must contain only", error)
 
     def test_invalid_utf8_json_inputs_report_the_path_without_worker_calls(self):
         invalid = self.tmp / "invalid.json"
@@ -95,15 +100,21 @@ class TierIntegrationTest(CliCase):
         self.assertIn("UTF-8 JSON", warnings[0])
         self.assertEqual(invalid.read_bytes(), b"\xff\xfe")
 
-    def test_preview_plan_can_inspect_an_unqualified_table(self):
+    def test_the_retired_preview_flag_is_accepted_and_plans_identically(self):
         self.settings["agents"][0]["tiers"]["build"]["qualification"] = []
         self.write_config()
-        rc, output, error = self.run_cli(["plan", *self.base(), "--roles", "developer",
-                                        "--snapshot", str(self.snapshot), "--now", AT, "--preview-tiers"])
-        self.assertEqual(rc, 0, error)
-        self.assertEqual(json.loads(output)["tiers"]["developer"]["model"], "sonnet-5")
+        outputs = []
+        for extra in ([], ["--preview-tiers"]):
+            self.out.seek(0)
+            self.out.truncate()
+            rc, output, error = self.run_cli(["plan", *self.base(), "--roles", "developer",
+                                            "--snapshot", str(self.snapshot), "--now", AT, *extra])
+            self.assertEqual(rc, 0, error)
+            outputs.append(json.loads(output))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(outputs[0]["tiers"]["developer"]["model"], "sonnet-5")
 
-    def test_dry_run_prints_flags_without_herdr_or_qualification(self):
+    def test_dry_run_prints_flags_without_herdr(self):
         self.settings["agents"][0]["tiers"]["build"]["qualification"] = []
         self.write_config()
         runner = FakeRunner()
@@ -182,8 +193,9 @@ class TierIntegrationTest(CliCase):
         self.assertIn(applied["tier"]["prompt_hash"], runner.pasted_prompts()[0])
         stored, usable = load_state_checked(self.state)
         self.assertTrue(usable)
-        self.assertEqual(stored["schema_version"], 6)
+        self.assertEqual(stored["schema_version"], 7)
         self.assertEqual(stored["assignments"][0]["tier"], applied["tier"])
+        self.assertNotIn("qualification", stored["assignments"][0]["tier"])
         self.assertEqual(role_counts(stored), {"developer": {"claude": 1}})
 
     def test_tiered_worker_changed_during_composer_read_receives_no_prompt(self):
@@ -213,9 +225,63 @@ class TierIntegrationTest(CliCase):
             "agents": {"claude": {"window_group": "shared"}}}], "assignments": [row]}))
         migrated, usable = load_state_checked(self.state)
         self.assertTrue(usable)
-        self.assertEqual(migrated["assignments"][0], {**row, "schema_version": 6, "tier": None, "requirements": None, "reviewer_scope": None})
+        self.assertEqual(migrated["assignments"][0], {**row, "schema_version": 7, "tier": None, "requirements": None, "reviewer_scope": None})
         self.assertEqual(migrated["snapshots"][0]["agents"]["claude"], {"window_group": "shared", "tier_billing": {}})
         self.assertEqual(role_counts(migrated), {"developer": {"claude": 1}})
+
+    def verified_tier(self, **extra):
+        argv = ["claude", "--model", "sonnet-5", "--effort", "high"]
+        return {"kind": "claude", "model": "sonnet-5", "effort": "high", "launch_args": [], **extra,
+                "verified": {"source": "launch_argv", "model": "sonnet-5", "effort": "high", "pane_id": "w1:p2", "argv": argv}}
+
+    def ledger(self, version, tier):
+        row = {"schema_version": version, "at": AT, "role": "developer", "agent": "claude", "status": "applied",
+               "task": "owner/repo#1", "fix_round": None, "cleared": True, "clear_reason": "automatic",
+               "context_session": None, "tier": tier, "requirements": None, "reviewer_scope": None}
+        return {"schema_version": version, "snapshots": [], "assignments": [row], "specialist_assessments": []}
+
+    def test_schema_six_rows_migrate_to_seven_and_drop_the_retired_qualification_summary(self):
+        summary = {"schema_version": 1, "role": "developer", "model": "sonnet-5", "effort": "high",
+                   "canary_at": "2026-01-08T11:00:00Z"}
+        self.state.write_text(json.dumps(self.ledger(6, self.verified_tier(qualification=summary))))
+        migrated, usable = load_state_checked(self.state)
+        self.assertTrue(usable)
+        self.assertEqual((migrated["schema_version"], migrated["assignments"][0]["schema_version"]), (7, 7))
+        self.assertEqual(migrated["assignments"][0]["tier"], self.verified_tier())
+        on_disk = json.loads(self.state.read_text())
+        self.assertEqual(on_disk["assignments"][0]["schema_version"], 7)
+        self.assertNotIn("qualification", on_disk["assignments"][0]["tier"])
+        self.assertEqual(role_counts(migrated), {"developer": {"claude": 1}})
+
+    def test_schema_seven_rows_round_trip_unchanged(self):
+        state = empty_state()
+        state["assignments"] = self.ledger(7, self.verified_tier())["assignments"]
+        original = json.dumps(state)
+        self.state.write_text(original)
+        stored, usable = load_state_checked(self.state)
+        self.assertTrue(usable)
+        self.assertEqual(stored, json.loads(original))
+        self.assertEqual(self.state.read_text(), original)
+
+    def test_a_schema_seven_row_carrying_a_qualification_summary_is_unowned(self):
+        original = json.dumps(self.ledger(7, self.verified_tier(qualification={"schema_version": 1})))
+        self.state.write_text(original)
+        warnings = []
+        stored, usable = load_state_checked(self.state, warn=warnings.append)
+        self.assertFalse(usable)
+        self.assertEqual(stored, empty_state())
+        self.assertIn("qualification", warnings[0])
+        self.assertEqual(self.state.read_text(), original)
+
+    def test_a_newer_ledger_is_left_untouched_as_no_usable_prior_state(self):
+        original = json.dumps(self.ledger(8, self.verified_tier()))
+        self.state.write_text(original)
+        warnings = []
+        stored, usable = load_state_checked(self.state, warn=warnings.append)
+        self.assertFalse(usable)
+        self.assertEqual(stored, empty_state())
+        self.assertIn("schema_version 8", warnings[0])
+        self.assertEqual(self.state.read_text(), original)
 
     def test_historical_permission_modes_stay_readable_without_becoming_live_proof(self):
         for options in ([], ["--permission-mode", "acceptEdits"]):

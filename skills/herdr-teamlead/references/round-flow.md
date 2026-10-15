@@ -21,7 +21,8 @@ Compatible expertise may share a responsibility. Consultations with the same
 canonical responsibility use separate dispatches, each with its own engagement.
 
 The owner planner applies capability and contribution eligibility before
-affordable task familiarity and measured headroom. Step 3 in the skill names
+affordable task familiarity and measured headroom; a verifier's model family
+breaks headroom ties. Step 3 in the skill names
 the executable contract. Use measured costs to improve calibration; preserve
 the pinned judge and the developer's early-fix reservation.
 
@@ -428,13 +429,12 @@ finish, apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/r
   at this step.
 - **Sent but not started** — inspect the pane; never re-dispatch on top of the
   message. Proceed to Step 9 for the roles that started.
-- **Retrospective, clear, composer, tier, qualification, or continuity refusal** — follow the
+- **Retrospective, clear, composer, tier, or continuity refusal** — follow the
   diagnostic and recorded dispatch outcome. Reconcile uncertainty before retrying;
   wait for roles whose records confirm dispatch.
 - **Unknown refusal** — report it verbatim and finish here.
 - **`--dry-run`** — inspect the context choice, requested tier, and relaunch
-  argv. It contacts no worker, writes no ledger, and proves no live tier or
-  qualification. Finish here.
+  argv. It contacts no worker, writes no ledger, and proves no live tier. Finish here.
 
 
 ## Ruling Outcomes

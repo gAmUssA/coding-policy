@@ -17,7 +17,7 @@ from teamlead.herdr import HerdrClient
 from teamlead.state import empty_state
 from tests.fakes import ScriptedReads, agent_json
 from tests.test_assign import BY_NAME, PANES, runner_with
-from tests.test_qualification import AT, qualified_tier
+from tests.tier_fixture import AT, tier_row
 
 OLD = "2026-01-08T11:00:00+00:00"
 
@@ -34,8 +34,7 @@ class SpecialistRetentionTest(unittest.TestCase):
         self.requirement = {"specialty": "ux", "required_capabilities": ["interaction-design"],
                             "independent": False, "engagement": "onboarding-design"}
         self.requirements = {"advisor": self.requirement}
-        self.tier = {"kind": "claude", **qualified_tier()}
-        self.tier["qualification"][0]["role"] = "advisor"
+        self.tier = {"kind": "claude", **tier_row()}
         self.argv = ["claude", "--dangerously-skip-permissions", "--model", "sonnet-5", "--effort", "high"]
         self.proof = {"source": "process_argv", "pane_id": PANES["claude"], "pid": 200,
                       "model": "sonnet-5", "effort": "high", "argv": self.argv}
@@ -57,7 +56,7 @@ class SpecialistRetentionTest(unittest.TestCase):
     def dispatch(self, **kwargs):
         options = {"task": "task-1", "history": self.history, "retain_specialist": True,
                    "requirements": self.requirements, "tiers": {"advisor": self.tier},
-                   "qualifications": {"advisor": self.tier["qualification"]}, "sleep": lambda _: None,
+                   "sleep": lambda _: None,
                    "settle_sec": 0, "warn": lambda _: None}
         options.update(kwargs)
         return apply(self.client, {"advisor": "claude"}, BY_NAME, self.paths, AT, **options)
@@ -95,12 +94,11 @@ class SpecialistRetentionTest(unittest.TestCase):
                 self.reset_client()
                 previous = {**self.previous, "role": role}
                 tier = copy.deepcopy(self.tier)
-                tier["qualification"][0]["role"] = role
                 result = apply(self.client, {role: "claude"}, BY_NAME,
                     {"common": self.paths["common"], role: self.paths["advisor"]}, AT,
                     task="task-1", history=[previous], retain_specialist=True,
                     requirements={role: self.requirement}, tiers={role: tier},
-                    qualifications={role: tier["qualification"]}, sleep=lambda _: None, settle_sec=0)
+                    sleep=lambda _: None, settle_sec=0)
                 self.assertEqual(result["applied"][0]["clear_reason"], "retained")
 
     def test_other_responsibilities_and_multi_worker_batches_are_refused(self):

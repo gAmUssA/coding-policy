@@ -59,7 +59,6 @@ from .state import MAX_FIX_ROUNDS
 from .recovery import developer_attempts, empty_recovery, fresh_transition, task_record, validate_work
 from .launch import restart_worker, verify_running, verify_running_permissions
 from .tiers import launch_flags, worker_launch_args
-from .qualification import require_qualification
 from .composition import normalize_requirement, parse_requirements
 
 # Version 3 adds verified model-tier metadata to context and task/fix evidence.
@@ -585,7 +584,7 @@ def check_all_ready(client, assignments, agents_by_name, warn=None):
     return statuses
 
 
-def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, qualifications=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None, retain_specialist=False, requirements=None, refusal_moves=None):
+def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle_timeout_ms=DEFAULT_SETTLE_TIMEOUT_MS, on_assigned=None, warn=None, sleep=time.sleep, settle_sec=COMPOSER_SETTLE_SEC, landing_attempts=LANDING_ATTEMPTS, start_timeout_ms=DEFAULT_START_TIMEOUT_MS, allow_recovery=False, task=None, retain_context=False, fix_round=None, history=None, tiers=None, recovery=None, plan_id=None, work=None, on_prepare=None, on_before_send=None, on_result=None, retrospective_guard=None, retain_specialist=False, requirements=None, refusal_moves=None):
     """Hand each agent its brief using the selected context mode.
 
     `on_assigned(role, agent, at, status, context)` is called after each hand-off so the
@@ -614,10 +613,6 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
         if previous_tier.get("effort") != wanted.get("effort"):
             for key, default in (("multiplier", 1.0), ("effective_multiplier", 1.0), ("billing_window", "unknown")):
                 tiers["developer"][key] = previous_tier.get(key, default)
-    for role, tier in tiers.items():
-        if role != "judge":
-            proof = require_qualification({**tier, "qualification": (qualifications or {}).get(role, [])}, role, at)
-            tiers[role] = {**tier, "qualification": proof}
     skip_clear = no_clear or retain_context or retain_specialist
     clear_reason = "retained" if retain_context or retain_specialist else "hand" if no_clear else "automatic"
     # Resolve the sink once. Every helper below defaults it too, but this
