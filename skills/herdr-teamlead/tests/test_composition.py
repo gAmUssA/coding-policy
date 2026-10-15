@@ -258,6 +258,23 @@ class ModelFamilyHintTest(unittest.TestCase):
         developer = selection_constraints(["developer"], self.agents(), {}, self.history(), "onboarding")
         self.assertEqual(developer["same_family"], {"developer": {}})
 
+    def test_a_reconfigured_contributor_keeps_the_family_it_worked_on(self):
+        # "author" built the task on codex and was later reconfigured to claude.
+        history = [{"task": "onboarding", "role": "developer", "agent": "author", "status": "applied",
+                    "tier": {"kind": "codex", "model": "gpt-5.6-sol"}}]
+        result = selection_constraints(["reviewer"], self.agents(), {}, history, "onboarding")
+        self.assertEqual(result["same_family"]["reviewer"], {"author": 0, "sibling": 0, "zeta": 1})
+
+    def test_a_removed_contributor_still_marks_its_recorded_family(self):
+        history = [{"task": "onboarding", "role": "developer", "agent": "retired", "status": "applied",
+                    "result": {"tier": {"kind": "codex"}}}]
+        dispatches = [{"task": "onboarding", "role": "developer", "agent": "gone", "status": "applied",
+                       "provider": "grok"}]
+        agents = self.agents() + [SimpleNamespace(name="grokker", kind="grok", capabilities=())]
+        result = selection_constraints(["tester"], agents, {}, history, "onboarding", dispatches=dispatches)
+        self.assertEqual(result["same_family"]["tester"],
+                         {"author": 0, "grokker": 1, "sibling": 0, "zeta": 1})
+
     def test_the_hint_reorders_an_equal_headroom_plan(self):
         constraints = selection_constraints(["reviewer"], self.agents(), {}, self.history(), "onboarding")
         result = plan(["reviewer"], snapshot(author=90, sibling=50, zeta=50), exclude=constraints["exclude"],

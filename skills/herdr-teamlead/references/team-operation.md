@@ -392,7 +392,7 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - A pre-development report never satisfies the gate
 - Exclude actual design and implementation contributors from independent verification of that task
 - A role, model or session change never erases contribution history
-- Among verifiers equal on headroom, the planner prefers a model family other than the task's contributors; a tie-break, never an exclusion
+- Among verifiers equal on headroom, the planner prefers a model family other than the one each contributor's ledger rows record; a tie-break, never an exclusion
 - Treat unassessed possible contributions as unresolved independence evidence
 - Record legacy reviewer responsibilities as unknown until evidence establishes their contribution
 - Before a PR exists, the developer's own evidence is the branch CI its push triggered
