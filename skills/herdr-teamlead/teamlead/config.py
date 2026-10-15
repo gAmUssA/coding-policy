@@ -167,11 +167,15 @@ def _missing_config_error(path):
     )
 
 
-def parse_config(payload, source="<memory>"):
-    """Validate an already-decoded config mapping and return a list of Agents.
+#: Per-agent fields gated on a config schema version, and that version.
+AGENT_FIELD_GATES = (("tiers", 2), ("capabilities", 3))
 
-    Pure apart from the `source` string used in error messages, so tests build
-    configs inline instead of writing files.
+
+def validate_config_schema(payload, source="<memory>"):
+    """Schema and field-gate validation every config.json reader runs first.
+
+    Refuses a non-object, an unreadable (missing, older or newer) version,
+    and any version-gated field below its version. Returns the version.
     """
     if not isinstance(payload, dict):
         raise ConfigError(
@@ -179,7 +183,6 @@ def parse_config(payload, source="<memory>"):
             "`agents` - see config.example.json.".format(source),
             {"source": source},
         )
-
     version = payload.get("schema_version")
     if isinstance(version, bool) or not isinstance(version, int) or version not in READABLE_CONFIG_VERSIONS:
         raise ConfigError(
@@ -189,7 +192,31 @@ def parse_config(payload, source="<memory>"):
             ),
             {"source": source, "found": version, "expected": CONFIG_SCHEMA_VERSION},
         )
+    if "top_models" in payload and version < TOP_MODELS_CONFIG_VERSION:
+        raise ConfigError(
+            "Config at {} carries `top_models` under schema_version {!r}; `top_models` needs config "
+            "schema_version {}. Set \"schema_version\": {} in that file; nothing else in it needs to "
+            "change.".format(source, version, TOP_MODELS_CONFIG_VERSION, TOP_MODELS_CONFIG_VERSION),
+            {"source": source, "found": version, "expected": TOP_MODELS_CONFIG_VERSION, "field": "top_models"},
+        )
+    agents = payload.get("agents")
+    for index, entry in enumerate(agents if isinstance(agents, list) else []):
+        for field, gate in AGENT_FIELD_GATES:
+            if isinstance(entry, dict) and field in entry and version < gate:
+                raise ConfigError(
+                    "Config at {}: agents[{}] declares `{}`, which needs config schema_version {}; "
+                    "set \"schema_version\" to {} or later in that file.".format(source, index, field, gate, gate),
+                    {"source": source, "index": index, "found": version, "expected": gate, "field": field})
+    return version
 
+
+def parse_config(payload, source="<memory>"):
+    """Validate an already-decoded config mapping and return a list of Agents.
+
+    Pure apart from the `source` string used in error messages, so tests build
+    configs inline instead of writing files.
+    """
+    validate_config_schema(payload, source)
     extra_top_models = _config_top_models(payload, source)
 
     raw_agents = payload.get("agents")
@@ -229,15 +256,6 @@ def parse_config(payload, source="<memory>"):
                 {"source": source, "index": index, "usage_read_source": read_source},
             )
         name = entry["name"]
-        if "tiers" in entry and version < 2:
-            raise ConfigError("Config at {}: agents[{}] declares `tiers`, which needs config schema_version 2; "
-                              "set \"schema_version\" to 2 or later in that file.".format(source, index),
-                              {"source": source, "index": index, "found": version, "expected": 2, "field": "tiers"})
-        if "capabilities" in entry and version < 3:
-            raise ConfigError("Config at {}: agents[{}] declares `capabilities`, which needs config schema_version 3; "
-                              "set \"schema_version\" to 3 or later in that file without changing its existing "
-                              "launch or tier settings.".format(source, index),
-                              {"source": source, "index": index, "found": version, "expected": 3, "field": "capabilities"})
         capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(
@@ -419,12 +437,7 @@ def parse_judge(payload, source="<memory>"):
     judges, so the model lives in config where swapping the top tier is a
     one-line edit rather than a code change and a republish.
     """
-    if not isinstance(payload, dict):
-        raise ConfigError(
-            "Config at {} must be a JSON object with `schema_version` and "
-            "`agents` - see config.example.json.".format(source),
-            {"source": source},
-        )
+    validate_config_schema(payload, source)
     raw = payload.get("judge")
     if raw is None:
         return None
@@ -477,19 +490,10 @@ def parse_judge(payload, source="<memory>"):
 
 
 def _config_top_models(payload, source):
-    """The validated `top_models` block; only config schema 4 may carry it."""
+    """The validated `top_models` block; validate_config_schema gates its version."""
     if "top_models" not in payload:
         return {}
-    version = payload.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int) or version < TOP_MODELS_CONFIG_VERSION:
-        raise ConfigError(
-            "Config at {} carries `top_models` under schema_version {!r}; `top_models` needs config "
-            "schema_version {}. Set \"schema_version\": {} in that file; nothing else in it needs to "
-            "change.".format(source, version, TOP_MODELS_CONFIG_VERSION, TOP_MODELS_CONFIG_VERSION),
-            {"source": source, "found": version, "expected": TOP_MODELS_CONFIG_VERSION, "field": "top_models"},
-        )
     return parse_top_models(payload["top_models"], source)
-
 
 
 def _check_judge_pin(payload, agent, model, effort, source):
@@ -542,12 +546,7 @@ def parse_role_costs(payload, source="<memory>"):
     own defaults, one role at a time. Validation lives here rather than in the
     planner so the message names the file the operator has to edit.
     """
-    if not isinstance(payload, dict):
-        raise ConfigError(
-            "Config at {} must be a JSON object with `schema_version` and "
-            "`agents` - see config.example.json.".format(source),
-            {"source": source},
-        )
+    validate_config_schema(payload, source)
     costs = payload.get("role_costs")
     if costs is None:
         return {}
