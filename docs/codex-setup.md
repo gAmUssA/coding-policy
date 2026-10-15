@@ -19,7 +19,7 @@ Requirements: macOS, Linux, or WSL with Python 3.11 or newer and Bash. The exist
 - `hooks/codex-session-start.py` reads the rule list and version from `.tessl-plugin/plugin.json`. It names each packaged rule and its scope and directs the agent to read always-on rules before repository work.
 - The adapter's context maps references to co-shipped `.tessl/plugins/gamussa/coding-policy` files to the installed Codex root. Explicit Tessl installation and dependency operations retain their original meaning.
 - Herdr's policy-path resolver falls back to `.codex-plugin/RULES.md` and the bundled release skill when no local or global Tessl artifact is available.
-- The adapter translates the original SessionStart hooks' `additionalContext` output. The original Stop scripts already emit native Codex output and run directly.
+- The adapter runs each SessionStart hook listed in `hooks/session-start-hooks.txt` and translates its `additionalContext` output. Codex runs them as separate handlers; Tessl-configured agents run the same list through `hooks/session-start.sh`. The original Stop scripts already emit native Codex output and run directly.
 - Installing the plugin does not grant hook trust. Until the hooks are trusted, skills are available but automatic rule discovery and lifecycle checks do not run.
 
 See the [adapter header](../hooks/codex-session-start.py) for its input, output, exit, timeout, and side-effect contracts. See [OpenAI's hook documentation](https://learn.chatgpt.com/docs/hooks) for the host's trust-review flow.

@@ -1,0 +1,5 @@
+check-policy-freshness.sh
+check-git-sync.sh
+check-tessl-latest.sh
+herdr-team-status.sh
+beans-prime.sh

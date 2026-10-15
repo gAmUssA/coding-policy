@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Codex SessionStart adapter; no third-party dependencies.
 
-stdin: native SessionStart JSON. Optional argv: a manifest-declared hook filename.
+stdin: native SessionStart JSON. Optional argv: a hook filename listed in
+hooks/session-start-hooks.txt.
 stdout: native hookSpecificOutput with policy paths or translated hook context.
 exit: 0 on success/no-op, the child status on failure, 1 on invalid input or timeout.
 The no-argument mode only reads packaged files. Child hooks retain their documented
@@ -112,14 +113,15 @@ def main() -> int:
         if len(sys.argv) == 1:
             emit_context(policy_context(manifest))
             return 0
+        # The same list hooks/session-start.sh runs for Tessl-configured agents.
         allowed = {
-            Path(hook["args"][0]).name
-            for group in manifest["hooks"]["SessionStart"]
-            for hook in group["hooks"]
+            line.strip()
+            for line in (ROOT / "hooks/session-start-hooks.txt").read_text().splitlines()
+            if line.strip()
         }
         if len(sys.argv) != 2 or sys.argv[1] not in allowed:
             raise ValueError(
-                "expected one manifest-declared SessionStart hook filename"
+                "expected one SessionStart hook filename from hooks/session-start-hooks.txt"
             )
         result = run_hook(
             ["bash", str(bundled_path("hooks/" + sys.argv[1]))],

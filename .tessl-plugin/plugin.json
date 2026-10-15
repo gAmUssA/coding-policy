@@ -54,35 +54,7 @@
             "type": "command",
             "command": "bash",
             "args": [
-              "${TESSL_PLUGIN_DIR}/hooks/check-policy-freshness.sh"
-            ]
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [
-              "${TESSL_PLUGIN_DIR}/hooks/check-git-sync.sh"
-            ]
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [
-              "${TESSL_PLUGIN_DIR}/hooks/check-tessl-latest.sh"
-            ]
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [
-              "${TESSL_PLUGIN_DIR}/hooks/herdr-team-status.sh"
-            ]
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": [
-              "${TESSL_PLUGIN_DIR}/hooks/beans-prime.sh"
+              "${TESSL_PLUGIN_DIR}/hooks/session-start.sh"
             ]
           }
         ]
@@ -91,6 +63,16 @@
   },
   "nativeHooks": {
     "claude-code": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${TESSL_PLUGIN_DIR}/hooks/session-start.sh\""
+            }
+          ]
+        }
+      ],
       "Stop": [
         {
           "hooks": [

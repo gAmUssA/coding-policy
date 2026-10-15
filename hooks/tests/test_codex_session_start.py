@@ -40,7 +40,7 @@ class CodexSessionStart(unittest.TestCase):
                     {
                         "hooks": [
                             {
-                                "args": ["${TESSL_PLUGIN_DIR}/hooks/check.sh"],
+                                "args": ["${TESSL_PLUGIN_DIR}/hooks/session-start.sh"],
                             }
                         ]
                     }
@@ -48,6 +48,7 @@ class CodexSessionStart(unittest.TestCase):
             },
         }
         self.write_manifest()
+        (self.root / "hooks/session-start-hooks.txt").write_text("check.sh\n")
         (self.root / "rules/always.md").write_text(
             "---\nalwaysApply: true\n---\n# Always\n"
         )
@@ -114,7 +115,16 @@ class CodexSessionStart(unittest.TestCase):
     def test_undeclared_hook_is_not_executed(self):
         result = self.run_hook("../check.sh")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("manifest-declared", result.stderr)
+        self.assertIn("session-start-hooks.txt", result.stderr)
+
+    def test_manifest_entry_outside_the_list_is_not_executed(self):
+        (self.root / "hooks/session-start.sh").write_text(
+            "touch \"$TESSL_PLUGIN_DIR/ran\"\n"
+        )
+        result = self.run_hook("session-start.sh")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("session-start-hooks.txt", result.stderr)
+        self.assertFalse((self.root / "ran").exists())
 
     def test_tessl_context_and_stdin_are_preserved(self):
         (self.root / "hooks/check.sh").write_text(
@@ -308,12 +318,12 @@ class CodexPackage(unittest.TestCase):
         ]
         self.assertIn('python3 "${PLUGIN_ROOT}/hooks/codex-session-start.py"', session)
         originals = [
-            Path(hook["args"][0]).name
-            for group in tessl["hooks"]["SessionStart"]
-            for hook in group["hooks"]
+            line.strip()
+            for line in (ROOT / "hooks/session-start-hooks.txt").read_text().splitlines()
+            if line.strip()
         ]
         self.assertEqual(
-            {command.rsplit(" ", 1)[-1] for command in session[1:]}, set(originals)
+            [command.rsplit(" ", 1)[-1] for command in session[1:]], originals
         )
         expected_stop = [
             hook["command"].replace("${TESSL_PLUGIN_DIR}", "${PLUGIN_ROOT}")
