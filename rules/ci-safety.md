@@ -70,7 +70,7 @@ alwaysApply: true
 ## Checks Not Starting
 
 - When pushed checks sit in `queued` and no `github-actions` run is created, check the PR's merge state before assuming an Actions outage
-- Diagnose with `gh pr view <N> --json mergeable,mergeStateStatus` — `CONFLICTING` / `DIRTY` is the cause
+- Diagnose with `gh pr view <N> --repo <owner>/<repo> --json mergeable,mergeStateStatus` — `CONFLICTING` / `DIRTY` is the cause
 - Fix: rebase the branch onto the base, resolve conflicts, push — the `github-actions` suite runs and `mergeStateStatus` flips to `UNSTABLE` / `CLEAN`
 
 ## Protected Branches
