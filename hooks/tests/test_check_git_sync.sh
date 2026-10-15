@@ -31,6 +31,8 @@
 #                       during the status check or the fast-forward.
 #   1e4. Local filter -> a filter command in repo-local config refuses the
 #                       fast-forward; the filter never runs and main stays put.
+#   4b. Unreadable repo -> a git failure other than "not a git repository"
+#                       warns on stderr instead of reading as a non-repo.
 #   1e5. Included / worktree / global filter -> included and per-worktree
 #                       config refuse like local config; a global filter
 #                       fast-forwards.
@@ -498,8 +500,16 @@ while True:
 
   # 4. not a repo -> silent no-op.
   mkdir -p "$TMP/notrepo" || die "could not create $TMP/notrepo"
-  run "$TMP/notrepo" "$TMP/s4"
-  if [[ $RC -eq 0 && -z "$OUT" ]]; then pass; else fail "not a repo: expected silent exit 0, got RC=$RC OUT=$OUT"; fi
+  OUT="$(cd "$TMP/notrepo" && env SYNC_STATE_DIR="$TMP/s4" bash "$SCRIPT" </dev/null 2>"$TMP/err4")"; RC=$?
+  if [[ $RC -eq 0 && -z "$OUT" && ! -s "$TMP/err4" ]]; then pass; else fail "not a repo: expected silent exit 0, got RC=$RC OUT=$OUT ERR=$(cat "$TMP/err4")"; fi
+
+  # 4b. A repository git cannot read is a failure, not a non-repo: exit 0 with
+  # an actionable stderr warning naming the rev-parse failure.
+  g init -q "$TMP/badcfg" || die "badcfg init failed"
+  printf '[core\n' >> "$TMP/badcfg/.git/config" || die "badcfg config write failed"
+  OUT="$(cd "$TMP/badcfg" && env SYNC_STATE_DIR="$TMP/s4b" bash "$SCRIPT" </dev/null 2>"$TMP/err4b")"; RC=$?
+  if [[ $RC -eq 0 && -z "$OUT" ]] && grep -q 'git rev-parse failed' "$TMP/err4b"; then
+    pass; else fail "unreadable repo: expected exit 0 and a rev-parse warning, got RC=$RC OUT=$OUT ERR=$(cat "$TMP/err4b")"; fi
 
   # 5. no origin remote -> silent no-op.
   g init -q -b main "$TMP/noorigin" || die "git init noorigin failed"

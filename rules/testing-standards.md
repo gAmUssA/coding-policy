@@ -86,13 +86,13 @@ alwaysApply: true
   2. The iteration count is explicitly bounded (e.g. `iterations = 100`), never unbounded or environment-derived
   3. No runtime-RNG call (`random()`, unseeded `Random()`, `shuffle`) selects or shapes the inputs
 - Every other case still follows Determinism: unseeded or unbounded generation, and any runtime-RNG input, stays forbidden
+- Prefer a deterministic outcome (process dead, exit code) over an elapsed-time check
 - Narrow exception for elapsed-time bounds in tests of code that enforces a deadline.
 - Preconditions (all required):
   1. The code under test enforces a timeout or deadline, and the test exists to prove it stops waiting
   2. The test asserts only an upper bound on elapsed time — never an exact duration, a lower bound, or ordering by elapsed time
   3. The bound is a named constant in the test, at least 4× the deadline under test plus fixed slack
   4. No date, time-of-day, or runtime `now()` value enters the test's inputs or assertions
-- Prefer a deterministic outcome (process dead, exit code) over an elapsed-time check
 - Every other elapsed-time assertion stays forbidden
 
 ## Fixtures and Independence

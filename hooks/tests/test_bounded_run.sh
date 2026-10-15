@@ -26,6 +26,10 @@
 #                           boundary) on a live group: a group whose only member
 #                           reads Z is not running, one reading S is, and a
 #                           failing ps counts as running. Platform-independent.
+#  11. kill -0 refused   -> an exported `kill` function answers every `-0`
+#                           probe EPERM, as macOS does mid-exec: the runner
+#                           still enforces the deadline (124) and kills the
+#                           command, never reading EPERM as "group gone".
 #
 # Run: bash hooks/tests/test_bounded_run.sh
 set -uo pipefail
@@ -190,6 +194,23 @@ ZOMBIE
       *) fail "liveness helper: a group reading '$state' should be $([[ $state == Z ]] && echo 'not running' || echo running), got alive=$alive" ;;
     esac
   done
+
+  # 11. Liveness never trusts kill -0: a probe refused with EPERM must not
+  # read as an exited leader or an empty group.
+  rc=0
+  (
+    # shellcheck disable=SC2329 # exported to the runner, which invokes it
+    kill() {
+      if [[ "${1:-}" == "-0" ]]; then echo "kill: Operation not permitted" >&2; return 1; fi
+      builtin kill "$@"
+    }
+    export -f kill
+    # shellcheck disable=SC2016 # expands inside the child shell, not here
+    bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c11.pid" "$TMP/c11.done" </dev/null 2>/dev/null
+  ) || rc=$?
+  if [[ $rc -eq 124 ]] && killed "$TMP/c11.pid" "$TMP/c11.done"; then
+    pass; else fail "kill -0 refused: expected 124 and the command killed, got rc=$rc"; fi
+  reap "$TMP/c11.pid"
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi

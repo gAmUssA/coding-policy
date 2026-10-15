@@ -59,7 +59,7 @@ main() {
   # Done means the whole group is gone, not just the leader: a background
   # descendant can hold stdout open after the leader exits.
   for (( i = 0; i <= budget * POLLS_PER_SEC; i++ )); do
-    if (( ! leader_done )) && ! kill -0 "$PGID" 2>/dev/null; then
+    if (( ! leader_done )) && ! leader_running; then
       wait "$PGID" || rc=$?
       leader_done=1
     fi
@@ -79,10 +79,11 @@ main() {
 # and under a non-reaping parent it would otherwise keep the group "alive"
 # until the deadline. `ps -A -o pgid= -o stat=` reads states on macOS and
 # Linux procps alike; when ps cannot answer, any member counts as running, so
-# the deadline still holds.
+# the deadline still holds. Liveness never comes from `kill -0`: its EPERM
+# (macOS, a member mid-exec or a zombie) is indistinguishable from ESRCH once
+# the diagnostic is discarded.
 group_alive() {
   local table rc=0
-  kill -0 -- "-$PGID" 2>/dev/null || return 1
   if ! table="$(ps -A -o pgid= -o stat=)"; then
     warn_once "ps could not list process states — counting every group member as running"
     return 0
@@ -92,6 +93,19 @@ group_alive() {
     0) return 0 ;;
     1) return 1 ;;
     *) warn_once "awk failed (exit ${rc}) reading process states — counting every group member as running"; return 0 ;;
+  esac
+}
+
+# Is the leader still running? `ps -p` exits 1 when no such process exists;
+# a defunct leader has exited and only awaits `wait`. Any other ps failure
+# counts as running, so the deadline still holds.
+leader_running() {
+  local st rc=0
+  st="$(ps -p "$PGID" -o stat=)" || rc=$?
+  case "$rc" in
+    0) [[ "$st" != *Z* ]] ;;
+    1) return 1 ;;
+    *) warn_once "ps could not read the leader's state (exit ${rc}) — counting it as running"; return 0 ;;
   esac
 }
 

@@ -275,14 +275,25 @@ main() {
   command -v git >/dev/null 2>&1 || { warn "git not found — install git to enable the sync check"; return 0; }
 
   # Outside a work tree there is nothing to sync. `--is-inside-work-tree` prints
-  # true/false and exits 0 inside any repo; its only failure is exit 128 ("not a
-  # git repository") — the expected non-repo session. Proceed only on a literal
-  # "true"; a bare repo / gitdir ("false") and the non-repo case are silent
-  # no-ops, and an unexpected value is surfaced.
-  inside="$(safe_git rev-parse --is-inside-work-tree 2>/dev/null)" || inside="__notrepo__"
+  # true/false and exits 0 inside any repo. Exit 128 with "not a git
+  # repository" is the expected non-repo session, a silent no-op; every other
+  # failure (dubious ownership, a corrupt repository) is surfaced. Proceed only
+  # on a literal "true"; a bare repo / gitdir ("false") is a silent no-op, and
+  # an unexpected value is surfaced.
+  # Builtins only: the hook runs under a minimal PATH. stderr joins stdout so
+  # the failure text is kept; on success the answer is the last line.
+  local rp_out
+  rc=0
+  rp_out="$(LC_ALL=C safe_git rev-parse --is-inside-work-tree 2>&1)" || rc=$?
+  if (( rc != 0 )); then
+    if (( rc == 128 )) && [[ "$rp_out" == *"not a git repository"* ]]; then return 0; fi
+    warn "git rev-parse failed (exit ${rc}): ${rp_out%%$'\n'*} — run \`git status\` here to see and fix the error; sync check skipped"
+    return 0
+  fi
+  inside="${rp_out##*$'\n'}"
   case "$inside" in
     true) : ;;
-    false|__notrepo__) return 0 ;;
+    false) return 0 ;;
     *) warn "unexpected \`git rev-parse --is-inside-work-tree\` output '${inside}' — skipping sync check"; return 0 ;;
   esac
 
