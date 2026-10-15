@@ -242,9 +242,17 @@ class CodexSessionStart(unittest.TestCase):
             self.assertEqual(adapter.main(), 1)
         self.assertIn("timed out", errors.getvalue())
         self.assertNotIn("Operation not permitted", errors.getvalue())
-        # Gone, or only unreaped zombies left (macOS answers those EPERM).
-        with self.assertRaises((ProcessLookupError, PermissionError)):
-            killpg(groups[0], 0)
+        # No member left that still runs: zombies awaiting a reaper answer
+        # kill(0) on Linux and EPERM on macOS, so ask ps for their state.
+        table = subprocess.run(
+            ["ps", "-A", "-o", "pgid=,stat="],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        running = [
+            row for row in table.splitlines()
+            if row.split()[0] == str(groups[0]) and not row.split()[1].startswith("Z")
+        ]
+        self.assertEqual(running, [])
 
     def test_timeout_reaps_a_nested_deadline_runners_group(self):
         # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
