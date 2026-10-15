@@ -31,8 +31,13 @@
 #           report — a failed `tessl update`, a missing jq, an unreadable
 #           resolved-state file — warns to stderr AND emits the status, which
 #           names the degradation (rules/error-handling.md Shell Error Handling).
+#   mode  : SESSION_START_MODE=portable (set by hooks/session-start.sh under
+#           `tessl hook run`, which hides HERDR_ENV) means a Herdr worker cannot
+#           be ruled out: no `tessl update` runs, versions are reported as
+#           installed (never "latest"), and the status says why.
 #   env   : TESSL_LATEST_MANIFEST (manifest path, default tessl.json),
-#           TESSL_STATE_DIR (resolved-state dir, default .tessl).
+#           TESSL_STATE_DIR (resolved-state dir, default .tessl),
+#           SESSION_START_MODE.
 set -euo pipefail
 
 warn() { printf 'check-tessl-latest: %s\n' "$1" >&2; }
@@ -112,8 +117,10 @@ main() {
 
   # Run `tessl update --yes` best-effort. A missing CLI or a non-zero exit never
   # aborts the hook — it degrades the status to "update failed".
-  local update_failed=0 update_reason="" out=""
-  if ! command -v tessl >/dev/null 2>&1; then
+  local update_failed=0 update_reason="" out="" skipped=0
+  if [[ "${SESSION_START_MODE:-}" == portable ]]; then
+    skipped=1
+  elif ! command -v tessl >/dev/null 2>&1; then
     update_failed=1
     update_reason="tessl not installed — install the Tessl CLI to enable auto-update"
   elif ! out="$(tessl update --yes </dev/null 2>&1)"; then
@@ -152,7 +159,7 @@ main() {
       seg="${names[idx]} (install pending)"
     elif [[ "$b" == "$a" ]]; then
       # A failed update never verified freshness — do not claim "latest".
-      if (( update_failed )); then
+      if (( update_failed || skipped )); then
         seg="${names[idx]} ${a} (installed)"
       else
         seg="${names[idx]} ${a} (latest)"
@@ -174,6 +181,7 @@ main() {
   done
 
   if (( update_failed )); then status+="; update failed: ${update_reason}"; fi
+  if (( skipped )); then status+="; not updated here: SessionStart ran through tessl, which hides the session's environment — run \`tessl update\` if this is not a Herdr worker session"; fi
 
   if (( ${#pinned[@]} > 0 )); then
     local pins="" firstp=1 p

@@ -25,6 +25,10 @@
 #                                   is stopped at its deadline (its descendants
 #                                   too), reported, and both other statuses arrive.
 #  12. Total budget spent       -> a later child is reported as not run.
+#  13. Real check-tessl-latest -> through the aggregator with a consumer
+#                                   tessl.json and a recording fake `tessl`:
+#                                   portable mode never runs `tessl update` and
+#                                   never claims "latest"; native mode updates.
 #  10. Shipped wiring            -> the manifest declares only session-start.sh
 #                                   (portable + native claude-code), and every
 #                                   listed hook exists.
@@ -181,6 +185,30 @@ main() {
   run SESSION_START_HOOKS="slow.sh late.sh" SESSION_START_BUDGET_SEC=1
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("hook late.sh did not run") and (test("Session-start status — late") | not)' >/dev/null 2>&1; then
     pass; else fail "budget spent: expected late.sh reported as not run, got RC=$RC OUT=$OUT"; fi
+
+  # 13. The real check-tessl-latest child, portable then native.
+  local proj="$TMP/c13-proj" fakebin="$TMP/c13-bin" log="$TMP/c13-tessl.log" mode
+  mk_case c13
+  cp "$(dirname "$SCRIPT")/check-tessl-latest.sh" "$CASE/check-tessl-latest.sh" || die "c13 copy child failed"
+  mkdir -p "$proj/.tessl/plugins/gamussa/coding-policy" "$fakebin" || die "c13 mkdir failed"
+  printf '{"dependencies":{"gamussa/coding-policy":{"version":"latest"}}}\n' > "$proj/tessl.json" || die "c13 manifest failed"
+  # shellcheck disable=SC2016 # expands inside the generated fake, not here
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\nif [[ "$1" == update ]]; then printf "{\\"version\\":\\"1.1.0\\"}\\n" > .tessl/plugins/gamussa/coding-policy/tessl-package.json; fi\n' "$log" > "$fakebin/tessl" \
+    || die "c13 fake tessl failed"
+  chmod +x "$fakebin/tessl" || die "c13 chmod failed"
+  for mode in portable native; do
+    printf '{"version":"1.0.0"}\n' > "$proj/.tessl/plugins/gamussa/coding-policy/tessl-package.json" || die "c13 state reset failed"
+    rm -f "$log" || die "c13 log reset failed"
+    if [[ "$mode" == portable ]]; then
+      OUT="$(cd "$proj" && env SESSION_START_HOOKS=check-tessl-latest.sh TESSL_AGENT=cursor PATH="$fakebin:$PATH" bash "$CASE/session-start.sh" </dev/null 2>/dev/null)"; RC=$?
+      if [[ $RC -eq 0 && ! -e "$log" ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("gamussa/coding-policy 1.0.0") and test("not updated") and (test("latest\\)") | not)' >/dev/null 2>&1; then
+        pass; else fail "portable check-tessl-latest: expected no tessl call and an installed-only status, got RC=$RC log=$(cat "$log" 2>/dev/null) OUT=$OUT"; fi
+    else
+      OUT="$(cd "$proj" && env SESSION_START_HOOKS=check-tessl-latest.sh PATH="$fakebin:$PATH" bash "$CASE/session-start.sh" </dev/null 2>/dev/null)"; RC=$?
+      if [[ $RC -eq 0 ]] && grep -qx 'update --yes' "$log" && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("1.0.0 → 1.1.0")' >/dev/null 2>&1; then
+        pass; else fail "native check-tessl-latest: expected tessl update and a transition, got RC=$RC log=$(cat "$log" 2>/dev/null) OUT=$OUT"; fi
+    fi
+  done
 
   # 10. Shipped wiring: one SessionStart entry per tier, and the list resolves.
   local manifest="$ROOT/.tessl-plugin/plugin.json"
