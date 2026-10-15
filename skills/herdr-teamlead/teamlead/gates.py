@@ -14,10 +14,13 @@ the line, optionally wrapped in one pair of backticks.
 `check` reports every failure for the lead's `check-gates` command;
 `require_green` refuses an accepted outcome. The section is green only when
 it is present exactly once outside code fences, carries at least one gate,
-holds no malformed bullet and no duplicate name, names every required gate,
-and every gate exited 0. An `unknown` or non-zero exit is never green. Prose
-lines that are not bullets are ignored, so a worker can add a sentence of
-context under the list.
+holds no malformed list entry, blank command or duplicate name, names every
+required gate, and every gate exited 0. An `unknown` or non-zero exit is never green.
+
+The section runs to the next level-1 or level-2 heading, so gates under a
+`###` child heading are validated. Fenced code never counts as evidence. Any
+Markdown list entry (`-`, `*`, `+`, `1.`, `1)`, indented or not) is a gate
+line and must be canonical; other prose lines are ignored.
 """
 
 import re
@@ -26,21 +29,45 @@ from .errors import UsageError
 
 HEADING = "## Gates"
 LINE = re.compile(r"^- (?P<name>[A-Za-z0-9][A-Za-z0-9_.:/-]*) exit=(?P<exit>-?[0-9]+|unknown) cmd=(?P<cmd>\S.*)$")
+FENCE_OPEN = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+FENCE_CLOSE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})[ \t]*$")
+#: A level-1 or level-2 ATX heading ends the section; deeper headings stay in it.
+SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
+LIST_ENTRY = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|$)")
+THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+
+
+def _unfenced(body):
+    """Yield the lines outside fenced code blocks, per CommonMark fences.
+
+    A fence closes only on a line of the opener's character at least as long
+    as the opener; an unclosed fence runs to the end of the report.
+    """
+    opener = None
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        if opener is None:
+            match = FENCE_OPEN.match(line)
+            if match and not (match.group("fence")[0] == "`" and "`" in match.group("info")):
+                opener = match.group("fence")
+                continue
+            yield line
+        else:
+            match = FENCE_CLOSE.match(line)
+            if match and match.group("fence")[0] == opener[0] and len(match.group("fence")) >= len(opener):
+                opener = None
 
 
 def _section(body):
-    """Return the Gates section's lines, or None when absent; refuse two."""
-    lines, found, inside, fenced = [], 0, False, False
-    for raw in body.splitlines():
-        line = raw.rstrip()
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
-            if inside:
-                lines.append(line)
+    """Return the Gates section's unfenced lines, or None when absent; refuse two."""
+    lines, found, inside = [], 0, False
+    for line in _unfenced(body):
+        if line == HEADING:
+            inside = True
+            found += 1
             continue
-        if not fenced and line.startswith("#"):
-            inside = line == HEADING
-            found += inside
+        if SECTION_END.match(line):
+            inside = False
             continue
         if inside:
             lines.append(line)
@@ -56,7 +83,7 @@ def parse(body):
         return {"gates": [], "errors": ["missing `## Gates` section"]}
     gates, errors, names = [], [], set()
     for line in section:
-        if not line.startswith("- "):
+        if not LIST_ENTRY.match(line) or THEMATIC_BREAK.match(line):
             continue
         match = LINE.match(line)
         if match is None:
@@ -64,7 +91,10 @@ def parse(body):
             continue
         name, code, command = match.group("name"), match.group("exit"), match.group("cmd").strip()
         if len(command) > 1 and command.startswith("`") and command.endswith("`"):
-            command = command[1:-1]
+            command = command[1:-1].strip()
+        if not command:
+            errors.append("blank command for gate {}".format(name))
+            continue
         if name in names:
             errors.append("duplicate gate {}".format(name))
             continue

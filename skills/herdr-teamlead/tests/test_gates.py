@@ -56,6 +56,48 @@ class ParseTest(unittest.TestCase):
                 self.assertFalse(result["ok"])
                 self.assertTrue(any(failure in item for item in result["failures"]), result["failures"])
 
+    def test_fenced_content_is_never_gate_evidence(self):
+        cases = {
+            "tilde-fenced example": ("~~~\n## Gates\n\n- tests exit=0 cmd=true\n~~~\n", "missing `## Gates` section"),
+            "shorter backtick fence inside a longer one": (
+                "````markdown\n```\n## Gates\n\n- tests exit=0 cmd=true\n```\n````\n", "missing `## Gates` section"),
+            "fenced bullets under a real heading": ("## Gates\n\n```\n- tests exit=0 cmd=true\n```\n", "lists no gate"),
+            "tilde fence closed only by tildes": (
+                "## Gates\n\n~~~~\n```\n- tests exit=0 cmd=true\n~~~~\n", "lists no gate"),
+        }
+        for label, (body, failure) in cases.items():
+            with self.subTest(label):
+                result = gates.check(body)
+                self.assertFalse(result["ok"], result)
+                self.assertTrue(any(failure in item for item in result["failures"]), result["failures"])
+
+    def test_gates_under_a_child_heading_are_validated(self):
+        body = GREEN.replace("Both ran from the worktree root.\n",
+                             "### Diagnostics\n\n- lint exit=1 cmd=ruff check .\n")
+        result = gates.check(body)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failures"], ["gate lint exit=1"])
+        self.assertEqual([gate["name"] for gate in result["gates"]], ["tests", "diagnostics", "lint"])
+
+    def test_non_canonical_list_entries_are_malformed_not_prose(self):
+        for entry in ("* lint exit=1 cmd=ruff check .", "+ lint exit=1 cmd=ruff check .",
+                      "1. lint exit=1 cmd=ruff check .", "2) lint exit=1 cmd=ruff check .",
+                      "  - lint exit=1 cmd=ruff check .", "\t- lint exit=1 cmd=ruff check ."):
+            with self.subTest(entry=entry):
+                result = gates.check(GREEN.replace("Both ran from the worktree root.\n", entry + "\n"))
+                self.assertFalse(result["ok"])
+                self.assertIn("malformed gate line: " + entry, result["failures"])
+
+    def test_thematic_break_inside_the_section_is_not_a_list_entry(self):
+        self.assertTrue(gates.check(GREEN.replace("Both ran from the worktree root.\n", "* * *\n"))["ok"])
+
+    def test_blank_command_is_rejected(self):
+        for command in ("``", "` `", "`   `"):
+            with self.subTest(command=command):
+                result = gates.check(GREEN.replace("cmd=`bash scripts/run-tests.sh`", "cmd=" + command))
+                self.assertFalse(result["ok"])
+                self.assertIn("blank command for gate tests", result["failures"])
+
     def test_required_gate_must_be_listed(self):
         self.assertTrue(gates.check(GREEN, ["tests", "diagnostics"])["ok"])
         result = gates.check(GREEN, ["tests", "lint"])
