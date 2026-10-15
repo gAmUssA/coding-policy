@@ -1,0 +1,14 @@
+---
+bump: minor
+---
+### Added
+
+- **Rules byte-budget gate.** `scripts/check-rules-budget.sh` fails CI when `rules/*.md` totals more than its named 95,000-byte budget and names the largest files to move into skill references. Every rule file loads into every consumer session, and nothing stopped the total (87,927 bytes when the gate landed, ~8% headroom) from creeping up. Adopted from jbaruch/coding-policy `2a70807`.
+- **Conflict-marker gate.** `scripts/check-conflict-markers.sh` fails CI on git's start, diff3 base, or end marker at column 0 of any tracked text file. A bare `=======` is never flagged, since Markdown setext headings use it and every real conflict also carries a start and an end marker. A hand-resolved conflict can otherwise ship in prose that every other check passes. Adopted from jbaruch/coding-policy `1c8f152`.
+- **`skills/release/origin-repo.sh`.** Prints the GitHub repository `origin` points at as JSON. It refuses a non-GitHub origin or a push URL naming a different repository, and never echoes the URL, which can carry credentials.
+
+### Changed
+
+- **The Codex policy reviewer's model and effort are pinned.** `.github/workflows/review-codex.yml` runs `codex exec --model gpt-5.6-sol -c 'model_reasoning_effort="high"'` instead of the CLI default, so a Renovate bump of `@openai/codex` no longer silently changes the merge gate. Renovate does not track the pin; the comment beside it names the hand renewal (`TOP_MODELS["codex"]` changes, each CLI bump). Adopted from jbaruch/coding-policy 0.3.258/0.3.309.
+- **Every gh command in the release and onboarding flows targets origin's repository.** `skills/release/SKILL.md` Step 1 resolves `<owner>/<repo>` with `origin-repo.sh`, and `gh pr create/merge/view`, `gh run watch/list`, and `gh secret set` carry `--repo <owner>/<repo>`. Without `--repo`, gh targets `gh repo set-default`, which in a fork can be the upstream parent: a PR, merge, or secret landing in a repository the operator does not own (`rules/external-repo-contributions.md`). The onboard skill's secret step and the `rules/ci-safety.md` merge-state diagnostic follow. Adopted from jbaruch/coding-policy `13bf9a2` and `bd1d356`.
+- **`verify-publish-landed.sh` takes `<owner> <repo>`.** The call is now `verify-publish-landed.sh <workspace> <plugin> <pre-baseline> <run-id> <owner> <repo>`, and `gh run view` reads the run from that repository. The old four-argument call exits 2 with a usage message pointing at `origin-repo.sh`.
