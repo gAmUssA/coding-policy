@@ -11,7 +11,8 @@
 #   - It DOES something (checks registry state), it does not re-state a rule.
 #   - SessionStart fires once per session, not per turn — no per-turn tax.
 #   - Throttled: a registry check runs at most once per FRESHNESS_THROTTLE_HOURS
-#     (default 24h) across sessions, so most session starts skip the network call.
+#     (default 24h) per session directory, so most session starts skip the
+#     network call and one project's check never silences another's.
 #   - Informative only. Never blocks (always exits 0), never exits 2.
 #
 # Contract:
@@ -23,9 +24,10 @@
 #           line per plugin). Throttled and tool-missing sessions stay silent.
 #   exit  : always 0. Every best-effort failure emits an actionable stderr warning
 #           and continues/no-ops (rules/error-handling.md Shell Error Handling).
-#   state : $FRESHNESS_STATE_DIR/last-check (default ${TMPDIR:-/tmp}/coding-policy-freshness),
-#           a throttle stamp. Schema documented in hooks/state-schema.md:
-#           one line "<schema_version> <checked_at>".
+#   state : $FRESHNESS_STATE_DIR/last-check-<dir-key> (default
+#           ${TMPDIR:-/tmp}/coding-policy-freshness), a throttle stamp per session
+#           directory (<dir-key> = cksum of $PWD). Schema documented in
+#           hooks/state-schema.md: one line "<schema_version> <checked_at>".
 #   env   : FRESHNESS_THROTTLE_HOURS (default 24), FRESHNESS_STATE_DIR (tests),
 #           FRESHNESS_NOW (test-only injected clock; defaults to `date +%s`).
 set -euo pipefail
@@ -35,7 +37,7 @@ warn() { printf 'check-policy-freshness: %s\n' "$1" >&2; }
 main() {
   local THROTTLE_HOURS="${FRESHNESS_THROTTLE_HOURS:-24}"
   local STATE_DIR="${FRESHNESS_STATE_DIR:-${TMPDIR:-/tmp}/coding-policy-freshness}"
-  local now stamp sv ts preserve_future out notice
+  local now stamp sv ts preserve_future out notice dir_key
 
   # jq and tessl are both required to produce a signal; a missing optional tool is
   # an expected environment condition, not a failure — warn and no-op.
@@ -61,7 +63,13 @@ main() {
     return 0
   fi
 
-  stamp="${STATE_DIR}/last-check"
+  # Per-directory stamp: `tessl outdated` answers for the project it runs in.
+  # A cksum failure falls back to an un-throttled run, never an abort.
+  if ! dir_key="$(printf '%s' "$PWD" | cksum | cut -d' ' -f1)"; then
+    warn "could not derive a throttle key for ${PWD} — the freshness check will not throttle this run"
+    dir_key=""
+  fi
+  stamp="${STATE_DIR}/last-check-${dir_key}"
 
   # Throttle stamp schema (see hooks/state-schema.md): one line "<schema_version>
   # <checked_at-epoch>". Per hooks/state-schema.md Migration:
@@ -71,7 +79,7 @@ main() {
   #   - anything else (old bare-integer, corrupt, absent) => no prior state
   #     (re-check), safe to rewrite as version 1.
   preserve_future=0
-  if [[ -r "$stamp" ]]; then
+  if [[ -n "$dir_key" && -r "$stamp" ]]; then
     sv=""; ts=""
     read -r sv ts < "$stamp" || { sv=""; ts=""; }
     if [[ "$sv" =~ ^[0-9]+$ ]] && (( sv > 1 )); then
@@ -84,7 +92,7 @@ main() {
   # Record the check up front so a slow/failed registry call still throttles the
   # next session rather than hammering the registry on every start. Skipped when
   # a future-version record must be preserved rather than downgraded.
-  if (( preserve_future == 0 )); then
+  if [[ -n "$dir_key" ]] && (( preserve_future == 0 )); then
     if mkdir -p "$STATE_DIR"; then
       printf '1 %s\n' "$now" > "$stamp" ||
         warn "cannot write throttle stamp ${stamp} — check permissions on ${STATE_DIR}; will re-check next session"
