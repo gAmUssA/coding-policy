@@ -21,7 +21,9 @@ name: PR Policy Review (Codex, subscription)
 #      ~/.codex/auth.json has "auth_mode": "chatgpt" and "has_refresh_token": true.
 #   2. Store the FULL contents of ~/.codex/auth.json as the repo secret
 #      CODEX_AUTH_JSON (re-run whenever the review fails on expired auth):
-#        gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json
+#        gh secret set CODEX_AUTH_JSON --repo <owner>/<repo> < ~/.codex/auth.json
+#      (<owner>/<repo> is origin's repository — skills/release/origin-repo.sh;
+#      never gh's default repository)
 # See https://learn.chatgpt.com/docs/auth/ci-cd-auth
 #
 # The reviewer prompt, output schema, and the post/mask/leak-guard scripts are
@@ -68,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CODEX_AUTH_JSON:-}" ]; then
-            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON < ~/.codex/auth.json' (see this workflow's header)" >&2
+            echo "error: CODEX_AUTH_JSON secret is empty — run 'codex login' on a trusted machine and 'gh secret set CODEX_AUTH_JSON --repo ${GITHUB_REPOSITORY} < ~/.codex/auth.json' (see this workflow's header)" >&2
             exit 1
           fi
           export CODEX_HOME="$HOME/.codex"
