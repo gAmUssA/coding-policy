@@ -91,6 +91,11 @@ earlier judgment default when that row exists (`LEGACY_DEFAULT_ROUNDS`); copy
 the example's row to take the cheaper default. Risk evidence still escalates
 any round to the `review` row at xhigh.
 
+The lead's seat is the `coordination` round: a non-judgment row selected like
+a worker's tier, never pinned to the top model. A `lead` row from an earlier
+table is the same seat under its old name and parses as non-judgment. Only the
+judge seat keeps a model pin.
+
 A tester round's floor is its configured row: the `hostile_verify` round name
 alone never raises effort. Escalation reads only the round context's risk
 flags, input size and prior-miss evidence.

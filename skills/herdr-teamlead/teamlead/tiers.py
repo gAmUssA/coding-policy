@@ -32,24 +32,28 @@ EFFORTS = {
 NO_EFFORT_MODELS = frozenset({"claude-haiku-4-5", "haiku-4.5"})
 JUDGMENT_ROUNDS = frozenset({
     "architect", "reconciliation", "critic", "review",
-    "hostile_verify", "recheck", "release_adjudication", "lead",
+    "hostile_verify", "recheck", "release_adjudication",
 })
 #: Non-judgment rounds carry no top-model floor. `consultation` gathers
-#: evidence and decides nothing; `test_plan` prepares and passes nothing.
-ROUNDS = JUDGMENT_ROUNDS | {"build", "fix", "mechanical", "release_mechanics", "consultation", "test_plan"}
+#: evidence and decides nothing; `test_plan` prepares and passes nothing;
+#: `coordination` is the lead's seat. `lead` is the coordination round's
+#: earlier name, kept so a config still carrying that row parses.
+ROUNDS = JUDGMENT_ROUNDS | {
+    "build", "fix", "mechanical", "release_mechanics", "consultation", "test_plan", "coordination", "lead",
+}
 #: Each seat defaults to the cheapest round its contract allows. A judgment
 #: round is requested explicitly with `--round ROLE=ROUND`.
 DEFAULT_ROUNDS = {
     "developer": "build", "tester": "hostile_verify", "reviewer": "review",
     "release": "release_mechanics", "architect": "architect",
-    "critic": "critic", "lead": "lead",
+    "critic": "critic", "lead": "coordination",
     "advisor": "consultation", "investigator": "consultation",
 }
 #: A default round whose row a worker's table lacks falls back to the row
 #: that role defaulted to before, when that row exists, so an existing table
 #: keeps dispatching unchanged until the operator adds the cheaper row.
 LEGACY_DEFAULT_ROUNDS = {
-    "release": "release_adjudication",
+    "release": "release_adjudication", "lead": "lead",
     "advisor": "architect", "investigator": "reconciliation",
 }
 ROLE_ROUNDS = {
@@ -58,7 +62,7 @@ ROLE_ROUNDS = {
     "reviewer": frozenset({"architect", "reconciliation", "critic", "review", "recheck"}),
     "release": frozenset({"release_adjudication", "release_mechanics"}),
     "architect": frozenset({"architect", "reconciliation"}),
-    "critic": frozenset({"critic"}), "lead": frozenset({"lead"}),
+    "critic": frozenset({"critic"}), "lead": frozenset({"coordination", "lead"}),
     "advisor": frozenset({"consultation", "architect"}),
     "investigator": frozenset({"consultation", "reconciliation"}),
 }

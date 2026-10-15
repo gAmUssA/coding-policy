@@ -146,6 +146,24 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual((tier["round"], tier["tier_row"], tier["model"], tier["effort"]),
                          ("consultation", "review", "opus-5", "xhigh"))
 
+    def test_the_lead_seat_is_selected_like_a_worker_not_pinned(self):
+        for round_type in ("coordination", "lead"):
+            with self.subTest(round_type=round_type):
+                tier = parse_tiers({round_type: {"model": "sonnet-5", "effort": "high"}}, "claude")[round_type]
+                self.assertEqual(tier["model"], "sonnet-5")
+        worker = agent()
+        worker.tiers.update(parse_tiers({"coordination": {"model": "sonnet-5", "effort": "high"},
+                                         "lead": {"model": "opus-5", "effort": "high"}}, worker.kind))
+        tier = select_tier(worker, "lead")
+        self.assertEqual((tier["round"], tier["model"]), ("coordination", "sonnet-5"))
+        worker.tiers.pop("coordination")
+        self.assertEqual(select_tier(worker, "lead")["round"], "lead")
+
+    def test_the_lead_seat_cannot_take_a_judgment_round(self):
+        for round_type in ("review", "architect", "release_adjudication"):
+            with self.subTest(round_type=round_type), self.assertRaisesRegex(UsageError, "cannot perform role"):
+                select_tier(agent(), "lead", round_type)
+
     def test_release_defaults_to_mechanics_without_the_developer_predicate(self):
         worker = agent()
         worker.tiers.update(parse_tiers({
@@ -175,8 +193,10 @@ class SelectionTest(unittest.TestCase):
                 for role in ("advisor", "investigator"):
                     self.assertEqual(select_tier(probe, role)["round"], "consultation")
                 self.assertEqual(select_tier(probe, "release")["round"], "release_mechanics")
+                self.assertEqual(select_tier(probe, "lead")["round"], "coordination")
+                self.assertNotIn("lead", tiers)
                 if worker["kind"] == "claude":
-                    for round_type in ("consultation", "test_plan"):
+                    for round_type in ("consultation", "test_plan", "coordination"):
                         self.assertNotIn(tiers[round_type]["model"], TOP_MODELS["claude"])
 
     def test_initial_build_and_late_fix_have_different_models(self):

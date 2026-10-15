@@ -120,7 +120,8 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - The pinned judge worker never holds another seat
 - No exclusion bars the judge from a dispute involving its own model
 - A judge round the pinned worker's window cannot cover halts the round — no substitution, no fallback to another vendor's flagship, no degraded ruling
-- The lead runs on the strongest generally-available model at high effort; the most capable model is reserved for the judge
+- The lead is not pinned to a top model; its seat is the non-judgment `coordination` round, selected like a worker's tier
+- The most capable model is reserved for the judge
 
 ## Round Tiers
 
