@@ -372,5 +372,30 @@ class RetrospectiveRuntimeTest(unittest.TestCase):
             self.guard().preflight([self.steps[0]])
 
 
+class DispatchHistoryReaderTest(unittest.TestCase):
+    """The retrospective reader never migrates: it reads 1..current, refuses newer."""
+
+    def write(self, version):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        row = {"schema_version": version, "role": "developer", "agent": "claude",
+               "tier": {"model": "sonnet-5", "qualification": {"schema_version": 1}}}
+        json.dump({"schema_version": version, "assignments": [row], "recovery": {"dispatches": []}}, handle)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_a_version_six_document_reads_unchanged_without_migration(self):
+        path = self.write(6)
+        before = Path(path).read_text(encoding="utf-8")
+        history = runtime.read_history(path)
+        self.assertEqual(history["assignments"][0]["schema_version"], 6)
+        self.assertEqual(Path(path).read_text(encoding="utf-8"), before)
+
+    def test_a_document_newer_than_seven_is_refused(self):
+        self.assertEqual(runtime.read_history(self.write(7))["schema_version"], 7)
+        with self.assertRaisesRegex(StateError, "Dispatch history"):
+            runtime.read_history(self.write(8))
+
+
 if __name__ == "__main__":
     unittest.main()

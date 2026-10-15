@@ -193,8 +193,9 @@ class TierIntegrationTest(CliCase):
         self.assertIn(applied["tier"]["prompt_hash"], runner.pasted_prompts()[0])
         stored, usable = load_state_checked(self.state)
         self.assertTrue(usable)
-        self.assertEqual(stored["schema_version"], 6)
+        self.assertEqual(stored["schema_version"], 7)
         self.assertEqual(stored["assignments"][0]["tier"], applied["tier"])
+        self.assertNotIn("qualification", stored["assignments"][0]["tier"])
         self.assertEqual(role_counts(stored), {"developer": {"claude": 1}})
 
     def test_tiered_worker_changed_during_composer_read_receives_no_prompt(self):
@@ -224,9 +225,63 @@ class TierIntegrationTest(CliCase):
             "agents": {"claude": {"window_group": "shared"}}}], "assignments": [row]}))
         migrated, usable = load_state_checked(self.state)
         self.assertTrue(usable)
-        self.assertEqual(migrated["assignments"][0], {**row, "schema_version": 6, "tier": None, "requirements": None, "reviewer_scope": None})
+        self.assertEqual(migrated["assignments"][0], {**row, "schema_version": 7, "tier": None, "requirements": None, "reviewer_scope": None})
         self.assertEqual(migrated["snapshots"][0]["agents"]["claude"], {"window_group": "shared", "tier_billing": {}})
         self.assertEqual(role_counts(migrated), {"developer": {"claude": 1}})
+
+    def verified_tier(self, **extra):
+        argv = ["claude", "--model", "sonnet-5", "--effort", "high"]
+        return {"kind": "claude", "model": "sonnet-5", "effort": "high", "launch_args": [], **extra,
+                "verified": {"source": "launch_argv", "model": "sonnet-5", "effort": "high", "pane_id": "w1:p2", "argv": argv}}
+
+    def ledger(self, version, tier):
+        row = {"schema_version": version, "at": AT, "role": "developer", "agent": "claude", "status": "applied",
+               "task": "owner/repo#1", "fix_round": None, "cleared": True, "clear_reason": "automatic",
+               "context_session": None, "tier": tier, "requirements": None, "reviewer_scope": None}
+        return {"schema_version": version, "snapshots": [], "assignments": [row], "specialist_assessments": []}
+
+    def test_schema_six_rows_migrate_to_seven_and_drop_the_retired_qualification_summary(self):
+        summary = {"schema_version": 1, "role": "developer", "model": "sonnet-5", "effort": "high",
+                   "canary_at": "2026-01-08T11:00:00Z"}
+        self.state.write_text(json.dumps(self.ledger(6, self.verified_tier(qualification=summary))))
+        migrated, usable = load_state_checked(self.state)
+        self.assertTrue(usable)
+        self.assertEqual((migrated["schema_version"], migrated["assignments"][0]["schema_version"]), (7, 7))
+        self.assertEqual(migrated["assignments"][0]["tier"], self.verified_tier())
+        on_disk = json.loads(self.state.read_text())
+        self.assertEqual(on_disk["assignments"][0]["schema_version"], 7)
+        self.assertNotIn("qualification", on_disk["assignments"][0]["tier"])
+        self.assertEqual(role_counts(migrated), {"developer": {"claude": 1}})
+
+    def test_schema_seven_rows_round_trip_unchanged(self):
+        state = empty_state()
+        state["assignments"] = self.ledger(7, self.verified_tier())["assignments"]
+        original = json.dumps(state)
+        self.state.write_text(original)
+        stored, usable = load_state_checked(self.state)
+        self.assertTrue(usable)
+        self.assertEqual(stored, json.loads(original))
+        self.assertEqual(self.state.read_text(), original)
+
+    def test_a_schema_seven_row_carrying_a_qualification_summary_is_unowned(self):
+        original = json.dumps(self.ledger(7, self.verified_tier(qualification={"schema_version": 1})))
+        self.state.write_text(original)
+        warnings = []
+        stored, usable = load_state_checked(self.state, warn=warnings.append)
+        self.assertFalse(usable)
+        self.assertEqual(stored, empty_state())
+        self.assertIn("qualification", warnings[0])
+        self.assertEqual(self.state.read_text(), original)
+
+    def test_a_newer_ledger_is_left_untouched_as_no_usable_prior_state(self):
+        original = json.dumps(self.ledger(8, self.verified_tier()))
+        self.state.write_text(original)
+        warnings = []
+        stored, usable = load_state_checked(self.state, warn=warnings.append)
+        self.assertFalse(usable)
+        self.assertEqual(stored, empty_state())
+        self.assertIn("schema_version 8", warnings[0])
+        self.assertEqual(self.state.read_text(), original)
 
     def test_historical_permission_modes_stay_readable_without_becoming_live_proof(self):
         for options in ([], ["--permission-mode", "acceptEdits"]):

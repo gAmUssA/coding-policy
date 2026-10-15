@@ -245,11 +245,11 @@ skills/herdr-teamlead/references/retrospectives.md
 
 ```json
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "snapshots": ["<measure output>, oldest first, ring capped at 20"],
   "assignments": [
     {
-      "schema_version": 6,
+      "schema_version": 7,
       "at": "2026-09-01T21:00:00+00:00",
       "role": "developer",
       "agent": "grok",
@@ -286,7 +286,7 @@ skills/herdr-teamlead/references/retrospectives.md
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `schema_version` | integer | Currently `6`. Bumped on any shape change |
+| `schema_version` | integer | Currently `7`. Bumped on any shape change |
 | `snapshots` | array | Whole `measure` documents, oldest first; the ring holds the last 20 |
 | `assignments` | array | Append-only ledger of who held which role |
 | `snapshots[].schema_version` | integer | Currently `3`. Version 2 added `window_group`; version 3 adds per-round `tier_billing`. Older snapshots migrate on read, preserving headroom and shared-window membership |
@@ -303,7 +303,7 @@ skills/herdr-teamlead/references/retrospectives.md
 | `assignments[].context_session` | object or null | Verified native session reference scoped to a pane: `pane_id`, `source`, `agent`, `kind`, `value`, all non-empty strings; kind is `id` or `path`. Null means continuity was not established |
 
 | `snapshots[].agents[].tier_billing` | object | Round → `{model, effort, window}` for configured tiers; unmeasured attribution is `unknown`. Empty for older snapshots |
-| `assignments[].tier` | object or null | Requested `round`, selected config `tier_row`, `kind`, `model`, `effort`, declared/effective multipliers, billing window, launch options, input `prompt_hash`, and `verified` proof. Rows written before the validation battery's retirement may also carry a `qualification` summary, which readers ignore. Null for old or non-tiered dispatches |
+| `assignments[].tier` | object or null | Requested `round`, selected config `tier_row`, `kind`, `model`, `effort`, declared/effective multipliers, billing window, launch options, input `prompt_hash`, and `verified` proof. Version 7 rows never carry a `qualification` summary; the owner's `6 → 7` migration drops it from older rows, and a current row carrying one is refused as unowned. Null for old or non-tiered dispatches |
 | `assignments[].requirements` | object or null | Normalized requirement object from the assigned role in the plan; null for legacy assignments |
 | `assignments[].reviewer_scope` | string or null | Reviewer participation recorded as `verification`, `design`, or `unknown`; null for other roles. Older reviewers migrate to `unknown` |
 | `specialist_assessments` | array | Append-only lead assessments with original dispatch and byte receipts; each record has its own schema version |
@@ -488,7 +488,11 @@ informational plan name and never feeds headroom.
   documents the retained-dispatch contract. `status` derives budgets and paused
   implementation separately from active audit work. `apply --dry-run` reads
   current recovery bounds without writes; an older ledger requires an owner
-  `state` command first. Dry-run never proves live continuity.
+  `state` command first. Dry-run never proves live continuity. The
+  retrospective's dispatch-history reader (`read_history` in
+  `skills/herdr-teamlead/teamlead/retrospective_runtime.py`) reads documents
+  at versions 1 through the current version without migrating, ignores a
+  version-6 row's `tier.qualification`, and refuses a newer version.
 - **Assignment chronology** — assignment `at` records the event time; import receipt
   `at` records when the owner appended its evidence. Reads preserve original row
   indices and never reorder the audit. Chronological lookup returns the original
@@ -620,7 +624,9 @@ Only the owner migrates, and it reads a version in one of three directions.
   task base, authorization, or missing native identity. State `5 → 6` adds empty
   `specialist_assessments`; assignment `5 → 6` adds null `requirements` and
   `reviewer_scope: unknown` for reviewers, null for other roles. Migration never
-  assumes an older reviewer only verified work. Unexpected newer fields in an
+  assumes an older reviewer only verified work. State and assignment `6 → 7`
+  drop the retired validation battery's `tier.qualification` summary, which
+  nothing reads, and change nothing else. Unexpected newer fields in an
   older document or row refuse migration. Snapshot `2 → 3` independently adds
   empty `tier_billing` maps, preserving window groups and readings. Each row is migrated even in
   a document already at the current version.
@@ -663,7 +669,7 @@ apply here.
 Recovery store schema 9 adds `legacy_ruling_recoveries`. The owner migrates
 stores 1–8 by adding an empty collection and retaining existing records.
 An older store already containing this collection is refused. State document
-schema 6 and checkpoint record versions remain unchanged. Older owner builds
+schema and checkpoint record versions are unchanged by this store migration. Older owner builds
 cannot write schema 9; use the upgraded owner for every dispatch and reader.
 
 Existing schema-1 receipts stay in the ledger. Each carries `id`, `task`, `at`,
