@@ -183,16 +183,16 @@ main() {
   mk_case c11
   ctx_child a.sh "Session-start status — A"
   # shellcheck disable=SC2016 # expands inside the generated child, not here
-  # The grandchild touches a marker only if nothing killed it: an outcome,
+  # The descendant touches a marker only if nothing stopped it: an outcome,
   # never elapsed time.
   child stall.sh '(sleep 8; touch "'"$TMP"'/c11.done") & echo $! > "'"$TMP"'/c11-gc.pid"; wait'
   ctx_child c.sh "Session-start status — C"
   local gc
   run SESSION_START_HOOKS="a.sh stall.sh c.sh" SESSION_START_CHILD_BUDGET_SEC=1
-  gc="$(cat "$TMP/c11-gc.pid")" || die "c11 grandchild pid missing"
+  gc="$(cat "$TMP/c11-gc.pid")" || die "c11 descendant pid missing"
   if [[ $RC -eq 0 && ! -e "$TMP/c11.done" ]] && ! kill -0 "$gc" 2>/dev/null \
      && printf '%s' "$OUT" | jq -e '.hookSpecificOutput.additionalContext | test("^Session-start status — A\n\n") and test("hook stall.sh ran past its deadline") and test("Session-start status — C$")' >/dev/null 2>&1; then
-    pass; else fail "stalled child: expected A, a deadline line, C, and the grandchild killed, got RC=$RC OUT=$OUT"; fi
+    pass; else fail "stalled child: expected A, a deadline line, C, and the descendant stopped, got RC=$RC OUT=$OUT"; fi
   if kill -0 "$gc" 2>/dev/null; then kill -KILL "$gc" || echo "warn: could not stop $gc" >&2; fi
 
   # 12. The total budget runs out before the last child starts.

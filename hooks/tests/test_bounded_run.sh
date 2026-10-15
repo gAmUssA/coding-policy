@@ -3,17 +3,17 @@
 #
 # Covers:
 #   1. Fast command      -> its stdout and exit code pass through unchanged.
-#   2. Deadline passes   -> exit 124, a stderr diagnostic, and a grandchild in
-#                           the group killed.
+#   2. Deadline passes   -> exit 124, a stderr diagnostic, and a descendant in
+#                           the group stopped.
 #   3. TERM ignored      -> SIGKILL follows the grace period; exit 124.
 #   4. Usage errors      -> a non-positive or missing deadline exits 125.
 #   5. Group escalation  -> the leader exits on SIGTERM while a descendant
-#                           ignores it: the descendant is SIGKILLed anyway.
+#                           ignores it: the descendant is sent SIGKILL anyway.
 #   6. Nested runners    -> an outer deadline that fires first stops the inner
 #                           runner, which reaps its own group: the innermost
-#                           process is killed.
+#                           process is stopped.
 #   7. Leader exits early -> the leader exits 0 while a background descendant
-#                           holds stdout past the deadline: 124, descendant killed.
+#                           holds stdout past the deadline: 124, descendant stopped.
 #   8. Group finishes    -> a leader exiting 3 whose descendant ends before the
 #                           deadline returns 3 after the descendant ends.
 #   9. Zombie member     -> the group's only other member is defunct under a
@@ -28,7 +28,7 @@
 #                           failing ps counts as running. Platform-independent.
 #  11. kill -0 refused   -> an exported `kill` function answers every `-0`
 #                           probe EPERM, as macOS does mid-exec: the runner
-#                           still enforces the deadline (124) and kills the
+#                           still enforces the deadline (124) and stops the
 #                           command, never reading EPERM as "group gone".
 #
 # Run: bash hooks/tests/test_bounded_run.sh
@@ -52,11 +52,11 @@ main() {
   local out rc
 
   # Outcomes are deterministic, never elapsed time: each sleeper outlives every
-  # deadline under test and touches a "finished" marker only if nothing killed
+  # deadline under test and touches a "finished" marker only if nothing stopped
   # it. A case passes only on the runner's exit code, the sleeper dead, and no
   # marker.
-  # killed <pid-file> <marker>: the recorded process is gone and never finished.
-  killed() {
+  # stopped <pid-file> <marker>: the recorded process is gone and never finished.
+  stopped() {
     local pid
     pid="$(cat "$1")" || die "pid not recorded at $1"
     ! kill -0 "$pid" 2>/dev/null && [[ ! -e "$2" ]]
@@ -74,19 +74,19 @@ main() {
   if [[ $rc -eq 7 && "$out" == "hello" && "$(cat "$TMP/err1")" == "oops" ]]; then
     pass; else fail "pass-through: expected stdout 'hello', stderr 'oops' and exit 7, got rc=$rc out=$out err=$(cat "$TMP/err1")"; fi
 
-  # 2. Deadline: the command waits on a grandchild sleeper.
+  # 2. Deadline: the command waits on a descendant sleeper.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
   bash "$SCRIPT" 1 bash -c '(sleep 8; touch "$2") & echo $! > "$1"; wait' _ "$TMP/c2.pid" "$TMP/c2.done" </dev/null 2>"$TMP/err2" || rc=$?
-  if [[ $rc -eq 124 ]] && grep -q 'deadline' "$TMP/err2" && killed "$TMP/c2.pid" "$TMP/c2.done"; then
-    pass; else fail "deadline: expected 124, a diagnostic, and the grandchild killed; got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && grep -q 'deadline' "$TMP/err2" && stopped "$TMP/c2.pid" "$TMP/c2.done"; then
+    pass; else fail "deadline: expected 124, a diagnostic, and the descendant stopped; got rc=$rc"; fi
   reap "$TMP/c2.pid"
 
-  # 3. A command that ignores SIGTERM is killed after the grace period.
+  # 3. A command that ignores SIGTERM is stopped after the grace period.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
   bash "$SCRIPT" 1 bash -c 'trap "" TERM; echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c3.pid" "$TMP/c3.done" </dev/null 2>/dev/null || rc=$?
-  if [[ $rc -eq 124 ]] && killed "$TMP/c3.pid" "$TMP/c3.done"; then pass; else fail "TERM ignored: expected 124 and the command killed, got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c3.pid" "$TMP/c3.done"; then pass; else fail "TERM ignored: expected 124 and the command stopped, got rc=$rc"; fi
   reap "$TMP/c3.pid"
 
   # 4. Usage errors.
@@ -100,8 +100,8 @@ main() {
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shells, not here
   bash "$SCRIPT" 1 bash -c 'bash -c "trap \"\" TERM; echo \$\$ > \"\$1\"; sleep 8; touch \"\$2\"" _ "$1" "$2" & wait' _ "$TMP/c5.pid" "$TMP/c5.done" </dev/null 2>/dev/null || rc=$?
-  if [[ $rc -eq 124 ]] && killed "$TMP/c5.pid" "$TMP/c5.done"; then
-    pass; else fail "escalation: expected 124 and the TERM-ignoring descendant killed, got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c5.pid" "$TMP/c5.done"; then
+    pass; else fail "escalation: expected 124 and the TERM-ignoring descendant stopped, got rc=$rc"; fi
   reap "$TMP/c5.pid"
 
   # 6. Nested runners, outer deadline first. Command substitution waits for
@@ -109,16 +109,16 @@ main() {
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
   out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 30 bash -c 'echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c6.pid" "$TMP/c6.done" </dev/null 2>/dev/null)" || rc=$?
-  if [[ $rc -eq 124 ]] && killed "$TMP/c6.pid" "$TMP/c6.done"; then
-    pass; else fail "nested: expected 124 and the innermost process killed, got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c6.pid" "$TMP/c6.done"; then
+    pass; else fail "nested: expected 124 and the innermost process stopped, got rc=$rc"; fi
   reap "$TMP/c6.pid"
 
   # 7. The leader exits 0 at once; its background descendant holds stdout.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
   out="$(bash "$SCRIPT" 1 bash -c '(sleep 8; touch "$2") & echo $! > "$1"; exit 0' _ "$TMP/c7.pid" "$TMP/c7.done" </dev/null 2>/dev/null)" || rc=$?
-  if [[ $rc -eq 124 ]] && killed "$TMP/c7.pid" "$TMP/c7.done"; then
-    pass; else fail "leader exits early: expected 124 and the descendant killed, got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c7.pid" "$TMP/c7.done"; then
+    pass; else fail "leader exits early: expected 124 and the descendant stopped, got rc=$rc"; fi
   reap "$TMP/c7.pid"
 
   # 8. The group empties before the deadline: the leader's own code comes back.
@@ -199,7 +199,7 @@ ZOMBIE
   # read as an exited leader or an empty group.
   rc=0
   (
-    # shellcheck disable=SC2329 # exported to the runner, which invokes it
+    # shellcheck disable=SC2317,SC2329 # exported to the runner, which invokes it
     kill() {
       if [[ "${1:-}" == "-0" ]]; then echo "kill: Operation not permitted" >&2; return 1; fi
       builtin kill "$@"
@@ -208,8 +208,8 @@ ZOMBIE
     # shellcheck disable=SC2016 # expands inside the child shell, not here
     bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c11.pid" "$TMP/c11.done" </dev/null 2>/dev/null
   ) || rc=$?
-  if [[ $rc -eq 124 ]] && killed "$TMP/c11.pid" "$TMP/c11.done"; then
-    pass; else fail "kill -0 refused: expected 124 and the command killed, got rc=$rc"; fi
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c11.pid" "$TMP/c11.done"; then
+    pass; else fail "kill -0 refused: expected 124 and the command stopped, got rc=$rc"; fi
   reap "$TMP/c11.pid"
 
   echo "─────────────────────────────────────────────" >&2

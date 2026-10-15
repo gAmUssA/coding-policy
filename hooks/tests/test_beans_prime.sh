@@ -117,15 +117,15 @@ main() {
   if [[ $RC -eq 0 && -z "$OUT" ]] && [[ "$ERR" == *"printed nothing"* ]]; then
     pass; else fail "empty CLI: expected a warning, got RC=$RC OUT=$OUT ERR=$ERR"; fi
 
-  # 7. A kill mid-run leaves nothing behind (#13). Codex kills a timed-out
+  # 7. A kill mid-run leaves nothing behind (#13). Codex stops a timed-out
   #    hook's whole process group with a signal no trap sees, so the hook must
   #    create no temp file to leak. SIGKILL the hook while `beans prime` runs,
   #    then check the hook's private TMPDIR.
-  mk_case killed; bin="$(mk_fake "$CASE" hang)" || die "mk_fake hang failed"
+  mk_case stopped; bin="$(mk_fake "$CASE" hang)" || die "mk_fake hang failed"
   mkdir -p "$CASE/tmp" || die "mkdir tmp failed"
   local hook_pid tries=0
   # Job control gives the background hook its own process group, the unit
-  # Codex kills.
+  # Codex stops.
   set -m
   BEANS_PRIME_START="$REPO" TMPDIR="$CASE/tmp" PATH="$bin:$TOOLS:/usr/bin:/bin" bash "$HOOK" </dev/null >/dev/null 2>&1 &
   hook_pid=$!
@@ -139,7 +139,7 @@ main() {
   local leftovers
   leftovers="$(ls -A "$CASE/tmp")" || die "could not list $CASE/tmp"
   if (( wait_rc == 137 )) && [[ -z "$leftovers" ]]; then
-    pass; else fail "killed hook: expected exit 137 and an empty TMPDIR, got exit ${wait_rc}, found: ${leftovers:-nothing}"; fi
+    pass; else fail "stopped hook: expected exit 137 and an empty TMPDIR, got exit ${wait_rc}, found: ${leftovers:-nothing}"; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; return 1; fi

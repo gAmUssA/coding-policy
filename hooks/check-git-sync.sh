@@ -28,7 +28,7 @@
 #     `reference-transaction`, an index refresh `post-index-change`, a merge
 #     `post-merge`).
 #   - The fetch has a hard deadline without timeout/gtimeout: hooks/bounded-run.sh
-#     kills its whole process group at SYNC_FETCH_TIMEOUT. git's HTTP low-speed
+#     stops its whole process group at SYNC_FETCH_TIMEOUT. git's HTTP low-speed
 #     abort and ssh ConnectTimeout/ServerAlive end most stalls sooner.
 #   - Fast-forward only for a proven non-worker in native mode, on the default
 #     branch, with no tracked changes, strictly behind after a fresh fetch, via

@@ -258,7 +258,7 @@ class CodexSessionStart(unittest.TestCase):
         # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
         # (patched to 1s) holds an 8s sleeper in the runner's separate process
         # group. SIGKILL alone skips the runner's TERM trap, leaving the sleeper
-        # holding stdout. The sleeper writes a marker only if nothing killed it,
+        # holding stdout. The sleeper writes a marker only if nothing stopped it,
         # so the outcome is checked, never elapsed time.
         shutil.copy2(ROOT / "hooks/bounded-run.sh", self.root / "hooks/bounded-run.sh")
         sleeper_pid = self.root / "sleeper.pid"
@@ -296,7 +296,7 @@ class CodexSessionStart(unittest.TestCase):
         self.assertEqual((self.root / "deadline").read_text().strip(), "1")
 
     def test_timeout_closes_a_real_descendants_output_pipe(self):
-        # Trigger the timeout only after the grandchild reports readiness. Its
+        # Trigger the timeout only after the descendant reports readiness. Its
         # pipe reaches EOF only when both Bash and the descendant have exited.
         (self.root / "hooks/check.sh").write_text(
             "set -euo pipefail\n"

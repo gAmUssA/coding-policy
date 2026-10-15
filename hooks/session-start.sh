@@ -19,7 +19,7 @@
 #   stdin : SessionStart JSON — not read; each child gets /dev/null.
 #   time  : each child runs under hooks/bounded-run.sh with CHILD_BUDGET_SEC,
 #           capped by what is left of TOTAL_BUDGET_SEC; its process group is
-#           killed at the deadline. A child past its deadline, or one never
+#           stopped at the deadline. A child past its deadline, or one never
 #           started because the total budget was spent, gets its own status
 #           line, and the list continues. The child sees its deadline as
 #           SESSION_START_CHILD_DEADLINE_SEC.
