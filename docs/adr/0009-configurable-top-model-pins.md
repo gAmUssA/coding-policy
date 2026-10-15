@@ -31,8 +31,10 @@ Options considered:
 ## Consequences
 
 - **Easier:** a consumer tracks model releases with a config edit; the refusal says what to edit.
+- **Harder:** an operator adding `top_models` sets `schema_version` 4 by hand. teamlead never rewrites the operator-owned config; it takes the operator-authored configuration exception in `rules/stateful-artifacts.md` Migration Policy instead of an owner migration.
 - **Harder:** a judge configured on a model outside the pins, previously accepted silently, is now refused until the model is added to `top_models` or the judge moved to a pinned model.
 - **Later work must honor:**
   - configured pins only extend the built-in floor; no config path removes a built-in pin;
+  - a new version-gated config field is added to the gate table in `skills/herdr-teamlead/state-schema.md` and refused below its version with the version to set;
   - every new reader of the judgment floor uses the effective pins (`top_models_for`), never `TOP_MODELS` alone;
   - the judge stays at least as strong as the judgment-round floor.

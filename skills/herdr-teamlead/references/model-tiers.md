@@ -3,7 +3,8 @@
 ## Configuration and supported workers
 
 `config.example.json` is the operator-owned tier table. Config schema 2 adds
-per-agent `tiers` and `launch_args`; schema 1 remains readable without tiers.
+per-agent `tiers`; schema 1 remains readable without tiers. The full version
+gate list is in `skills/herdr-teamlead/state-schema.md`.
 The utility never rewrites the operator's config. Copy the example into a new
 file, preserve local agent names and UI options, then validate it with
 `teamlead.sh plan` before replacing a working configuration.

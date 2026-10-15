@@ -22,16 +22,23 @@ The retrospective sidecar also leaves `state.json` and assignment versions
 unchanged. Its canonical state path is the expanded, resolved path selected by
 `--state` or the existing default; separate state files have separate histories.
 
-`skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use. Config schema 4
-adds the top-level `top_models` block; schemas 1 to 3 remain readable without
-rewriting the operator-owned file, and a schema 1 to 3 config carrying
-`top_models` is refused with the instruction to set `schema_version` 4. The
-operator owns that bump; teamlead never rewrites the file. Config schema 3
-adds per-agent `capabilities`. Missing capabilities mean an empty list, never inferred
+`skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use.
+`config.json` is operator-owned and takes `rules/stateful-artifacts.md`
+Migration Policy's operator-authored configuration exception: teamlead never
+writes it, `teamlead/config.py` reads every documented version (1 to 4) and
+upgrades older ones in memory only, and a gated field in an older-version file
+is refused with the version to set. Version gates:
+
+| Field | Needs `schema_version` |
+| ----- | ---------------------- |
+| per-agent `tiers` | 2 |
+| per-agent `capabilities` | 3 |
+| top-level `top_models` | 4 |
+
+Every other field, including per-agent `launch_args`, parses at every version. Missing capabilities mean an empty list, never inferred
 expertise. Capability entries are unique lowercase identifiers validated by
 `teamlead/config.py` (`parse_capabilities`). Declare them from available skills,
 tools and inspected evidence. The example leaves every capability list empty.
-Config schema 2 added per-agent `tiers` and `launch_args`.
 See `skills/herdr-teamlead/references/model-tiers.md` for billing evidence. A missing config is refused with the exact `cp` command to run. The
 optional `idle_markers` / `working_markers` per-agent keys carry the footer
 signatures the stale-state probe reads; an agent with neither is never probed.
