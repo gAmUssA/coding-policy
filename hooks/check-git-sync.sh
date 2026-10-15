@@ -155,30 +155,27 @@ drift_counts() { # <default-branch>
 
 # Build the bounded, hook-free fetch command into FETCH_CMD.
 #
-# git's own limits bound it on every platform: http.lowSpeedLimit/lowSpeedTime
-# abort a stalled HTTP transfer, and ssh ConnectTimeout/ServerAlive* abort a
-# stalled ssh one. The ssh options extend whichever ssh command git would have
-# used (GIT_SSH_COMMAND, then core.sshCommand), never replace it. A bare GIT_SSH
-# program takes no options, so it keeps only the HTTP and deadline bounds.
 # hooks/bounded-run.sh (beside this script) holds the whole fetch to <seconds>.
+# git's http.lowSpeedLimit/lowSpeedTime end a stalled HTTP transfer sooner.
+# OpenSSH ConnectTimeout/ServerAlive* end a stalled ssh sooner, but only for the
+# plain default `ssh`: a custom ssh (GIT_SSH_COMMAND, core.sshCommand, GIT_SSH)
+# or a configured ssh variant may reject extra arguments, so it runs unchanged.
 build_fetch() { # <seconds> <hooks-dir>
-  local secs="$1" runner="$2/bounded-run.sh" ssh_base="" rc=0
+  local secs="$1" runner="$2/bounded-run.sh" key rc
   local -a envs=()
   FETCH_CMD=()
-  if [[ -n "${GIT_SSH_COMMAND:-}" ]]; then
-    ssh_base="$GIT_SSH_COMMAND"
-  else
-    ssh_base="$(git config --get core.sshCommand)" || rc=$?
-    if (( rc == 1 )); then
-      ssh_base=""
-    elif (( rc != 0 )); then
-      warn "git config core.sshCommand failed (exit ${rc}) — the ssh connect bound is off for this fetch"
-      ssh_base=""
-    fi
-    if [[ -z "$ssh_base" && -z "${GIT_SSH:-}" ]]; then ssh_base="ssh"; fi
-  fi
-  if [[ -n "$ssh_base" ]]; then
-    envs=(env "GIT_SSH_COMMAND=${ssh_base} -o ConnectTimeout=${secs} -o ServerAliveInterval=5 -o ServerAliveCountMax=2")
+  if [[ -z "${GIT_SSH_COMMAND:-}" && -z "${GIT_SSH:-}" && -z "${GIT_SSH_VARIANT:-}" ]]; then
+    envs=(env "GIT_SSH_COMMAND=ssh -o ConnectTimeout=${secs} -o ServerAliveInterval=5 -o ServerAliveCountMax=2")
+    for key in core.sshCommand ssh.variant; do
+      rc=0
+      git config --get "$key" >/dev/null || rc=$?
+      if (( rc == 0 )); then
+        envs=()
+      elif (( rc != 1 )); then
+        warn "git config ${key} failed (exit ${rc}) — leaving the ssh command unchanged for this fetch"
+        envs=()
+      fi
+    done
   fi
   if [[ -r "$runner" ]]; then
     FETCH_CMD=(bash "$runner" "$secs")

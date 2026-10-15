@@ -27,8 +27,9 @@
 #                       or the fast-forward.
 #   1e2. Ignored file -> origin starts tracking a path holding ignored local
 #                       data: no fast-forward, a report, and the data intact.
-#   1f. ssh bound    -> ConnectTimeout reaches the ssh command git would use
-#                       (GIT_SSH_COMMAND, and core.sshCommand when unset).
+#   1f. ssh bound    -> ConnectTimeout reaches the plain default ssh only; a
+#                       custom ssh (GIT_SSH_COMMAND or core.sshCommand, simple
+#                       variant) that rejects extra arguments still fetches.
 #   1g. HTTP bound   -> with no timeout/gtimeout on PATH, a stalled HTTP remote
 #                       still ends the fetch ("not verified", exit 0) within the guard.
 #   1h. ssh deadline -> an ssh that connects and then hangs is killed at the
@@ -241,23 +242,45 @@ main() {
      && [[ "$(cat "$TMP/r1e2/precious")" == "local data" && "$(git -C "$TMP/r1e2" rev-parse main)" == "$before1e2" ]]; then
     pass; else fail "ignored file: expected a refused fast-forward and intact local data, got RC=$RC OUT=$OUT data=$(cat "$TMP/r1e2/precious")"; fi
 
-  # 1f. The ssh connect bound extends the ssh command git would use. A recording
-  # "ssh" logs its argv and fails, so the fetch fails ("not verified").
+  # 1f. The OpenSSH connect bound goes only to the plain default `ssh`. A
+  # recording "ssh" first on PATH logs its argv and fails ("not verified").
   mk_origin o1f
   clone_from "$BARE" "$TMP/r1f"
   g -C "$TMP/r1f" remote set-url origin "ssh://fake.invalid/repo.git" || die "r1f set-url failed"
+  mkdir -p "$TMP/sshbin" || die "could not create $TMP/sshbin"
   # shellcheck disable=SC2016 # the $* and $0 belong to the generated script
-  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$0.log"\nexit 255\n' > "$TMP/fake-ssh" || die "write fake-ssh failed"
-  chmod +x "$TMP/fake-ssh" || die "chmod fake-ssh failed"
-  run "$TMP/r1f" "$TMP/s1f" GIT_SSH_COMMAND="$TMP/fake-ssh"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$0.log"\nexit 255\n' > "$TMP/sshbin/ssh" || die "write fake ssh failed"
+  chmod +x "$TMP/sshbin/ssh" || die "chmod fake ssh failed"
+  run "$TMP/r1f" "$TMP/s1f" PATH="$TMP/sshbin:$PATH"
   if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("not verified")' >/dev/null 2>&1 \
-     && grep -q 'ConnectTimeout=' "$TMP/fake-ssh.log"; then
-    pass; else fail "ssh bound (GIT_SSH_COMMAND): expected ConnectTimeout on the ssh argv, got RC=$RC OUT=$OUT"; fi
-  rm -f "$TMP/fake-ssh.log" || die "could not reset fake-ssh.log"
-  g -C "$TMP/r1f" config core.sshCommand "$TMP/fake-ssh" || die "r1f config failed"
-  run "$TMP/r1f" "$TMP/s1f2" GIT_SSH_COMMAND=
-  if [[ $RC -eq 0 ]] && [[ -f "$TMP/fake-ssh.log" ]] && grep -q 'ConnectTimeout=' "$TMP/fake-ssh.log"; then
-    pass; else fail "ssh bound (core.sshCommand): expected the configured ssh with ConnectTimeout, got RC=$RC OUT=$OUT"; fi
+     && grep -q 'ConnectTimeout=' "$TMP/sshbin/ssh.log"; then
+    pass; else fail "ssh bound (default ssh): expected ConnectTimeout on the ssh argv, got RC=$RC OUT=$OUT"; fi
+
+  # 1f2. A custom ssh runs unchanged. This "simple"-variant wrapper rejects
+  # anything but <host> <command> and serves the repo locally, so the fetch
+  # succeeds (and fast-forwards) only if no option was added. Covered for
+  # GIT_SSH_COMMAND + GIT_SSH_VARIANT and for core.sshCommand + ssh.variant.
+  # shellcheck disable=SC2016 # the $# $1 $2 $0 belong to the generated script
+  printf '#!/bin/sh\nif [ "$#" -ne 2 ]; then echo "strict-ssh: rejected $*" >> "$0.log"; exit 2; fi\nexec sh -c "git ${2#git-}"\n' > "$TMP/strict-ssh" \
+    || die "write strict-ssh failed"
+  chmod +x "$TMP/strict-ssh" || die "chmod strict-ssh failed"
+  local how
+  for how in env config; do
+    mk_origin "o1f2$how"
+    clone_from "$BARE" "$TMP/r1f2$how"
+    commit_push "$SEED" "c2"
+    g -C "$TMP/r1f2$how" remote set-url origin "ssh://fake.invalid${BARE}" || die "r1f2$how set-url failed"
+    rm -f "$TMP/strict-ssh.log" || die "could not reset strict-ssh.log"
+    if [[ "$how" == env ]]; then
+      run "$TMP/r1f2$how" "$TMP/s1f2$how" GIT_SSH_COMMAND="$TMP/strict-ssh" GIT_SSH_VARIANT=simple
+    else
+      g -C "$TMP/r1f2$how" config core.sshCommand "$TMP/strict-ssh" || die "r1f2 config sshCommand failed"
+      g -C "$TMP/r1f2$how" config ssh.variant simple || die "r1f2 config variant failed"
+      run "$TMP/r1f2$how" "$TMP/s1f2$how"
+    fi
+    if [[ $RC -eq 0 && ! -e "$TMP/strict-ssh.log" ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("fast-forwarded")' >/dev/null 2>&1; then
+      pass; else fail "custom ssh ($how): expected an unchanged ssh command and a fetch, got RC=$RC log=$(cat "$TMP/strict-ssh.log" 2>/dev/null) OUT=$OUT"; fi
+  done
 
   # 1g. HTTP stall with no timeout/gtimeout on PATH: a server that accepts and
   # never answers. git's low-speed abort must end the fetch; the harness kills
