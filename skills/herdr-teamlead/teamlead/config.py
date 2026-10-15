@@ -15,8 +15,10 @@ from .errors import ConfigError, TeamLeadError
 from .herdr import SLASH_DELIVERIES, SLASH_DELIVERY_PASTE
 from .tiers import EFFORTS, TOP_MODELS, judgment_refusal, parse_launch_args, parse_tiers, parse_top_models, top_models_for, effort_at_or_above, JUDGMENT_EFFORT_FLOOR
 
-CONFIG_SCHEMA_VERSION = 3
-READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3})
+CONFIG_SCHEMA_VERSION = 4
+READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3, 4})
+#: The first config schema that may carry a top-level `top_models` block.
+TOP_MODELS_CONFIG_VERSION = 4
 CAPABILITY_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
 
 REQUIRED_AGENT_FIELDS = ("name", "kind", "usage_prompt", "usage_marker", "usage_read_source", "clear_prompt")
@@ -188,7 +190,7 @@ def parse_config(payload, source="<memory>"):
             {"source": source, "found": version, "expected": CONFIG_SCHEMA_VERSION},
         )
 
-    extra_top_models = parse_top_models(payload.get("top_models"), source)
+    extra_top_models = _config_top_models(payload, source)
 
     raw_agents = payload.get("agents")
     if not isinstance(raw_agents, list) or not raw_agents:
@@ -469,19 +471,45 @@ def parse_judge(payload, source="<memory>"):
     )
 
 
+def _config_top_models(payload, source):
+    """The validated `top_models` block; only config schema 4 may carry it."""
+    if "top_models" not in payload:
+        return {}
+    version = payload.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < TOP_MODELS_CONFIG_VERSION:
+        raise ConfigError(
+            "Config at {} carries `top_models` under schema_version {!r}; `top_models` needs config "
+            "schema_version {}. Set \"schema_version\": {} in that file; nothing else in it needs to "
+            "change.".format(source, version, TOP_MODELS_CONFIG_VERSION, TOP_MODELS_CONFIG_VERSION),
+            {"source": source, "found": version, "expected": TOP_MODELS_CONFIG_VERSION, "field": "top_models"},
+        )
+    return parse_top_models(payload["top_models"], source)
+
+
+
 def _check_judge_pin(payload, agent, model, effort, source):
     """Hold the judge to its agent kind's judgment pins and effort floor.
 
     The judge seat is the most capable model available, so it meets the same
-    floor as a judgment round. A judge whose agent is not configured cannot be
-    seated, and its kind is unknown: that block is left to the planner.
+    floor as a judgment round. A configured agent of a kind with no pins is
+    refused. A judge whose agent is not configured cannot be seated, and its
+    kind is unknown: that block is left to the planner.
     """
     entries = payload.get("agents")
-    kind = next((entry.get("kind") for entry in entries if isinstance(entry, dict) and entry.get("name") == agent),
-                None) if isinstance(entries, list) else None
-    if kind not in TOP_MODELS:
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("name") == agent] \
+        if isinstance(entries, list) else []
+    extra = _config_top_models(payload, source)
+    if not matches:
         return
-    pins = top_models_for(kind, parse_top_models(payload.get("top_models"), source))
+    kind = matches[0].get("kind")
+    if kind not in TOP_MODELS:
+        raise ConfigError(
+            "Config at {}: the `judge` seat's agent {!r} has kind {!r}, which has no judgment pins or effort "
+            "floor; move the judge to an agent of kind {}.".format(
+                source, agent, kind, ", ".join(sorted(TOP_MODELS))),
+            {"source": source, "agent": agent, "kind": kind, "round": "judge"},
+        )
+    pins = top_models_for(kind, extra)
     if model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR) or effort not in EFFORTS[kind]:
         raise judgment_refusal("Config at {}: the `judge` seat on agent {!r}".format(source, agent),
                                kind, model, effort or None, pins, {"source": source, "agent": agent, "round": "judge"})

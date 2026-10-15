@@ -179,7 +179,7 @@ class ParseConfigTest(unittest.TestCase):
         self.assertEqual(by_name["grok"].dialog_next_tab_keys, ("tab",))
 
     def test_wrong_schema_version_is_rejected(self):
-        payload = dict(VALID, schema_version=4)
+        payload = dict(VALID, schema_version=5)
         with self.assertRaises(ConfigError) as caught:
             parse_config(payload)
         self.assertIn("schema_version", str(caught.exception))
@@ -469,7 +469,7 @@ class ParseJudgeTest(unittest.TestCase):
 def _tiered_payload(top_models=None, judge=None, review_model="gpt-7-nova"):
     """A schema-2 config whose codex worker pins `review_model` for review."""
     payload = copy.deepcopy(VALID)
-    payload["schema_version"] = 2
+    payload["schema_version"] = 4 if top_models is not None else 2
     payload["agents"][1]["tiers"] = {"review": {"model": review_model, "effort": "high"}}
     payload["agents"].append(dict(copy.deepcopy(VALID["agents"][0]), name="judge"))
     if top_models is not None:
@@ -500,16 +500,37 @@ class TopModelsConfigTest(unittest.TestCase):
     def test_an_invalid_block_is_refused_even_without_tiers(self):
         for raw in ({"agy": ["x"]}, {"codex": []}, {"codex": ["a", "a"]}, ["gpt-7-nova"]):
             payload = copy.deepcopy(VALID)
+            payload["schema_version"] = 4
             payload["top_models"] = raw
             with self.subTest(raw=raw), self.assertRaises(ConfigError) as caught:
                 parse_config(payload)
             self.assertIn("top_models", str(caught.exception))
 
     def test_a_config_without_the_block_keeps_parsing(self):
-        self.assertEqual(len(parse_config(VALID)), 2)
+        for version in (1, 2, 3, 4):
+            with self.subTest(version=version):
+                self.assertEqual(len(parse_config(dict(VALID, schema_version=version))), 2)
+
+    def test_the_block_needs_config_schema_4(self):
+        for version in (1, 2, 3):
+            payload = dict(copy.deepcopy(VALID), schema_version=version, top_models={"codex": ["gpt-7-nova"]})
+            with self.subTest(version=version):
+                with self.assertRaises(ConfigError) as caught:
+                    parse_config(payload)
+                self.assertIn("schema_version 4", str(caught.exception))
+                self.assertIn("top_models", str(caught.exception))
+                with self.assertRaises(ConfigError) as judged:
+                    parse_judge(dict(payload, judge={"agent": "claude", "model": "opus-5", "effort": "high"}))
+                self.assertIn("schema_version 4", str(judged.exception))
+        payload = dict(copy.deepcopy(VALID), schema_version=4, top_models={"codex": ["gpt-7-nova"]})
+        self.assertIn("gpt-7-nova", parse_config(payload)[1].top_models)
+        judge = parse_judge(dict(payload, judge={"agent": "claude", "model": "opus-5", "effort": "high"}))
+        assert judge is not None
+        self.assertEqual(judge.model, "opus-5")
 
     def test_the_shipped_example_extends_the_pins(self):
         example = _example_config()
+        self.assertEqual(example["schema_version"], 4)
         self.assertIn("top_models", example)
         agents = parse_config(example)
         self.assertTrue(all(agent.top_models for agent in agents if agent.kind in ("claude", "codex", "grok")))
@@ -557,6 +578,26 @@ class JudgePinTest(unittest.TestCase):
         payload["judge"]["effort"] = "medium"
         with self.assertRaises(ConfigError):
             parse_judge(payload)
+
+    def test_a_configured_judge_agent_of_an_unpinned_kind_is_refused(self):
+        payload = _tiered_payload(review_model="gpt-6-astra",
+                                  judge={"agent": "judge", "model": "gemini-3.1-pro", "effort": "high"})
+        for kind in ("agy", None):
+            entry = next(entry for entry in payload["agents"] if entry["name"] == "judge")
+            if kind is None:
+                entry.pop("kind", None)
+            else:
+                entry["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaises(ConfigError) as caught:
+                parse_judge(payload)
+            message = str(caught.exception)
+            self.assertIn("'judge'", message)
+            self.assertIn("claude, codex, grok", message)
+        absent = _tiered_payload(review_model="gpt-6-astra",
+                                 judge={"agent": "elsewhere", "model": "gemini-3.1-pro", "effort": "high"})
+        judge = parse_judge(absent)
+        assert judge is not None
+        self.assertEqual(judge.agent, "elsewhere")
 
     def test_the_load_path_validates_the_judge(self):
         with tempfile.TemporaryDirectory() as tmp:
