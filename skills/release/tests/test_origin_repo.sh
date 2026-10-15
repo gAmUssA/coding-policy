@@ -13,6 +13,7 @@
 #   6. push URL differing only in case                -> exit 0, fetch spelling kept
 #   7. no origin remote                               -> exit 2
 #   8. not a git checkout                             -> exit 2
+#   9. no diagnostic suggests a command that prints the remote URL
 #
 # Run: bash skills/release/tests/test_origin_repo.sh
 set -uo pipefail
@@ -48,10 +49,12 @@ repo_with() {
   fi
 }
 
-# run <dir> -> OUT, ERR, RC
+# run <dir> -> OUT, ERR, RC; every stderr is also collected in ALL_ERR.
+ALL_ERR=""
 run() {
   OUT="$(bash "$SCRIPT" "$1" 2>"$TMP/err")"; RC=$?
   ERR="$(cat "$TMP/err")"
+  ALL_ERR+="$ERR"$'\n'
 }
 
 # expect_repo <url> <owner/name>
@@ -108,6 +111,10 @@ main() {
   # 8. not a checkout
   mkdir -p "$TMP/plain"; run "$TMP/plain"
   expect_rc 2 "not a checkout"
+
+  # 9. remediation never prints the existing URL, which can carry credentials
+  if [[ "$ALL_ERR" != *"remote -v"* && "$ALL_ERR" != *"get-url"* && "$ALL_ERR" == *"git remote set-url origin https://github.com/"* ]]; then pass
+  else fail "diagnostics suggest printing the remote URL or lack a set-url remediation: $ALL_ERR"; fi
 
   echo "─────────────────────────────────────────────"
   if (( FAIL > 0 )); then echo "FAILED: ${FAIL} of $((PASS+FAIL)) checks" >&2; exit 1; fi

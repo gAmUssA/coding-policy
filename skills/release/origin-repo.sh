@@ -19,7 +19,8 @@
 #   checkout  the git checkout to read; defaults to the current directory
 # Out:   one JSON object on stdout — {"repo": "<owner>/<repo>", "owner": "...", "name": "..."}
 #        stderr carries diagnostics only, never the remote URL (it can carry
-#        credentials).
+#        credentials), and never suggests a command that prints it
+#        (`git remote -v`, `git remote get-url`); remediation sets a known URL.
 # Exit:  0 resolved; 1 origin is not a GitHub repository URL, or its fetch and
 #        push URLs name different repositories; 2 setup error (bad usage, git
 #        or jq absent, not a checkout, no origin remote).
@@ -69,12 +70,12 @@ main() {
     return 2
   fi
   if ! push_urls=$(git -C "$dir" remote get-url --push --all origin 2>/dev/null); then
-    echo "origin-repo: could not read origin's push URLs — run 'git remote -v' to inspect the remote" >&2
+    echo "origin-repo: could not read origin's push URLs — reset origin to a known GitHub URL with 'git remote set-url origin https://github.com/<owner>/<repo>.git' and rerun" >&2
     return 2
   fi
 
   if ! parse_url "$fetch_url"; then
-    echo "origin-repo: origin's fetch URL is not a GitHub repository URL — gh has no repository to target; run 'git remote -v' to inspect it" >&2
+    echo "origin-repo: origin's fetch URL is not a GitHub repository URL — gh has no repository to target; point origin at one with 'git remote set-url origin https://github.com/<owner>/<repo>.git' and rerun" >&2
     return 1
   fi
   local owner="$PARSED_OWNER" name="$PARSED_NAME" url
@@ -82,7 +83,7 @@ main() {
     [[ -n "$url" ]] || continue
     if ! parse_url "$url" \
        || [[ "$(lower "$PARSED_OWNER/$PARSED_NAME")" != "$(lower "$owner/$name")" ]]; then
-      echo "origin-repo: an origin push URL names a different repository than its fetch URL (${owner}/${name}) — align them with 'git remote set-url --push origin <url>' and rerun" >&2
+      echo "origin-repo: an origin push URL names a different repository than its fetch URL (${owner}/${name}) — align them with 'git remote set-url --push origin https://github.com/${owner}/${name}.git' and rerun" >&2
       return 1
     fi
   done <<<"$push_urls"
