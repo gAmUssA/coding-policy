@@ -164,6 +164,21 @@ class SelectionTest(unittest.TestCase):
             with self.subTest(round_type=round_type), self.assertRaisesRegex(UsageError, "cannot perform role"):
                 select_tier(agent(), "lead", round_type)
 
+    def test_grok_lower_effort_rows_escalate_to_high_on_risk_evidence(self):
+        worker = agent("grok")
+        worker.tiers.update(parse_tiers({
+            "consultation": {"model": "grok-4.6", "effort": "medium"},
+            "release_mechanics": {"model": "grok-4.6", "effort": "low"},
+            "build": {"model": "grok-4.6", "effort": "low"},
+        }, worker.kind))
+        for context in ({"prior_high_miss": True}, {"risk_flags": ["network", "persistence"]}, {"input_bytes": 250001}):
+            for role in ("investigator", "advisor", "release", "developer"):
+                with self.subTest(context=context, role=role):
+                    self.assertEqual(select_tier(worker, role, context=context)["effort"], "high")
+        for role, effort in (("investigator", "medium"), ("release", "low"), ("developer", "low")):
+            with self.subTest(role=role, evidence=None):
+                self.assertEqual(select_tier(worker, role)["effort"], effort)
+
     def test_release_defaults_to_mechanics_without_the_developer_predicate(self):
         worker = agent()
         worker.tiers.update(parse_tiers({

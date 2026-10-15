@@ -89,7 +89,8 @@ model. The example's rows for them are a starting point, not a measured
 result. A table without the cheaper default row falls back to the role's
 earlier judgment default when that row exists (`LEGACY_DEFAULT_ROUNDS`); copy
 the example's row to take the cheaper default. Risk evidence still escalates
-any round to the `review` row at xhigh.
+any round: a non-top model moves to the `review` row, Claude and Codex rise to
+xhigh, and Grok rises to high, its ceiling.
 
 The lead's seat is the `coordination` round: a non-judgment row selected like
 a worker's tier, never pinned to the top model. A `lead` row from an earlier

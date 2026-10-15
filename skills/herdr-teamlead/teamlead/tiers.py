@@ -397,6 +397,9 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
             chosen_round = "review"
         if agent.kind in {"claude", "codex"} and tier["effort"] not in {"xhigh", "max"}:
             tier["effort"] = "xhigh"
+        elif agent.kind == "grok" and tier["effort"] != "high":
+            # Grok's ceiling is high; a cheaper row escalates to it.
+            tier["effort"] = "high"
     return {
         **tier, "round": round_type, "tier_row": chosen_round, "kind": agent.kind,
         "billing_window": billing_window(tier), "effective_multiplier": effective_multiplier(tier),
