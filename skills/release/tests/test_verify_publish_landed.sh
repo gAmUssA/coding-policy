@@ -87,6 +87,10 @@ gh() {
           # is unset, so a test setting MOCK_RUN_CONCLUSION="" still
           # exercises the empty-conclusion path (the colon form would
           # fall through to "success" on empty).
+          if [[ -n "${MOCK_GH_FAIL:-}" ]]; then
+            echo "HTTP 502: bad gateway" >&2
+            return 1
+          fi
           printf '%s\n' "${MOCK_RUN_CONCLUSION-success}"
           ;;
         *) echo "mock gh run: unsupported subcommand: $subcmd" >&2; return 2 ;;
@@ -411,6 +415,46 @@ t_output_is_valid_json_with_documented_shape() {
   assert_eq "keys" "current,ok,pre,reason,run_conclusion" "$keys"
 }
 
+# Every gh run command a diagnostic tells the operator to run must name
+# origin's repository: a bare `gh run view`/`watch`/`list` reads gh's default
+# repository, which in a fork can be the upstream parent.
+# all_run_hints_bound <text>: 0 when the text quotes at least one
+# 'gh run ...' command and every one carries --repo acme/widgets.
+all_run_hints_bound() {
+  local hints
+  hints=$(grep -o "'gh run [^']*'" <<<"$1")
+  [[ -n "$hints" ]] || { echo "    FAIL: no quoted 'gh run ...' hint in: $1" >&2; return 1; }
+  if grep -v -- "--repo acme/widgets" <<<"$hints"; then
+    echo "    FAIL: the hint(s) above lack --repo acme/widgets" >&2
+    return 1
+  fi
+}
+
+t_gh_failure_hints_carry_repo() {
+  local stderr rc=0
+  stderr=$( ( MOCK_GH_FAIL=1; main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code for gh failure" "2" "$rc" || return 1
+  [[ "$stderr" == *"--log-failed"* ]] || { echo "    FAIL: expected a --log-failed hint, got: $stderr" >&2; return 1; }
+  all_run_hints_bound "$stderr"
+}
+
+t_in_flight_hints_carry_repo() {
+  local stderr rc=0
+  stderr=$( ( MOCK_RUN_CONCLUSION="null"; main gamussa coding-policy "0.3.31" "12345" acme widgets >/dev/null ) 2>&1 ) || rc=$?
+  assert_eq "exit code for in-flight run" "2" "$rc" || return 1
+  [[ "$stderr" == *"gh run watch"* ]] || { echo "    FAIL: expected a gh run watch hint, got: $stderr" >&2; return 1; }
+  all_run_hints_bound "$stderr"
+}
+
+t_failed_run_reason_hint_carries_repo() {
+  MOCK_RUN_CONCLUSION="failure"
+  MOCK_REGISTRY_VERSION="0.3.32"
+  local out rc=0
+  out=$(main gamussa coding-policy "0.3.31" "12345" acme widgets) || rc=$?
+  assert_eq "exit code for failed run" "1" "$rc" || return 1
+  all_run_hints_bound "$(jq -r .reason <<<"$out")"
+}
+
 # --- driver ---
 
 echo "== verify-publish-landed.sh tests =="
@@ -425,6 +469,9 @@ run "non-numeric run-id exits 2"                                   t_invalid_run
 run "empty pre-baseline exits 2"                                   t_empty_pre_baseline_exits_two
 run "wrong arg count exits 2"                                      t_wrong_arg_count_exits_two
 run "empty owner exits 2"                                          t_empty_owner_exits_two
+run "gh failure: recovery hints carry --repo"                     t_gh_failure_hints_carry_repo
+run "in-flight run: recovery hints carry --repo"                  t_in_flight_hints_carry_repo
+run "failed run: reason's recovery hint carries --repo"           t_failed_run_reason_hint_carries_repo
 run "run-id == 0 exits 2 (matches positive-integer contract)"      t_zero_run_id_exits_two
 run "in-flight (null) conclusion exits 2"                          t_null_conclusion_in_flight_exits_two
 run "empty conclusion exits 2"                                     t_empty_conclusion_exits_two
