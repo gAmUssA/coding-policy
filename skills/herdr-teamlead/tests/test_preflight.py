@@ -70,6 +70,8 @@ FAKE_GH = """#!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-} ${2:-}" == "auth status" ]]; then printf 'Logged in\\n'; exit 0; fi
 [[ "${1:-}" == "api" ]] || { echo "fake gh: unsupported $*" >&2; exit 2; }
+[[ "${2:-} ${3:-}" == "--hostname github.com" ]] || { echo "fake gh: api call not pinned to github.com: $*" >&2; exit 97; }
+set -- "$1" "${@:4}"
 case "${2:-}" in
   user)
     [[ -n "${FAKE_GH_FAIL:-}" ]] && { printf 'gh: HTTP 502\\n' >&2; exit 1; }
