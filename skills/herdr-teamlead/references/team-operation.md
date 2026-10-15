@@ -209,6 +209,8 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - The worker directives of this section live in `rules/agent-team-operation.md` Workers, which every session loads
 - The shared checkout stays on the default branch
 - The lead reads the shared checkout and never edits it
+- The lead answers a question, or one bounded read-only lookup, itself and cites what it read
+- Any edit or review of existing code goes to a worker, whatever its size
 - The lead provisions every worktree a brief names, before dispatch
 - A read-only role that writes no repository content needs no worktree
 - The lead prunes merged, clean worktrees and merged local branches every round, before provisioning and after the merge

@@ -83,9 +83,12 @@ to latest. For other requests, read `HERDR_ENV` before running scripts.
 - **Unset or empty** — this skill does not apply. Say so and do the task
   directly, without roster calls, briefs, provisioning, reports, or simulated
   worker roles. Finish here.
-- **Set, with a team task or new retrospective** — proceed immediately to Step 2.
-- **Set, with a single edit, question, lookup, or existing-code review** — do
-  it directly. Finish here.
+- **Set, with a team task, new retrospective, edit, or review of existing
+  code** — proceed immediately to Step 2. The lead never edits or reviews
+  code itself, whatever the size.
+- **Set, with a question or one bounded read-only lookup** — answer it
+  directly and cite what you read: a file and line, or a command and its
+  output. Edit nothing and dispatch nothing. Finish here.
 
 ## Step 2 — Run the Preflight
 
