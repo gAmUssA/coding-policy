@@ -43,10 +43,13 @@ plugin release:
 The ids extend the built-in set for that kind; they never replace it, so a
 built-in pin stays valid whatever the block lists. Keys are the supported
 kinds (`claude`, `codex`, `grok`); each value is a non-empty array of distinct
-model ids. Listing an id that is already built in is accepted. The same pins
+model ids. Listing an id that is already built in is accepted. The block
+requires config `schema_version` 4; an older-version config carrying it is
+refused with the instruction to set 4. The same pins
 apply to every judgment round, to risk escalation's top-model check, and to
 the `judge` block, whose model and effort must meet its agent kind's pins and
-floor. A refused row names the agent, the round, the model and effort, the
+floor. `start-judge` re-reads that block and refuses a plan whose judge tier
+or agent kind no longer matches it. A refused row names the agent, the round, the model and effort, the
 accepted values, and `top_models` as the fix.
 
 Accepted round names, role mappings, model pins, effort enums, mechanical

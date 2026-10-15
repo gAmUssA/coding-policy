@@ -22,9 +22,9 @@ Options considered:
 ## Decision
 
 1. `TOP_MODELS` gains the current CLI models; superseded ids stay so existing configs parse.
-2. An optional top-level `top_models` block in config.json (`{kind: [model id, ...]}`) extends the built-in pins per kind. It never replaces them. Validation is strict: known kinds, non-empty arrays of distinct model ids. An id already built in is accepted, so a later built-in addition never breaks a config. No config schema bump: every config version tolerates the new top-level key.
+2. An optional top-level `top_models` block in config.json (`{kind: [model id, ...]}`) extends the built-in pins per kind. It never replaces them. Validation is strict: known kinds, non-empty arrays of distinct model ids. An id already built in is accepted, so a later built-in addition never breaks a config. The block requires config schema 4; schemas 1 to 3 stay readable, and one carrying `top_models` is refused with the instruction to set `schema_version` 4. The config is operator-owned, so the operator makes that bump.
 3. The effective pins (built-in plus configured) apply to every consumer of the pin: tier-table parsing, risk escalation's top-model switch in `select_tier`, and the `judge` block.
-4. The judge is validated, not exempt: when its agent is configured, its model must be a pin of that agent's kind and its effort high or above. `preflight` checks it before any worker contact.
+4. The judge is validated, not exempt: when its agent is configured, its model must be a pin of that agent's kind and its effort high or above. A configured judge agent of a kind with no pins is refused. `preflight` checks the judge before any worker contact, and `start-judge` refuses a plan whose judge tier or agent kind differs from the current config or misses the floor.
 5. Codex efforts gain `max` and `ultra`, the reasoning levels codex-cli 0.160.0 lists for its top models; a high-risk escalation never lowers them.
 6. A refusal names the agent (or judge seat), the round, the model and effort, the accepted models and efforts for that kind, and `top_models` as the fix.
 
