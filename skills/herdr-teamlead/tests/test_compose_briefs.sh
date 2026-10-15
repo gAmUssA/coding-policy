@@ -25,6 +25,8 @@
 #                          the literal text and leave no placeholder behind).
 #  13. Object value     -> exit 2 for the same reason.
 #  14. Number value     -> accepted; an issue number is legitimate text.
+#  6f. Judge brief      -> the packaged judge template carries both positions'
+#                          cited evidence; omitting one is exit 2.
 #
 # Run: bash skills/herdr-teamlead/tests/test_compose_briefs.sh
 set -uo pipefail
@@ -254,6 +256,30 @@ JSON
         pass; else fail "$override_case role $missing_policy must refuse before emitting any brief: $ERRTEXT"; fi
     done
   done
+
+  # 6f. The PACKAGED judge brief composes from the adjudication values Step 11
+  #     documents, carrying each position's cited evidence and the
+  #     investigator report; a lead that omits a position's evidence is refused.
+  local vjudge="$TMP/judge-values.json"
+  jq '{shared: (.shared | {SHARED_CHECKOUT, AUTHORITY_STATEMENT, EXTERNAL_PERMISSION,
+                            TASK_AUTHORIZATION, AUTHORIZED_ACTIONS, POLICY_INDEX, RELEASE_SKILL}),
+       roles: {judge: {DISPUTE_KIND: "reviewer versus bot", QUESTION: "Is F1 blocking?",
+                       POSITION_A: "F1 blocks", POSITION_A_REPORT: "/r/review.md",
+                       POSITION_A_EVIDENCE: "src/parser.py:40",
+                       POSITION_B: "F1 is advisory", POSITION_B_REPORT: "/r/bot.md",
+                       POSITION_B_EVIDENCE: "none cited", INVESTIGATION_REPORT: "none",
+                       GOVERNING_RULES: "rules/review-severity.md", TREE: "/wt/dev",
+                       REPORT: "/r/judge.md"}}}' "$v6b" > "$vjudge" || die "could not build judge fixture"
+  run "$PKG" "$vjudge" "$TMP/out-judge"
+  if [[ $RC -eq 0 ]] && grep -Fq 'Cited evidence: src/parser.py:40' "$TMP/out-judge/brief-judge.md" \
+     && grep -Fq 'Cited evidence: none cited' "$TMP/out-judge/brief-judge.md" \
+     && grep -Fq 'insufficient — <facts needed>' "$TMP/out-judge/brief-judge.md"; then
+    pass; else fail "packaged judge brief: expected exit 0 with both positions' cited evidence, got RC=$RC ERR=$ERRTEXT"; fi
+  jq 'del(.roles.judge.POSITION_A_EVIDENCE)' "$vjudge" > "$TMP/judge-missing.json" \
+    || die "could not build missing-evidence judge fixture"
+  run "$PKG" "$TMP/judge-missing.json" "$TMP/out-judge-missing"
+  if [[ $RC -eq 2 && -z "$OUT" && ! -e "$TMP/out-judge-missing" && "$ERRTEXT" == *POSITION_A_EVIDENCE* ]]; then
+    pass; else fail "a judge brief without a position's cited evidence must refuse, got RC=$RC ERR=$ERRTEXT"; fi
 
   # 6c. A REPORT path that would wrap the worker's marker line is refused
   #     before any file is written: the wait confirms the complete marker on

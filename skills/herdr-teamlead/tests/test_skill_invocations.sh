@@ -22,6 +22,10 @@
 # Mode-gate conventions, checked against MODE_GATE_SKILL only:
 # 4. The first step gates on HERDR_ENV before any script, and the gate turns a
 #    standalone agent away by reading rather than by running a script.
+# 5. Inside a Herdr round, a Step 1 branch the lead finishes itself never
+#    covers an edit or a code review, and an edit routes on to Step 2. The
+#    lead never edits the shared checkout (references/team-operation.md
+#    Writers and Checkouts); a direct-finish edit branch contradicts it.
 #
 # `set -e` is dropped so every check runs and the suite reports an aggregate;
 # each check captures its own status (rules/error-handling.md
@@ -209,6 +213,58 @@ check_mode_gate() { # <skill-name> <skill-file>
   rm -f "$body_file" || warn_cleanup "$body_file"
 }
 
+# 5. Read Step 1's `- **Set, ...**` branches, each joined with its
+# continuation lines. A branch that finishes here may not name an edit or a
+# review in its label; one branch naming an edit must route to Step 2.
+check_lead_routing() { # <skill-name> <skill-file>
+  local name="$1" skill="$2" verdict rc=0
+  verdict="$(awk '
+    /^## Step 1 /{in1=1; next}
+    /^## Step 2 /{in1=0}
+    !in1{next}
+    /^- /{if (b != "") print b; b=$0; next}
+    /^  /{if (b != "") b=b " " $0; next}
+    {if (b != "") print b; b=""}
+    END{if (b != "") print b}
+  ' "$skill" | awk '
+    /^- \*\*Set,/{
+      label=$0; sub(/^- \*\*/, "", label); sub(/\*\*.*/, "", label); label=tolower(label)
+      if ($0 ~ /Finish here/ && label ~ /edit|review/) print "direct:" label
+      if (label ~ /edit/ && $0 ~ /Step 2/) routed=1
+    }
+    END{if (!routed) print "unrouted"}
+  ')" || rc=$?
+  (( rc == 0 )) || die "could not read the Step 1 branches of ${skill}"
+  if [[ -z "$verdict" ]]; then pass
+  else fail "${name}: Step 1 lets the lead finish an edit or review itself, or routes no edit to Step 2: ${verdict//$'\n'/; }"; fi
+}
+
+# The routing guard rejects the direct-edit branch it replaced and accepts the
+# current shape, so it cannot pass vacuously.
+check_lead_routing_fixtures() {
+  local fixture
+  fixture="$(mktemp -d)" || die "cannot create routing fixture"
+  INSTALL_FIXTURE="$fixture"
+  printf '%s\n' '## Step 1 — Gate' \
+    '- **Set, with a team task or new retrospective** — proceed immediately to Step 2.' \
+    '- **Set, with a single edit, question, lookup, or existing-code review** — do' \
+    '  it directly. Finish here.' '## Step 2 — Next' > "$fixture/old.md" || die "cannot write routing fixture"
+  printf '%s\n' '## Step 1 — Gate' \
+    '- **Set, with a team task, new retrospective, edit, or review of existing' \
+    '  code** — proceed immediately to Step 2.' \
+    '- **Set, with a question or one bounded read-only lookup** — answer it' \
+    '  directly and cite what you read. Edit nothing. Finish here.' '## Step 2 — Next' > "$fixture/new.md" \
+    || die "cannot write routing fixture"
+  if bash -c 'source "$1"; check_lead_routing old "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$fixture/old.md" > "$fixture/guard.log" 2>&1; then pass
+  else fail "routing guard accepted a Step 1 branch that finishes an edit directly"; fi
+  if bash -c 'source "$1"; check_lead_routing new "$2"; (( FAIL == 0 && PASS == 1 ))' \
+    bash "${BASH_SOURCE[0]}" "$fixture/new.md" > "$fixture/guard.log" 2>&1; then pass
+  else fail "routing guard rejected a Step 1 that routes edits to Step 2"; cat "$fixture/guard.log" >&2; fi
+  cleanup
+  [[ -z "$INSTALL_FIXTURE" ]] || die "routing fixture cleanup failed; the exit trap will retry"
+}
+
 # Execute a documented block's resolver and invocation against packaged-mode
 # fixtures. Substitute a task-owned fixture root for the HOME token without
 # changing the process's HOME or touching the user's installed plugin.
@@ -350,6 +406,8 @@ main() {
 
   skill="${skills_root}/${MODE_GATE_SKILL}/SKILL.md"
   check_mode_gate "$MODE_GATE_SKILL" "$skill"
+  check_lead_routing "$MODE_GATE_SKILL" "$skill"
+  check_lead_routing_fixtures
 
   echo
   echo "results: ${PASS} pass, ${FAIL} fail"

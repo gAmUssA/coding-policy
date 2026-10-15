@@ -474,7 +474,10 @@ def checkpoint(store, assignments, data, at, judge_agent):
             authorization(data["requested_by"])
         evidence, body = receipt(data["judge_report"])
         if not re.search(r"^RULING: (?:uphold A|uphold B|amend)(?:\s|$)", body, re.MULTILINE) or not re.search(r"^ACTION: \S", body, re.MULTILINE):
-            raise UsageError("The judge report must contain its completed RULING and ACTION; a blocked judge requires the operator's answer first.", {})
+            # `insufficient` and `blocked` are not completed rulings (references/round-flow.md Ruling Outcomes).
+            raise UsageError("The judge report must contain its completed RULING (uphold A, uphold B or amend) and ACTION; "
+                             "an insufficient ruling needs the investigator's cited facts and a re-dispatched judge first, "
+                             "and a blocked judge requires the operator's answer first.", {})
         ruling = {"judge_evidence": evidence, "judge_agent": judge_agent}
     record = {"schema_version": OPERATOR_CHECKPOINT_VERSION, "at": at, **data, "fix_round": count,
               "base_revision": task["base_revision"], **ruling}

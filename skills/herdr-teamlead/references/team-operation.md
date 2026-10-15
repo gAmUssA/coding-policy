@@ -99,12 +99,20 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - `stop` is terminal and never repeats; a task takes at most five diagnoses
 - No exhausted allowance waits on an operator decision
 - The judge is read-only: it never edits a repository file, never runs a mutating git or `gh` command, never posts to GitHub, never dispatches a subagent — its only output is its report file
-- In adjudication mode the judge reads both positions and the governing rule, verifies the disputed facts against the tree, and returns `RULING: uphold A | uphold B | amend — <line> | blocked — <question>` with numbered reasons, an `ACTION:` naming the minimal step, and an `UNVERIFIED:` line
+- Each adjudication position cites its evidence: a file and line, a command and its output, or a revision
+- The lead copies each position's citations into the judge brief and never supplies its own
+- In adjudication mode the judge reads both positions and the governing rule, checks only the cited evidence against the tree, and returns `RULING: uphold A | uphold B | amend — <line> | insufficient — <facts needed> | blocked — <question>` with numbered reasons, an `ACTION:` naming the minimal step, and an `UNVERIFIED:` line
+- The judge never explores the tree beyond the cited evidence
+- `insufficient` names the disputed facts the cited evidence cannot settle
+- On an `insufficient` ruling the lead dispatches an investigator to establish those facts with citations
+- The lead then re-dispatches the judge on the same dispute with that investigator report
+- `insufficient` is not a completed ruling; a checkpoint never cites it
 - In diagnosis mode it reads the round history and verifies against the tree what each round changed, and returns the six diagnosis lines with numbered reasons
 - A diagnosis repeating its predecessor's rung adds `PROGRESS:`
 - `RULING:` and `ACTION:` belong to adjudication alone; a diagnosis carries neither
 - The judge's ruling binds the round; only the operator overrides it
 - `blocked` is the judge declining to rule
+- `blocked` is for a question only the operator can answer; a fact the tree can settle is `insufficient`
 - A `blocked` ruling stops the round and sends the named question to the operator
 - The judge is declared in `config.json`, measured, and planned like every other seat
 - The judge worker and the `claude` worker authenticate as one Claude subscription and draw on one weekly window
@@ -201,6 +209,8 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - The worker directives of this section live in `rules/agent-team-operation.md` Workers, which every session loads
 - The shared checkout stays on the default branch
 - The lead reads the shared checkout and never edits it
+- The lead answers a question, or one bounded read-only lookup, itself and cites what it read
+- Any edit or review of existing code goes to a worker, whatever its size
 - The lead provisions every worktree a brief names, before dispatch
 - A read-only role that writes no repository content needs no worktree
 - The lead prunes merged, clean worktrees and merged local branches every round, before provisioning and after the merge

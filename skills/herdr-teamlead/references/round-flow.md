@@ -360,20 +360,30 @@ shapes are the owner's, in `skills/herdr-teamlead/references/dispatch-recovery.m
 It is read-only without exception in either mode: no file edit, no mutating
 git or `gh` command, no GitHub post, no subagent dispatch.
 
-Adjudicating, it reads both positions and the governing rule, verifies the
-disputed facts against the tree itself rather than trusting either side's
-framing, and returns a report opening with three
-lines — `RULING: uphold A | uphold B | amend — <line> | blocked — <question>`,
+Each adjudication position cites its evidence: a file and line, a command and
+its output, or a revision. The lead copies those citations into the brief and
+never supplies its own; a position that cites nothing reads "none cited".
+
+Adjudicating, it reads both positions and the governing rule, checks only the
+evidence each position cites against the tree rather than trusting either
+side's framing, and never explores the tree beyond those citations. It returns
+a report opening with three
+lines — `RULING: uphold A | uphold B | amend — <line> | insufficient — <facts needed> | blocked — <question>`,
 `ACTION:` naming the minimal step, `UNVERIFIED:` naming anything it could not
 check — followed by its numbered reasons.
 
 Those three lines belong to adjudication; a diagnosis carries the five above
 and never a `RULING:` or an `ACTION:`.
 
-`blocked` is the judge declining to rule on a dispute it cannot settle from
-the tree and the rule text alone. The round stops there and the named question
-goes to the operator. The lead does not dispatch a second judge and does not
-rule in its place.
+`insufficient` is the judge naming disputed facts the cited evidence cannot
+settle. It is not a completed ruling: the lead dispatches an investigator to
+establish exactly those facts with citations, then re-dispatches the judge on
+the same dispute with that report as `INVESTIGATION_REPORT`.
+
+`blocked` is the judge declining to rule on a question only the operator can
+answer: authority, intent, or a choice no tree records. The round stops there
+and the named question goes to the operator. The lead does not dispatch a
+second judge and does not rule in its place.
 
 The ruling or remedy binds the round the moment the lead reads it. Only the
 operator overrides one; record the override and why in the round log. No
@@ -434,12 +444,20 @@ apply the whole-fleet pause/handoff contract in `skills/herdr-teamlead/reference
 
 The `RULING:` line binds the round. Only the operator overrides it.
 
-For an investigation-only task, a non-blocked ruling returns to Step 10's
+For an investigation-only task, an `uphold` or `amend` ruling returns to Step 10's
 knowledge-deliverable gate with the ruling and any required authorized research.
 Apply the existing correction allowance and judge rules to remaining findings.
 Do not enter implementation Phase 2 or Step 18 without implementation/release
-authorization. A blocked ruling follows the operator-question path below.
+authorization. An `insufficient` or blocked ruling follows its path below.
 
+- **`insufficient`** — the cited evidence cannot settle the named facts.
+  Return to Step 2 for an investigator consultation under
+  `skills/herdr-teamlead/references/specialists.md` that establishes exactly
+  those facts with citations. Once Step 10 accepts its report, return to
+  Step 11 and re-dispatch the judge on the same dispute with that report as
+  `INVESTIGATION_REPORT`. The dispute was never settled, so this is not a
+  second ruling on a settled dispute. A checkpoint never cites an
+  `insufficient` report.
 - **`uphold A` / `uphold B` / `amend`, `ACTION:` changing no branch content**
   — record the ruling. Proceed to Step 18 only with Step 10's broad reports
   against the current tip. Otherwise re-run Phase 2 with full briefs carrying
