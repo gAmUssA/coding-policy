@@ -44,7 +44,7 @@
     },
     {
       "name": "Resolve publish run",
-      "description": "merge-plan.sh uses `skills/release/resolve-publish-run.sh` to get the Tessl publish workflow run ID after merge",
+      "description": "merge-plan.sh uses `skills/release/resolve-publish-run.sh` with the merge commit SHA and the 'Publish Plugin' workflow name to get the publish run ID, and keeps that ID for the watch and the landing check. Source: skills/release/SKILL.md Step 7",
       "max_score": 8
     },
     {
@@ -54,7 +54,7 @@
     },
     {
       "name": "Verify publish landed",
-      "description": "merge-plan.sh calls `skills/release/verify-publish-landed.sh` with workspace, plugin, and the PRE variable",
+      "description": "merge-plan.sh calls `skills/release/verify-publish-landed.sh` with workspace, plugin, the PRE baseline, and the publish run ID resolve-publish-run.sh returned, as its fourth argument. A call missing the run ID scores 0: the script rejects it. Source: skills/release/SKILL.md Step 7",
       "max_score": 8
     },
     {

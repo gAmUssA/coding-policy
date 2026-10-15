@@ -30,6 +30,12 @@ MANIFEST="evals/git-fixtures.tsv"
 
 die() { echo "eval-fixtures: $1" >&2; exit "${2:-2}"; }
 
+# abandon <target> <message> [rc]: remove the .git this run created, then die.
+abandon() {
+  rm -rf "$1/.git" || echo "eval-fixtures: could not remove $1/.git — delete it before the next import" >&2
+  die "$2" "${3:-2}"
+}
+
 read_manifest() {
   [[ -f "$MANIFEST" ]] || die "no ${MANIFEST} — run from the repo root"
   local target head stream
@@ -47,11 +53,13 @@ cmd_export() {
   while IFS=$'\t' read -r target head stream; do
     [[ -n "$target" ]] || continue
     [[ -d "$target/.git" ]] || die "${target}/.git is missing — run 'eval-fixtures.sh import' first" 1
-    mkdir -p "$(dirname "$stream")"
-    git -C "$target" fast-export --all --signed-tags=strip --tag-of-filtered-object=drop > "$stream" \
-      || die "git fast-export failed in ${target}"
+    # Check HEAD before touching the stream: a refused export leaves it as it was.
     [[ "$(git -C "$target" symbolic-ref HEAD)" == "$head" ]] \
       || die "${target} HEAD is $(git -C "$target" symbolic-ref HEAD), manifest says ${head} — update ${MANIFEST}" 1
+    mkdir -p "$(dirname "$stream")"
+    git -C "$target" fast-export --all --signed-tags=strip --tag-of-filtered-object=drop > "${stream}.tmp" \
+      || { rm -f "${stream}.tmp"; die "git fast-export failed in ${target}"; }
+    mv "${stream}.tmp" "$stream" || die "cannot write ${stream}"
     results+=("$(jq -n --arg t "$target" '{target: $t, action: "exported"}')")
   done <<< "$rows"
   jq -n --argjson f "$(printf '%s\n' "${results[@]+"${results[@]}"}" | jq -s .)" '{command: "export", fixtures: $f}'
@@ -70,18 +78,20 @@ cmd_import() {
     [[ -f "$stream" ]] || die "stream ${stream} for ${target} is missing — restore it or re-run export from a fixture with .git"
     git -C "$target" init -q \
       || die "git init failed in ${target}"
+    # From here on a failure removes the new .git: a half-built or drifted
+    # repository must never read as "present" on the next run.
     git -C "$target" fast-import --quiet < "$stream" \
-      || die "git fast-import failed in ${target}"
+      || abandon "$target" "git fast-import failed in ${target}"
     git -C "$target" symbolic-ref HEAD "$head" \
-      || die "cannot point HEAD at ${head} in ${target}"
+      || abandon "$target" "cannot point HEAD at ${head} in ${target}"
     git -C "$target" reset -q \
-      || die "git reset failed in ${target}"
+      || abandon "$target" "git reset failed in ${target}"
     dirty=$(git -C "$target" status --porcelain) \
-      || die "git status failed in ${target}"
+      || abandon "$target" "git status failed in ${target}"
     if [[ -n "$dirty" ]]; then
       echo "eval-fixtures: ${target} differs from ${head} after import:" >&2
       printf '%s\n' "$dirty" >&2
-      die "re-run export from the intended history, or restore the committed files" 1
+      abandon "$target" "re-run export from the intended history, or restore the committed files" 1
     fi
     results+=("$(jq -n --arg t "$target" '{target: $t, action: "imported"}')")
   done <<< "$rows"

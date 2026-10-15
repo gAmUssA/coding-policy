@@ -9,7 +9,7 @@
     },
     {
       "name": "Developer report does not clear the gate",
-      "description": "gate-decision.md does not let the developer report clear the gate on the strength of its summary: it either marks the developer-report condition FAIL, or marks that condition (branch and SHA named) PASS while recording the unresolved BLOCKED section as a separate item that blocks release. Source: round-flow.md Release Gate condition 1 and Reading a Report 'A ## BLOCKED section — the worker stopped on something it could not decide'",
+      "description": "gate-decision.md does not let the developer report clear the gate on the strength of its summary: it either marks the developer-report condition FAIL, or marks that condition (branch and SHA named) PASS while recording the unresolved BLOCKED section as a separate item that blocks release. Source: round-flow.md Release Gate condition 1 and Reading a Report 'A ## BLOCKED section \u2014 the worker stopped on something it could not decide'",
       "max_score": 15
     },
     {
@@ -24,7 +24,7 @@
     },
     {
       "name": "Advisory not a blocker",
-      "description": "gate-decision.md does NOT treat the reviewer's advisory finding (the broad `except Exception:` catch) as a blocking finding or a reason the gate fails. Source: rules/review-severity.md 'Advisory — Never Gates'",
+      "description": "gate-decision.md does NOT treat the reviewer's advisory finding (the `refresh_token()` docstring wording) as a blocking finding or a reason the gate fails. A documentation-only fix changes no behavior, so it is advisory. Source: rules/review-severity.md 'Advisory \u2014 Never Gates' and its two-tier test (blocking = the fix changes behavior)",
       "max_score": 10
     },
     {

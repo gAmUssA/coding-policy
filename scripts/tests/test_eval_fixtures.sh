@@ -71,8 +71,11 @@ main() {
   rm -rf "$TMP/3/evals/s/inputs/repo/.git" || die "rm .git"
   printf 'drift\n' >> "$TMP/3/evals/s/inputs/repo/a.txt" || die "drift"
   run "$TMP/3" import
-  if [[ $RC -eq 1 ]] && grep -q 'differs from refs/heads/feat/x' <<<"$ERR"; then pass
-  else fail "drift: RC=$RC ERR=$ERR"; fi
+  if [[ $RC -eq 1 && ! -e "$TMP/3/evals/s/inputs/repo/.git" ]] && grep -q 'differs from refs/heads/feat/x' <<<"$ERR"; then pass
+  else fail "drift: RC=$RC ERR=$ERR git=$([[ -e $TMP/3/evals/s/inputs/repo/.git ]] && echo left-behind || echo removed)"; fi
+  # 3b. the refused import left nothing behind, so a retry refuses again
+  run "$TMP/3" import
+  if [[ $RC -eq 1 ]]; then pass; else fail "retry after refused import: RC=$RC OUT=$OUT"; fi
 
   # 4. export without .git
   root "$TMP/4"; rm -rf "$TMP/4/evals/s/inputs/repo/.git" || die "rm .git"
@@ -85,6 +88,14 @@ main() {
   run "$TMP/5" export
   if [[ $RC -eq 2 ]] && grep -q 'must be refs/heads/' <<<"$ERR"; then pass
   else fail "bad head ref: RC=$RC ERR=$ERR"; fi
+
+  # 5b. a HEAD mismatch refuses export without touching the stored stream
+  root "$TMP/5b"; run "$TMP/5b" export
+  before=$(cksum < "$TMP/5b/evals/s/repo.stream")
+  "${G[@]}" -C "$TMP/5b/evals/s/inputs/repo" checkout -q main || die "checkout main"
+  run "$TMP/5b" export
+  if [[ $RC -eq 1 && "$(cksum < "$TMP/5b/evals/s/repo.stream")" == "$before" ]] && grep -q 'manifest says refs/heads/feat/x' <<<"$ERR"; then pass
+  else fail "head mismatch: RC=$RC ERR=$ERR"; fi
 
   # 6. usage
   run "$TMP/1" frobnicate

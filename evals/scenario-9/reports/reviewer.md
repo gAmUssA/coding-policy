@@ -17,11 +17,11 @@ None.
 
 ### Advisory Findings
 
-**[ADVISORY] Overly broad exception catch in `auth/middleware.py` line 87**
+**[ADVISORY] Docstring wording in `auth/middleware.py` line 87**
 
-The implementation uses `except Exception:` in the token validation path. While not a policy violation, a narrower exception type (e.g., `except (JWTDecodeError, TokenExpiredError):`) would make failure modes more explicit and easier to debug. This is a code quality suggestion and does not affect correctness or policy compliance.
+The docstring of `refresh_token()` says "Refreshes the the token" (doubled word) and describes the return value as "a token" where the function returns the token pair. Fixing it changes only the documentation, not what the code does.
 
-Recommendation: Consider narrowing the exception clause in a follow-up change.
+Recommendation: Correct the docstring in a follow-up change.
 
 ## Conclusion
 
