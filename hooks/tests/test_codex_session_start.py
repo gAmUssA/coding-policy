@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -180,14 +181,16 @@ class CodexSessionStart(unittest.TestCase):
         (self.root / "hooks/check.sh").write_text("set -euo pipefail\nsleep 30\n")
         adapter = self.load_adapter()
         communicate = subprocess.Popen[str].communicate
+        calls: list[float | None] = []
 
         def time_out(
             process: subprocess.Popen[str],
             input: str | None = None,
             timeout: float | None = None,
         ) -> tuple[str, str]:
-            if timeout is not None:
-                raise subprocess.TimeoutExpired(process.args, timeout)
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
             # Bound cleanup in the test, so a regression fails instead of hanging.
             return communicate(process, input=input, timeout=5)
 
@@ -201,6 +204,43 @@ class CodexSessionStart(unittest.TestCase):
             self.assertEqual(adapter.main(), 1)
         self.assertIn("timed out", errors.getvalue())
 
+    def test_timeout_reaps_a_nested_deadline_runners_group(self):
+        # A hook whose own bounded-run.sh deadline (30s) outlives the adapter's
+        # (patched to 1s) holds an 8s sleeper in the runner's separate process
+        # group. SIGKILL alone skips the runner's TERM trap, leaving the sleeper
+        # holding stdout; the adapter must return promptly with it dead.
+        shutil.copy2(ROOT / "hooks/bounded-run.sh", self.root / "hooks/bounded-run.sh")
+        sleeper_pid = self.root / "sleeper.pid"
+        (self.root / "hooks/check.sh").write_text(
+            "set -euo pipefail\n"
+            'echo "${SESSION_START_CHILD_DEADLINE_SEC-unset}" > "$TESSL_PLUGIN_DIR/deadline"\n'
+            'bash "$TESSL_PLUGIN_DIR/hooks/bounded-run.sh" 30 '
+            "bash -c 'echo $$ > \"$1\"; exec sleep 8' _ \"$TESSL_PLUGIN_DIR/sleeper.pid\"\n"
+        )
+        adapter = self.load_adapter()
+        errors = io.StringIO()
+        started = time.monotonic()
+        with (
+            patch.object(adapter, "HOOK_TIMEOUT_SECONDS", 1),
+            patch.object(sys, "argv", ["hook", "check.sh"]),
+            patch.object(sys, "stdin", io.StringIO(json.dumps(EVENT))),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(adapter.main(), 1)
+        elapsed = time.monotonic() - started
+        pid = int(sleeper_pid.read_text().strip())
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        if alive:
+            os.kill(pid, signal.SIGKILL)
+        self.assertLess(elapsed, 6, "adapter waited on the nested runner's sleeper")
+        self.assertFalse(alive, "the nested runner's sleeper survived the timeout")
+        self.assertIn("timed out", errors.getvalue())
+        self.assertEqual((self.root / "deadline").read_text().strip(), "1")
+
     def test_timeout_closes_a_real_descendants_output_pipe(self):
         # Trigger the timeout only after the grandchild reports readiness. Its
         # pipe reaches EOF only when both Bash and the descendant have exited.
@@ -212,13 +252,15 @@ class CodexSessionStart(unittest.TestCase):
         adapter = self.load_adapter()
         communicate = subprocess.Popen[str].communicate
         descendants: list[tuple[int, int]] = []
+        calls: list[float | None] = []
 
         def timeout_when_ready(
             process: subprocess.Popen[str],
             input: str | None = None,
             timeout: float | None = None,
         ) -> tuple[str, str]:
-            if timeout is not None:
+            calls.append(timeout)
+            if len(calls) == 1:
                 self.assertIsNotNone(process.stdout)
                 # assertIsNotNone above proved the pipe exists.
                 stdout = cast(IO[str], process.stdout)
@@ -228,7 +270,7 @@ class CodexSessionStart(unittest.TestCase):
                 )
                 pid = int(stdout.readline().strip())
                 descendants.append((pid, os.dup(stdout.fileno())))
-                raise subprocess.TimeoutExpired(process.args, timeout)
+                raise subprocess.TimeoutExpired(process.args, timeout or 0)
             # Bound cleanup in the test, so a regression fails instead of hanging.
             return communicate(process, input=input, timeout=5)
 
