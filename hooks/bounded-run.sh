@@ -14,8 +14,11 @@
 #   stdout: the command's own stdout, unchanged.
 #   stderr: the command's own stderr, plus one diagnostic line when the
 #           deadline passed.
-#   exit  : the command's own exit code; 124 when the deadline passed (the
-#           `timeout` convention); 125 on a usage error.
+#   exit  : the command's own exit code once its whole process group has
+#           exited; 124 when the deadline passed with any group member still
+#           running (the `timeout` convention), including a leader that
+#           already exited 0 but left a descendant behind; 125 on a usage
+#           error. A descendant that leaves the group (setsid) is not waited on.
 set -euo pipefail
 
 #: Seconds between SIGTERM and SIGKILL once the deadline has passed.
@@ -36,7 +39,7 @@ main() {
     printf 'bounded-run: usage: bounded-run.sh <seconds> <command> [args...]\n' >&2
     return 125
   fi
-  local budget="$1" rc=0 i
+  local budget="$1" rc=0 i leader_done=0
   shift
 
   # A runner stopped from outside (an outer runner's deadline, a cancelled
@@ -51,17 +54,18 @@ main() {
   PGID=$!
   set +m
 
-  for (( i = 0; i < budget * POLLS_PER_SEC; i++ )); do
-    if ! kill -0 "$PGID" 2>/dev/null; then
+  # Done means the whole group is gone, not just the leader: a background
+  # descendant can hold stdout open after the leader exits.
+  for (( i = 0; i <= budget * POLLS_PER_SEC; i++ )); do
+    if (( ! leader_done )) && ! kill -0 "$PGID" 2>/dev/null; then
       wait "$PGID" || rc=$?
+      leader_done=1
+    fi
+    if (( leader_done )) && ! group_alive; then
       return "$rc"
     fi
-    sleep "$POLL_SEC"
+    (( i == budget * POLLS_PER_SEC )) || sleep "$POLL_SEC"
   done
-  if ! kill -0 "$PGID" 2>/dev/null; then
-    wait "$PGID" || rc=$?
-    return "$rc"
-  fi
   stop_group "$KILL_GRACE_SEC"
   printf 'bounded-run: %s ran past its %ss deadline and was stopped — run it by hand to see where it waits\n' "$*" "$budget" >&2
   return 124

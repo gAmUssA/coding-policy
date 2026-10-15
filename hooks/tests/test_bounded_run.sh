@@ -13,6 +13,11 @@
 #                           runner, which reaps its own group: the innermost
 #                           process is dead and the outer's captured output
 #                           returns promptly.
+#   7. Leader exits early -> the leader exits 0 while a background descendant
+#                           holds stdout past the deadline: the call returns at
+#                           about the deadline with 124 and the descendant dead.
+#   8. Group finishes    -> a leader exiting 3 whose descendant ends before the
+#                           deadline returns 3 after the descendant ends.
 #
 # Run: bash hooks/tests/test_bounded_run.sh
 set -uo pipefail
@@ -81,6 +86,23 @@ main() {
   if [[ $rc -eq 124 ]] && (( elapsed <= 5 )) && ! kill -0 "$inner" 2>/dev/null; then
     pass; else fail "nested: expected 124 within 5s and the innermost process dead, got rc=$rc elapsed=$elapsed alive=$(kill -0 "$inner" 2>/dev/null && echo yes)"; fi
   if kill -0 "$inner" 2>/dev/null; then kill -KILL "$inner" || echo "warn: could not stop $inner" >&2; fi
+
+  # 7. Leader exits 0 at once; its background descendant would hold the
+  # captured stdout for 6s.
+  start=$SECONDS; rc=0
+  # shellcheck disable=SC2016 # expands inside the child shell, not here
+  out="$(bash "$SCRIPT" 1 bash -c 'sleep 6 & echo $! > "$1"; exit 0' _ "$TMP/bg.pid" </dev/null 2>/dev/null)" || rc=$?
+  elapsed=$(( SECONDS - start ))
+  local bg; bg="$(cat "$TMP/bg.pid")" || die "background pid not recorded"
+  if [[ $rc -eq 124 ]] && (( elapsed <= 4 )) && ! kill -0 "$bg" 2>/dev/null; then
+    pass; else fail "leader exits early: expected 124 within 4s and the descendant dead, got rc=$rc elapsed=$elapsed alive=$(kill -0 "$bg" 2>/dev/null && echo yes)"; fi
+  if kill -0 "$bg" 2>/dev/null; then kill -KILL "$bg" || echo "warn: could not stop $bg" >&2; fi
+
+  # 8. The group empties before the deadline: the leader's own code comes back,
+  # and only after the descendant has ended.
+  rc=0
+  out="$(bash "$SCRIPT" 5 bash -c 'sleep 1 & exit 3' </dev/null 2>/dev/null)" || rc=$?
+  if [[ $rc -eq 3 ]]; then pass; else fail "group finishes: expected the leader's exit 3, got rc=$rc"; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
