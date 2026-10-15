@@ -108,6 +108,22 @@ class ParseTest(unittest.TestCase):
         with self.assertRaisesRegex(UsageError, "more than one"):
             gates.check(GREEN + "\n## Gates\n\n- tests exit=0 cmd=true\n")
 
+    def test_every_variant_gates_heading_is_a_duplicate_section(self):
+        for heading in (" ## Gates", "   ## Gates", "##\tGates", "## Gates ##", "##  Gates  #####", "## gates", "# GATES"):
+            with self.subTest(heading=heading), self.assertRaisesRegex(UsageError, "more than one"):
+                gates.check(GREEN + "\n" + heading + "\n\n- lint exit=1 cmd=ruff check .\n")
+
+    def test_variant_gates_heading_alone_is_the_section(self):
+        result = gates.check("# Report\n\n ##\tgates ##\n\n- tests exit=0 cmd=true\n")
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual([gate["name"] for gate in result["gates"]], ["tests"])
+
+    def test_other_headings_are_not_gates_sections(self):
+        for heading in ("### Gates", "    ## Gates", "##Gates", "## Gates run"):
+            with self.subTest(heading=heading):
+                result = gates.check(GREEN + "\n" + heading + "\n\n- lint exit=1 cmd=ruff check .\n")
+                self.assertNotIn("more than one", " ".join(result["failures"]))
+
     def test_require_green_refuses_red_and_accepts_green(self):
         with self.assertRaisesRegex(UsageError, "gate tests exit=2"):
             gates.require_green(GREEN.replace("tests exit=0", "tests exit=2"), "An approved review")

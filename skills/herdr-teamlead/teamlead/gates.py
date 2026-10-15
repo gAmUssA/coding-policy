@@ -17,7 +17,9 @@ it is present exactly once outside code fences, carries at least one gate,
 holds no malformed list entry, blank command or duplicate name, names every
 required gate, and every gate exited 0. An `unknown` or non-zero exit is never green.
 
-The section runs to the next level-1 or level-2 heading, so gates under a
+Any level-1 or level-2 ATX heading reading `Gates` (case, spacing and
+closing hashes ignored) opens a section; a second one is refused. The
+section runs to the next level-1 or level-2 heading, so gates under a
 `###` child heading are validated. Fenced code never counts as evidence. Any
 Markdown list entry (`-`, `*`, `+`, `1.`, `1)`, indented or not) is a gate
 line and must be canonical; other prose lines are ignored.
@@ -27,12 +29,12 @@ import re
 
 from .errors import UsageError
 
-HEADING = "## Gates"
 LINE = re.compile(r"^- (?P<name>[A-Za-z0-9][A-Za-z0-9_.:/-]*) exit=(?P<exit>-?[0-9]+|unknown) cmd=(?P<cmd>\S.*)$")
 FENCE_OPEN = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 FENCE_CLOSE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})[ \t]*$")
-#: A level-1 or level-2 ATX heading ends the section; deeper headings stay in it.
-SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
+#: A CommonMark ATX heading: 0-3 spaces, 1-6 hashes, then spaces/tabs or end.
+ATX_HEADING = re.compile(r"^ {0,3}(?P<level>#{1,6})(?:[ \t]+(?P<text>.*?))?[ \t]*$")
+CLOSING_HASHES = re.compile(r"(?:^|[ \t]+)#+$")
 LIST_ENTRY = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|$)")
 THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 
@@ -58,16 +60,28 @@ def _unfenced(body):
                 opener = None
 
 
+def _heading(line):
+    """Return `(level, normalized text)` for an ATX heading line, else None."""
+    match = ATX_HEADING.match(line)
+    if match is None:
+        return None
+    text = CLOSING_HASHES.sub("", match.group("text") or "").strip()
+    return len(match.group("level")), text.casefold()
+
+
 def _section(body):
-    """Return the Gates section's unfenced lines, or None when absent; refuse two."""
+    """Return the Gates section's unfenced lines, or None when absent; refuse two.
+
+    Any level-1 or level-2 heading whose normalized text is `gates` opens a
+    Gates section, whatever its spacing, closing hashes or case; any other
+    level-1 or level-2 heading ends it. Deeper headings stay inside it.
+    """
     lines, found, inside = [], 0, False
     for line in _unfenced(body):
-        if line == HEADING:
-            inside = True
-            found += 1
-            continue
-        if SECTION_END.match(line):
-            inside = False
+        heading = _heading(line)
+        if heading is not None and heading[0] <= 2:
+            inside = heading[1] == "gates"
+            found += inside
             continue
         if inside:
             lines.append(line)
