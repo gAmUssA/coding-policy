@@ -24,7 +24,7 @@
     },
     {
       "name": "Merge flags",
-      "description": "The merge command is `gh pr merge 47 --repo gamussa/my-tessl-plugin --merge --delete-branch` (PR number 47, --repo naming the PR's repository, --merge flag, --delete-branch flag; flag order free). A merge without --repo scores 0: gh would target its default repository. Source: skills/release/SKILL.md Step 1 and Step 7",
+      "description": "The merge command is `gh pr merge 47 --repo github.com/gamussa/my-tessl-plugin --merge --delete-branch` (PR number 47, --repo naming the PR's host-qualified repository, --merge flag, --delete-branch flag; flag order free). A merge without --repo, or with a hostless --repo, scores 0: gh would target its default repository or GH_HOST's server. Source: skills/release/SKILL.md Step 1 and Step 7",
       "max_score": 10
     },
     {

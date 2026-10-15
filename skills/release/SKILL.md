@@ -24,14 +24,14 @@ Runs end-to-end from `git push` through merge + cleanup verification in one agen
 - Self-audit the diff against every rule whose domain covers the touched paths — the policy reviewer is a backstop, not the first read
 - `bash -n <script>` must exit 0 on every changed shell script, and its own test suite must pass
 - Plugin repos carrying `changelog.d/`: run `bash scripts/check-changelog-fragment.sh origin/main` on the committed branch; a red result means Step 3 is still owed or the branch edits a version it must not
-- Resolve origin's GitHub repository: `skills/release/origin-repo.sh` prints `{"repo": "<owner>/<repo>", "owner": ..., "name": ...}`; a non-zero exit stops the release — fix `origin` first
-- Every `<owner>`/`<repo>` below is that answer; every `gh` command carries `--repo <owner>/<repo>`, never `gh repo set-default`
+- Resolve origin's GitHub repository: `skills/release/origin-repo.sh` prints `{"repo", "owner", "name", "host", "target"}`; a non-zero exit stops the release — fix `origin` first
+- Every `<owner>`/`<repo>` below is that answer; every `gh` command carries `--repo github.com/<owner>/<repo>` (the `target` field), never `gh repo set-default` and never a hostless `--repo` that `GH_HOST` could redirect
 - If anything fails, fix it before proceeding
 
 ## Step 2 — Create PR
 
 - Push the branch: `git push -u origin <branch>`
-- Create the PR with `gh pr create --repo <owner>/<repo>`:
+- Create the PR with `gh pr create --repo github.com/<owner>/<repo>`:
   - **Title**: `<type>(<scope>): <imperative summary>`
   - **Body** (the repo's own `.github/pull_request_template.md` wins when one exists):
     ```
@@ -102,7 +102,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
 - `review_unrequested` (exit 1) — Copilot has no verdict at this head and no pending request. Request it with `skills/release/request-copilot-review.sh <owner> <repo> <pr-number>` and re-run the watcher. The policy reviewer runs on the push and never produces this result.
-- `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If the policy reviewer never posted, check `gh run list --repo <owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo <owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
+- `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If the policy reviewer never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
 
 ## Step 6 — Address Feedback
 
@@ -136,7 +136,7 @@ PRE=$(skills/release/capture-registry-baseline.sh <workspace> <plugin> | jq -r .
 **(A) From the base checkout:**
 
 ```bash
-gh pr merge <N> --repo <owner>/<repo> --merge --delete-branch
+gh pr merge <N> --repo github.com/<owner>/<repo> --merge --delete-branch
 git checkout main && git pull --ff-only
 git branch -d <branch>
 git remote prune origin
@@ -145,7 +145,7 @@ git remote prune origin
 **(B) From an additional worktree** (`rules/agent-worktree-isolation.md`) — order is mandatory, `git branch -d` refuses a branch checked out anywhere:
 
 ```bash
-gh pr merge <N> --repo <owner>/<repo> --merge --delete-branch
+gh pr merge <N> --repo github.com/<owner>/<repo> --merge --delete-branch
 cd <path-to-base-checkout>
 git checkout main && git pull --ff-only
 git worktree remove <path-to-worktree>
@@ -153,16 +153,16 @@ git branch -d <branch>
 git remote prune origin
 ```
 
-**After merge — ordinary repos:** confirm `main` advanced (`git log -1 --oneline` shows the merge) and watch CI on `main` to green (the run id from `gh run list --repo <owner>/<repo> --branch main --limit 5`, then `gh run watch <run-id> --repo <owner>/<repo>`). Report the merged PR URL. Finish here.
+**After merge — ordinary repos:** confirm `main` advanced (`git log -1 --oneline` shows the merge) and watch CI on `main` to green (the run id from `gh run list --repo github.com/<owner>/<repo> --branch main --limit 5`, then `gh run watch <run-id> --repo github.com/<owner>/<repo>`). Report the merged PR URL. Finish here.
 
 **After merge — publishing repos:** the confirmation is owed once per publication, each read from the channel that carried it (`rules/ci-safety.md` Always Watch CI). A green GitHub release confirms nothing about a pending Tessl moderation, and a cleared Tessl publish confirms nothing about an absent GitHub asset. Bind every run to its exact commit, never "latest on main".
 
 **Tessl publication** — the publish workflow fires on the merge commit; in an assign-on-merge repo its `chore(release): <version>` commit lands on `main` after the merge:
 
 ```bash
-merge_sha=$(gh pr view <N> --repo <owner>/<repo> --json mergeCommit --jq '.mergeCommit.oid')
+merge_sha=$(gh pr view <N> --repo github.com/<owner>/<repo> --json mergeCommit --jq '.mergeCommit.oid')
 tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin" | jq -r '.database_id')
-gh run watch "$tessl_run_id" --repo <owner>/<repo>
+gh run watch "$tessl_run_id" --repo github.com/<owner>/<repo>
 ```
 
 Assign-on-merge repos: classify the run before the two checks below (contract and exit codes in the `skills/release/publish-outcome.sh` header):
@@ -192,7 +192,7 @@ skills/release/verify-moderation-cleared.sh <workspace> <plugin> "$CURRENT"
 git tag v<version> && git push origin v<version>
 tag_sha=$(git rev-list -n 1 "v<version>")
 tag_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$tag_sha" "<tag-publish-workflow>" "v<version>" | jq -r '.database_id')
-gh run watch "$tag_run_id" --repo <owner>/<repo>
+gh run watch "$tag_run_id" --repo github.com/<owner>/<repo>
 skills/release/verify-github-release.sh <owner> <repo> "v<version>" "$tag_run_id"
 ```
 

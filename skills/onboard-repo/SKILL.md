@@ -56,10 +56,10 @@ Writes `.github/workflows/review-codex.yml`, `.github/copilot-instructions.md`, 
 
 ```bash
 bash .tessl/plugins/gamussa/coding-policy/skills/release/origin-repo.sh
-gh secret set CODEX_AUTH_JSON --repo <owner>/<repo> < ~/.codex/auth.json
+gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json
 ```
 
-`origin-repo.sh` prints origin's GitHub repository as `{"repo": "<owner>/<repo>", ...}`; pass that `repo` to `--repo`, never `gh repo set-default`. A non-zero exit stops onboarding until `origin` names a GitHub repository.
+`origin-repo.sh` prints origin's GitHub repository with a host-qualified `"target": "github.com/<owner>/<repo>"`; pass that `target` to `--repo`, never `gh repo set-default` and never a hostless `<owner>/<repo>` that `GH_HOST` could send to another server. A non-zero exit stops onboarding until `origin` names a GitHub repository.
 
 The workflow authenticates Codex with the ChatGPT subscription credential preflight verified. Nothing is committed; the secret lives only in the repo's Actions secrets. Also add a `CODEX_AUTH_JSON=` entry with a one-line purpose and the repo's `https://github.com/<owner>/<repo>/settings/secrets/actions` link to `.env.example` (create the file if absent — `rules/no-secrets.md`). Proceed immediately to Step 5.
 
