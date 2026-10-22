@@ -118,7 +118,7 @@ def _report_absent(binding):
 
 
 def _live(binding, worktree, base, client):
-    """Every live fact the recovery rests on, read now."""
+    """Every live fact the recovery rests on, read now, against the canonical checkout."""
     _report_absent(binding)
     _pane_gone(client, binding["pane_id"])
     _clean_checkout(worktree, base)
@@ -171,10 +171,11 @@ def _verify(state_path, state, data, client):
     evidence, worktree = _stall(data, row, binding, task["base_revision"])
     if ledger.brief_identity({"common": row["common"], "developer": row["brief"]}, "developer", binding["report"]) != row.get("brief_identity"):
         refuse("The original brief changed since dispatch; restore it so the retry sends the same assignment.")
-    if os.path.realpath(worktree) != _brief_worktree(row["brief"]):
+    canonical = os.path.realpath(worktree)
+    if canonical != _brief_worktree(row["brief"]):
         refuse("The stalled checkout {} is not the worktree the original developer brief names.".format(worktree))
-    _live(binding, worktree, task["base_revision"], client)
-    return row, binding, evidence, worktree
+    _live(binding, canonical, task["base_revision"], client)
+    return row, binding, evidence, canonical
 
 
 def record(state_path, state, data, at, client):
@@ -225,7 +226,15 @@ def prepare(state_path, state, task, fix_round, identity, report, no_clear, reta
     binding = _binding(state_path, row)
     if not isinstance(report, str) or Path(report).resolve() == Path(binding["report"]).resolve():
         refuse("A no-work retry needs a fresh report path; the original one belongs to dispatch {}.".format(row["id"]))
-    _live(binding, saved["worktree"], ledger.task_record(state["recovery"], task)["base_revision"], client)
+    _retry_gate(state, saved, row, binding, client)
+
+
+def _retry_gate(state, saved, row, binding, client):
+    """The brief must still resolve to the receipt's canonical checkout, then the live checks run on it."""
+    # The receipt's path is a hint: a retargeted link or ancestor moves what it names.
+    if os.path.realpath(saved["worktree"]) != saved["worktree"] or _brief_worktree(row["brief"]) != saved["worktree"]:
+        refuse("The original brief's worktree no longer resolves to the recovered checkout {}.".format(saved["worktree"]))
+    _live(binding, saved["worktree"], ledger.task_record(state["recovery"], row["task"])["base_revision"], client)
 
 
 def recheck(state_path, state, task, fix_round, client):
@@ -235,8 +244,8 @@ def recheck(state_path, state, task, fix_round, client):
     saved = _open_receipt(state["recovery"], state["assignments"], task)
     if saved is None:
         return
-    binding = _binding(state_path, _source(state["recovery"], saved["id"]))
-    _live(binding, saved["worktree"], ledger.task_record(state["recovery"], task)["base_revision"], client)
+    row = _source(state["recovery"], saved["id"])
+    _retry_gate(state, saved, row, _binding(state_path, row), client)
 
 
 def reserve(store, record_row, at):
@@ -261,6 +270,11 @@ def reserve(store, record_row, at):
             refuse("The no-work retry for dispatch {} is already reserved, uncertain or applied ({}).".format(previous["id"], identifier))
     if record_row["id"] not in saved["retries"]:
         saved["retries"].append(record_row["id"])
+
+
+def recovered(store, row):
+    """True when `row` is a dispatch an owner receipt recovered as no_work."""
+    return any(item["id"] == row["id"] for item in receipts(store))
 
 
 def follows(store, previous, row):

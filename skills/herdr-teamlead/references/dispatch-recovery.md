@@ -595,7 +595,7 @@ The record is a JSON object with exactly these fields:
 The owner checks the saved stall against the dispatch's enrolled worker,
 report and the task's recorded base. The stalled checkout must resolve to the
 same real path as the single worktree the frozen developer brief names in its
-`Your worktree already exists at` field (`templates/brief-developer.md`); a
+`Your worktree already exists at` field (`skills/herdr-teamlead/templates/brief-developer.md`); a
 brief without that field cannot be recovered. Then it checks live state: the pane is gone
 (`pane_not_found`), the enrollment is resolved, the report is absent, and the
 checkout is clean at the base. It sends no input and rewrites no history.
@@ -610,7 +610,7 @@ unchanged apart from that report path, and use a fresh context: no
 gone, enrollment resolved, report absent, checkout clean at the base) before
 any pane input and again immediately before the retry's reservation, which
 binds the retry to the receipt in the same save.
-One receipt permits one retry. A retry that was `not_sent` may be replaced.
+The receipt keeps the checkout's canonical real path; each retry gate first requires the brief's worktree field to still resolve to it. When the stalled dispatch was itself a refusal move, the retry carries the same refused brief to a provider that has not refused it. One receipt permits one retry. A retry that was `not_sent` may be replaced.
 The original row keeps its assignment and dispatch history. The correction
 count does not move, and later corrections start at fix 1. Partial, committed,
 pushed or unknown stalls never use this path. The predicates live in

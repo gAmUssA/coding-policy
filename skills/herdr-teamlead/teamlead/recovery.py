@@ -1289,8 +1289,11 @@ def refusal_move(store, task, role, fix_round, provider, identity, report=None):
             raise UsageError("Refused dispatch {} predates brief identity, so an unchanged move cannot be verified; record the operator's decision before any further dispatch of this brief.".format(row["id"]), {"refusals": [item["id"] for item in refused]})
         if row["brief_identity"] != identity:
             raise UsageError("The brief differs from the one provider {} refused (dispatch {}); a reworded brief is not a move. Send the refused brief unchanged, fresh report path aside, or record the operator's decision.".format(row["refusal"]["provider"], row["id"]), {"refusals": [item["id"] for item in refused]})
+    # A move recovered as a closed no_work stall consumed nothing, like a refused one.
+    from .no_work_recovery import recovered
     moves = [row for row in store["dispatches"] if row.get("refusal_move") is not None and row["status"] != "not_sent"
-             and row["task"] == task and row["role"] == role and row["fix_round"] == fix_round and row.get("refusal") is None]
+             and row["task"] == task and row["role"] == role and row["fix_round"] == fix_round and row.get("refusal") is None
+             and not recovered(store, row)]
     if moves:
         raise UsageError("Task {} {} round {} already moved to provider {} (dispatch {}, {}); one move per refusal. Wait for its report, record its refusal, or record the operator's decision before another dispatch of this brief.".format(
             task, role, fix_round, moves[-1]["refusal_move"]["provider"], moves[-1]["id"], moves[-1]["status"]), {"moves": [row["id"] for row in moves]})

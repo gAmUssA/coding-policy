@@ -177,10 +177,11 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         return json.loads(out)["applied"][0]["dispatch_id"]
 
-    def stall(self):
+    def stall(self, agent="codex", report=None, worktree=None):
         """The saved output of the real wait-report stall classification."""
         result = subprocess.run(
-            ["bash", str(WAIT_REPORT), "--worktree", str(self.checkout), "--base", self.base, "codex", self.first_report],
+            ["bash", str(WAIT_REPORT), "--worktree", str(worktree or self.checkout), "--base", self.base,
+             agent, report or self.first_report],
             env={**os.environ, "HERDR_ENV": "1", "HERDR_BIN": str(self.herdr), "TEAMLEAD_WAIT_INTERVAL_SEC": "0",
                  "TEAMLEAD_WAIT_BUDGET_SEC": "0", "TEAMLEAD_BLOCKED_CONFIRM_SEC": "0", "TEAMLEAD_REFUSAL_CONFIRM_SEC": "0"},
             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
@@ -214,9 +215,9 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.close(dispatch, wait)
         return dispatch, wait
 
-    def retry_client(self, statuses):
+    def retry_client(self, statuses, closed="w3:p1"):
         client = self._client(statuses)
-        self.runner.responses["pane get w3:p1"] = FakeCompleted(1, "", PANE_GONE)
+        self.runner.responses["pane get " + closed] = FakeCompleted(1, "", PANE_GONE)
         return client
 
     def retry_args(self, agent, report, identifier, *extra, body=None):
@@ -372,6 +373,78 @@ class NoWorkRecoveryTest(unittest.TestCase):
                 self.assertEqual(self.runner.writes(), [])
                 self.assertEqual(self.state.read_bytes(), before)
                 self.assertEqual(load_state(self.state)["recovery"]["no_work_recoveries"][0]["retries"], [])
+
+    def test_a_retargeted_worktree_link_refuses_the_retry_at_apply(self):
+        link = self.root / "link"
+        link.symlink_to(self.checkout)
+        dispatch = self.dispatch_initial(self.body(self.first_report, link))
+        wait = self.stall(worktree=link)
+        self.close(dispatch, wait)
+        result = self.recover(self.record(dispatch, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["worktree"], str(self.checkout))
+        # Between recovery and apply the link moves to another clean checkout
+        # at the base, while the recovered checkout gains work.
+        other = self.root / "other"
+        subprocess.run(["git", "clone", "-q", str(self.checkout), str(other)], check=True, capture_output=True)
+        link.unlink()
+        link.symlink_to(other)
+        (self.checkout / "src/new.py").write_text("x = 1\n")
+        retry_report = str(self.root / "retry.md")
+        args = self.retry_args("claude", retry_report, "retry", body=self.body(retry_report, link))
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-retry")
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, "")
+        self.assertIn("no longer resolves", err)
+        self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_recovered_refusal_move_is_retried_to_a_third_provider(self):
+        # codex refuses the initial brief, claude takes the one move and
+        # stalls with no work, and its pane closes.
+        first = self.dispatch_initial()
+        receipt = self.root / "refusal.json"
+        receipt.write_text(json.dumps({"agent": "codex", "state": "idle", "report_path": self.first_report,
+            "found": False, "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        record = self.root / "record-refusal.json"
+        record.write_text(json.dumps({"dispatch": first, "receipt": str(receipt)}))
+        code, _, err = self.invoke(["record-refusal", "--record", str(record), "--now", "2026-02-03T10:01:30+00:00"])
+        self.assertEqual(code, 0, err)
+        moved_report = str(self.root / "moved.md")
+        args = self.args("claude", moved_report, "moved", "2026-02-03T10:02:00+00:00", body=self.body(moved_report))
+        client = self._client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-move")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        moved = json.loads(out)["applied"][0]["dispatch_id"]
+        wait = self.stall("claude", moved_report)
+        self.close(moved, wait)
+        result = self.recover(self.record(moved, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.plan().returncode, 0)
+        retry_report = str(self.root / "retry.md")
+        # The provider that refused stays refused.
+        before = self.state.read_bytes()
+        code, _, err = self.invoke(self.retry_args("codex", retry_report, "again", "--dry-run"),
+                                   self.retry_client({"codex": "idle"}, closed="w2:p1"))
+        self.assertEqual(code, 1)
+        self.assertIn("resend to the same provider is refused", err)
+        self.assertEqual(self.state.read_bytes(), before)
+        args = self.retry_args("grok", retry_report, "retry")
+        client = self.retry_client({"grok": "idle"}, closed="w2:p1")
+        self.prepare_retrospective("grok", args, client, "before-retry")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        applied = json.loads(out)["applied"][0]
+        state = load_state(self.state)
+        retry = next(row for row in state["recovery"]["dispatches"] if row["id"] == applied["dispatch_id"])
+        self.assertEqual(retry["refusal_move"]["from"], first)
+        self.assertEqual(state["recovery"]["no_work_recoveries"][0]["retries"], [applied["dispatch_id"]])
+        self.assertEqual(self.plan().returncode, 1)
+        self.assertEqual(json.loads(self.launch("status").stdout)["tasks"][TASK]["confirmed_fixes"], 0)
 
     def test_an_unbound_second_initial_row_is_refused_on_read(self):
         dispatch, wait = self.stalled_and_closed()
