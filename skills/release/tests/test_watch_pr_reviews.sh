@@ -387,9 +387,13 @@ run "non-JSON snapshot exits 2" test_non_json
 # boundary: it refuses any call not pinned to github.com and answers with the
 # `gh pr checks --json name,bucket` shape GitHub returns. Both bots posted at
 # head and the branch is mergeable, so ci.status alone decides ready.
+# Every setup step is checked: a half-built fake would let PATH fall through
+# to the real `gh` and run these cases against GitHub.
 FAKE_BIN="$TMPDIR_TEST/bin"
-mkdir -p "$FAKE_BIN"
-cat > "$FAKE_BIN/gh" <<'FAKEGH'
+mkdir -p "$FAKE_BIN" \
+  || { echo "fatal: could not create the fake gh directory ${FAKE_BIN} — check that ${TMPDIR_TEST} is writable" >&2; exit 2; }
+cat > "$FAKE_BIN/gh" <<'FAKEGH' \
+  || { echo "fatal: could not write the fake gh at ${FAKE_BIN}/gh — check free space and permissions under ${TMPDIR_TEST}" >&2; exit 2; }
 #!/usr/bin/env bash
 set -euo pipefail
 head="0123456789abcdef0123456789abcdef01234567"
@@ -415,19 +419,43 @@ case "$1 ${2:-}" in
   *) echo "fake gh: unsupported: $*" >&2; exit 2 ;;
 esac
 FAKEGH
-chmod +x "$FAKE_BIN/gh"
+chmod +x "$FAKE_BIN/gh" \
+  || { echo "fatal: could not make ${FAKE_BIN}/gh executable — check permissions under ${TMPDIR_TEST}" >&2; exit 2; }
+FAKE_GH_RESOLVED=$(PATH="$FAKE_BIN:$PATH" command -v gh) \
+  || { echo "fatal: no gh resolves on PATH after installing the fake at ${FAKE_BIN}/gh — inspect that file" >&2; exit 2; }
+[[ "$FAKE_GH_RESOLVED" == "$FAKE_BIN/gh" ]] \
+  || { echo "fatal: PATH resolves gh to ${FAKE_GH_RESOLVED}, not the fake at ${FAKE_BIN}/gh — refusing to run against the real gh" >&2; exit 2; }
+WATCH_ERR_FILE="$TMPDIR_TEST/watch.err"
 
 watch_with_checks() {
   local checks="$1"
-  printf '%s' "$checks" > "$TMPDIR_TEST/checks.json"
+  printf '%s' "$checks" > "$TMPDIR_TEST/checks.json" \
+    || { echo "    FAIL: could not write the checks fixture to ${TMPDIR_TEST}/checks.json — check that ${TMPDIR_TEST} is writable" >&2; return 2; }
+  # stderr goes to a file, not /dev/null: assert_watch_rc prints it when the
+  # exit is unexpected, so a failing case shows the watcher's own diagnostic.
   FAKE_GH_CHECKS_FILE="$TMPDIR_TEST/checks.json" PATH="$FAKE_BIN:$PATH" \
-    bash "$SCRIPT" gamussa coding-policy 42 2>/dev/null
+    bash "$SCRIPT" gamussa coding-policy 42 2>"$WATCH_ERR_FILE"
+}
+
+# assert_eq on the exit code, plus the watcher's captured stderr on mismatch.
+assert_watch_rc() {
+  local expected="$1" actual="$2"
+  [[ "$expected" == "$actual" ]] && return 0
+  echo "    FAIL: exit code: expected '${expected}', got '${actual}'; watcher stderr:" >&2
+  if [[ -r "$WATCH_ERR_FILE" && ! -s "$WATCH_ERR_FILE" ]]; then
+    echo "      (empty)" >&2
+  elif [[ -r "$WATCH_ERR_FILE" ]]; then
+    sed 's/^/      /' "$WATCH_ERR_FILE" >&2
+  else
+    echo "      (no stderr captured at ${WATCH_ERR_FILE})" >&2
+  fi
+  return 1
 }
 
 test_e2e_unreplaced_cancel_never_ready() {
   local out rc=0
   out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"},{"bucket":"pass","name":"diagnostics"}]') || rc=$?
-  assert_eq "exit code" "1" "$rc" || return 1
+  assert_watch_rc "1" "$rc" || return 1
   assert_eq "result" "pending_at_budget" "$(result_of "$out")" || return 1
   assert_eq "ci" "pending" "$(echo "$out" | jq -r '.ci.status')" || return 1
 }
@@ -436,7 +464,7 @@ run "e2e: an unreplaced cancelled check is never ready" test_e2e_unreplaced_canc
 test_e2e_replaced_cancel_is_ready() {
   local out rc=0
   out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"}]') || rc=$?
-  assert_eq "exit code" "0" "$rc" || return 1
+  assert_watch_rc "0" "$rc" || return 1
   assert_eq "result" "ready" "$(result_of "$out")" || return 1
 }
 run "e2e: a cancel replaced by a pass is ready" test_e2e_replaced_cancel_is_ready
@@ -444,7 +472,7 @@ run "e2e: a cancel replaced by a pass is ready" test_e2e_replaced_cancel_is_read
 test_e2e_replaced_by_fail_is_ci_failure() {
   local out rc=0
   out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"fail","name":"unit-tests"},{"bucket":"pass","name":"review"}]') || rc=$?
-  assert_eq "exit code" "0" "$rc" || return 1
+  assert_watch_rc "0" "$rc" || return 1
   assert_eq "result" "ci_failure" "$(result_of "$out")" || return 1
 }
 run "e2e: a cancel replaced by a fail is ci_failure" test_e2e_replaced_by_fail_is_ci_failure
