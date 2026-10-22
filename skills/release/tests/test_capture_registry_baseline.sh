@@ -80,6 +80,20 @@ case "${MOCK_MODE:-}" in
     printf '%s\n' '{"data":[{"attributes":{}}]}' ;;
   entry_null_version)
     printf '%s\n' '{"data":[{"attributes":{"version":null}}]}' ;;
+  ver_empty)
+    printf '%s\n' '{"data":[{"attributes":{"version":""}}]}' ;;
+  ver_short)
+    printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}}]}' ;;
+  ver_vprefix)
+    printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}}]}' ;;
+  ver_prerelease)
+    printf '%s\n' '{"data":[{"attributes":{"version":"1.2.3-rc1"}}]}' ;;
+  ver_mixed_vprefix)
+    printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}},{"attributes":{"version":"2.0.0"}}]}' ;;
+  ver_mixed_empty)
+    printf '%s\n' '{"data":[{"attributes":{"version":""}},{"attributes":{"version":"2.0.0"}}]}' ;;
+  ver_mixed_short)
+    printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}},{"attributes":{"version":"2.0.0"}}]}' ;;
   entry_numeric_version)
     printf '%s\n' '{"data":[{"attributes":{"version":123}}]}' ;;
   entry_no_attributes)
@@ -149,6 +163,13 @@ expect_refusal absent_rc2 "not-found body with exit 2 -> exit 2, never unpublish
 expect_refusal absent_rc137 "not-found body with exit 137 (killed) -> exit 2"
 expect_refusal entry_no_version "malformed entry (entry_no_version) -> exit 2, never unpublished"
 expect_refusal entry_null_version "malformed entry (entry_null_version) -> exit 2, never unpublished"
+expect_refusal ver_empty "malformed version string (ver_empty) -> exit 2"
+expect_refusal ver_short "malformed version string (ver_short) -> exit 2"
+expect_refusal ver_vprefix "malformed version string (ver_vprefix) -> exit 2"
+expect_refusal ver_prerelease "malformed version string (ver_prerelease) -> exit 2"
+expect_refusal ver_mixed_vprefix "malformed version string (ver_mixed_vprefix) -> exit 2"
+expect_refusal ver_mixed_empty "malformed version string (ver_mixed_empty) -> exit 2"
+expect_refusal ver_mixed_short "malformed version string (ver_mixed_short) -> exit 2"
 expect_refusal entry_numeric_version "malformed entry (entry_numeric_version) -> exit 2, never unpublished"
 expect_refusal entry_no_attributes "malformed entry (entry_no_attributes) -> exit 2, never unpublished"
 expect_refusal entry_not_object "malformed entry (entry_not_object) -> exit 2, never unpublished"

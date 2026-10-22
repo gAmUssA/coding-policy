@@ -86,6 +86,20 @@ case "$1" in
         printf '%s\n' '{"data":[{"attributes":{}}]}' ;;
       entry_null_version)
         printf '%s\n' '{"data":[{"attributes":{"version":null}}]}' ;;
+      ver_empty)
+        printf '%s\n' '{"data":[{"attributes":{"version":""}}]}' ;;
+      ver_short)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}}]}' ;;
+      ver_vprefix)
+        printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}}]}' ;;
+      ver_prerelease)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2.3-rc1"}}]}' ;;
+      ver_mixed_vprefix)
+        printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}},{"attributes":{"version":"2.0.0"}}]}' ;;
+      ver_mixed_empty)
+        printf '%s\n' '{"data":[{"attributes":{"version":""}},{"attributes":{"version":"2.0.0"}}]}' ;;
+      ver_mixed_short)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}},{"attributes":{"version":"2.0.0"}}]}' ;;
       entry_numeric_version)
         printf '%s\n' '{"data":[{"attributes":{"version":123}}]}' ;;
       entry_no_attributes)
@@ -149,7 +163,7 @@ else
 fi
 
 # --- any other error body stays a failure, never a fabricated baseline ---
-for mode in absent_rc0 entry_no_version entry_null_version entry_numeric_version entry_no_attributes entry_not_object entry_mixed absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
+for mode in absent_rc0 ver_empty ver_short ver_vprefix ver_prerelease ver_mixed_vprefix ver_mixed_empty ver_mixed_short entry_no_version entry_null_version entry_numeric_version entry_no_attributes entry_not_object entry_mixed absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
   invoke "$mode"
   if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ -n "$ERR" ]]; then
     pass "$mode -> exit 2, never a first-publish baseline"

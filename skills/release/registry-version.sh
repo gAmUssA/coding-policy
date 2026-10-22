@@ -41,8 +41,9 @@
 #        baseline yet". Diagnostics go to stderr.
 # Exit:  0 on a successful read (published version OR never-published null);
 #        2 on tool/parse failure (tessl or jq absent, tessl unreachable,
-#        non-JSON body, a .data entry without a string version, a failed
-#        extraction). On exit 2 stdout is empty — no JSON is emitted.
+#        non-JSON body, a .data entry whose version is not a numeric
+#        MAJOR.MINOR.PATCH string — prereleases included, which this plugin
+#        family never publishes — or a failed extraction). On exit 2 stdout is empty — no JSON is emitted.
 
 set -euo pipefail
 
@@ -136,28 +137,32 @@ registry_version() {
     return 2
   fi
 
-  # Every entry must carry a string .attributes.version. A missing, null or
-  # non-string version is a malformed entry, never skipped: skipping it would
-  # turn a page of malformed entries into an empty (never-published) result.
+  # Every entry must carry a numeric MAJOR.MINOR.PATCH .attributes.version.
+  # A missing, null, non-string, empty or otherwise malformed version ("1.2",
+  # "v1.2.3", a prerelease such as "1.2.3-rc1") is a malformed entry, never
+  # skipped: skipping it would turn a page of malformed entries into an empty
+  # (never-published) result, or hide it behind a valid version that sorts
+  # later. Prereleases are rejected: this plugin family never publishes them,
+  # and version_gt orders numeric versions only.
   # Only an empty .data array, or the exit-1 not-found body above, may yield
   # an empty successful read.
   if ! printf '%s' "$versions_json" | jq -e '
       all(.data[]; type == "object" and (.attributes | type == "object")
-                   and (.attributes.version | type == "string"))' >/dev/null 2>&1; then
-    echo "error: 'tessl api ${endpoint}' has a .data entry without a string .attributes.version — an endpoint shape change or malformed entry, not an empty registry. Inspect it directly with 'tessl api ${endpoint}' (body was: ${versions_json})" >&2
+                   and (.attributes.version | type == "string"
+                        and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))' >/dev/null 2>&1; then
+    echo "error: 'tessl api ${endpoint}' has a .data entry whose .attributes.version string is not numeric MAJOR.MINOR.PATCH — an endpoint shape change or malformed entry, not an empty registry. Inspect it directly with 'tessl api ${endpoint}' (body was: ${versions_json})" >&2
     return 2
   fi
 
   # Max version across the page, ranked numerically. sort_by a per-element
   # parsed [major,minor,patch] key (jq compares arrays element-wise, so
-  # [0,3,119] outranks [0,3,20]) and take the last. `tonumber? // 0`
-  # neutralises a non-numeric component; the shape check below rejects it.
-  # `// empty` yields an empty string only for an empty .data array. The
+  # [0,3,119] outranks [0,3,20]) and take the last. Every component is
+  # numeric (checked above). `// empty` yields an empty string only for an empty .data array. The
   # extraction's own exit status is checked: a jq failure is exit 2.
   local current
   if ! current=$(printf '%s' "$versions_json" | jq -r '
       [.data[].attributes.version]
-      | sort_by(split(".") | map(tonumber? // 0))
+      | sort_by(split(".") | map(tonumber))
       | last // empty'); then
     echo "error: could not extract the latest version from 'tessl api ${endpoint}' — inspect it directly (body was: ${versions_json})" >&2
     return 2
