@@ -485,6 +485,103 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.assertIn("retry report path", err)
         self.assertEqual(self.runner.calls, [])
 
+    def refuse_dispatch(self, dispatch, agent, report, at):
+        receipt = self.root / (dispatch.replace(":", "-") + "-refusal.json")
+        receipt.write_text(json.dumps({"agent": agent, "state": "idle", "report_path": report,
+            "found": False, "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        record = self.root / "record-refusal.json"
+        record.write_text(json.dumps({"dispatch": dispatch, "receipt": str(receipt)}))
+        code, _, err = self.invoke(["record-refusal", "--record", str(record), "--now", at])
+        self.assertEqual(code, 0, err)
+
+    def apply_ok(self, agent, report, identifier, at):
+        args = self.args(agent, report, identifier, at, body=self.body(report))
+        client = self._client({agent: "idle"})
+        self.prepare_retrospective(agent, args, client, "before-" + identifier)
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["applied"][0]["dispatch_id"]
+
+    def test_an_older_not_sent_id_cannot_become_the_retry(self):
+        # The first initial dispatch fails before any input and stays not_sent.
+        args = self.args("codex", self.first_report, "first", FIRST_AT, body=self.body(self.first_report))
+        client = self._client({"codex": "idle"})
+        self.prepare_retrospective("codex", args, client, "before-first")
+        self.runner.set("pane send-text", returncode=1, stderr="injected pre-input failure")
+        self.runner.set("agent prompt codex", returncode=1, stderr="injected pre-input failure")
+        code, _, err = self.invoke(args, client)
+        self.assertEqual(code, 1, err)
+        self.assertEqual([row["status"] for row in load_state(self.state)["recovery"]["dispatches"]], ["not_sent"])
+        # A second initial dispatch is applied, stalls with no work and is recovered.
+        second_report = str(self.root / "second.md")
+        second = self.apply_ok("claude", second_report, "second", "2026-02-03T10:02:00+00:00")
+        wait = self.stall("claude", second_report)
+        self.close(second, wait)
+        self.assertEqual(self.recover(self.record(second, wait)).returncode, 0)
+        # Retrying the older not_sent ID with its original inputs is refused.
+        args = self.retry_args("codex", self.first_report, "first")
+        client = self.retry_client({"codex": "idle"}, closed="w2:p1")
+        self.prepare_retrospective("codex", args, client, "before-reuse")
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 1, out)
+        self.assertIn("fresh --dispatch-id", err)
+        self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(self.state.read_bytes(), before)
+        result = self.launch("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn(TASK, json.loads(result.stdout)["tasks"])
+
+    def test_an_authorized_dispatch_recovered_as_no_work_carries_its_authorization(self):
+        # codex and claude refuse; the operator authorizes grok, which stalls.
+        first = self.dispatch_initial()
+        self.refuse_dispatch(first, "codex", self.first_report, "2026-02-03T10:01:10+00:00")
+        moved_report = str(self.root / "moved.md")
+        moved = self.apply_ok("claude", moved_report, "moved", "2026-02-03T10:01:20+00:00")
+        self.refuse_dispatch(moved, "claude", moved_report, "2026-02-03T10:01:30+00:00")
+        record = self.root / "authorize.json"
+        record.write_text(json.dumps({"id": "authorize-1", "task": TASK, "role": "developer", "fix_round": None,
+            "provider": "grok", "brief": "unchanged", "decision": "Dispatch the unchanged brief to grok.",
+            "authorization": {"source": "fixture operator", "quote": "Send it to grok unchanged."}}))
+        code, _, err = self.invoke(["authorize-refused-dispatch", "--record", str(record), "--now", "2026-02-03T10:01:40+00:00"])
+        self.assertEqual(code, 0, err)
+        authorized_report = str(self.root / "authorized.md")
+        authorized = self.apply_ok("grok", authorized_report, "authorized", "2026-02-03T10:02:00+00:00")
+        wait = self.stall("grok", authorized_report)
+        self.close(authorized, wait)
+        result = self.recover(self.record(authorized, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        retry_report = str(self.root / "retry.md")
+        # The carried authorization keeps its provider restriction.
+        before = self.state.read_bytes()
+        code, _, err = self.invoke(self.retry_args("claude", retry_report, "elsewhere", "--dry-run"),
+                                   self.retry_client({"claude": "idle"}, closed="w4:p1"))
+        self.assertEqual(code, 1)
+        self.assertIn("approves provider grok", err)
+        self.assertEqual(self.state.read_bytes(), before)
+        args = self.retry_args("grok", retry_report, "retry")
+        client = self.retry_client({"grok": "idle"}, closed="w4:p1")
+        self.prepare_retrospective("grok", args, client, "before-retry")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        retry_id = json.loads(out)["applied"][0]["dispatch_id"]
+        state = load_state(self.state)
+        retry = next(row for row in state["recovery"]["dispatches"] if row["id"] == retry_id)
+        self.assertEqual(retry["refusal_move"]["authorization"], "authorize-1")
+        self.assertEqual(state["recovery"]["no_work_recoveries"][0]["retries"], [retry_id])
+        self.assertEqual(self.plan().returncode, 1)
+        # Any other reuse of the authorization stays refused: without the
+        # receipt binding them, two uses read as a consumed authorization.
+        document = json.loads(self.state.read_text())
+        document["recovery"]["no_work_recoveries"] = []
+        self.state.write_text(json.dumps(document))
+        forged = self.state.read_bytes()
+        result = self.launch("status")
+        self.assertIn("reuses a consumed authorization", result.stderr)
+        self.assertNotIn(TASK, result.stdout)
+        self.assertEqual(self.state.read_bytes(), forged)
+
     def test_an_unbound_second_initial_row_is_refused_on_read(self):
         dispatch, wait = self.stalled_and_closed()
         self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)

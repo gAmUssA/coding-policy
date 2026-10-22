@@ -24,7 +24,8 @@ Options considered:
 2. A schema-1 receipt binds the source dispatch, its assignment index, the complete owner input, the wait JSON byte receipt, the canonical real path of the stalled checkout, a digest of the source row, and the list of retry dispatch IDs.
 3. The owner accepts only an applied initial developer dispatch that is the task's latest and has no review or refusal. The saved `wait-report.sh --worktree --base` stall must be `no_work` against the task's base, for the enrolled worker and report, in the single worktree the frozen developer brief names. Live state must show the pane gone, the enrollment resolved, the report absent, and the checkout clean at the base.
 4. A receipt makes its source read as bearing no work, so the initial slot admits one retry of the unchanged brief. The retry needs a fresh dispatch ID, a fresh and unoccupied report path, and a fresh context. `apply` repeats the live checks before input and again before reservation. A dry run runs the static and filesystem checks only and contacts no Herdr. `reserve` binds the retry's ID into the receipt in the same save, and store validation accepts a second applied `(task, null)` row only when the receipt lists it.
-5. A recovered refusal move no longer counts as the outstanding move. Provider and authorization limits still apply to its retry.
+5. A recovered refusal move no longer counts as the outstanding move, and a recovered operator-authorized dispatch passes its authorization to its receipt-bound retry. Provider and brief limits still apply. Store validation accepts a second use of an authorization only as that receipt-bound retry.
+6. A new receipt binding takes a fresh dispatch ID; only a transport retry of an ID the receipt already lists reuses it.
 
 ## Consequences
 

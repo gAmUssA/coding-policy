@@ -1232,9 +1232,23 @@ def _authorization_uses(store, identifier):
             and (row.get("refusal_move") or {}).get("authorization") == identifier]
 
 
+def _authorization_carried(store, uses):
+    """Each later use is the receipt-bound retry of an earlier use recovered as no_work.
+
+    A use that stalled with no work consumed nothing, so its retry carries the
+    same authorization; any other second use is a reuse.
+    """
+    from .no_work_recovery import follows, recovered
+    return all(recovered(store, earlier) and follows(store, earlier, later) for earlier, later in zip(uses, uses[1:]))
+
+
 def _unused_authorization(store, task, role, fix_round):
+    from .no_work_recovery import recovered
     for row in store["refusal_authorizations"]:
-        if (row["task"], row["role"], row["fix_round"]) == (task, role, fix_round) and not _authorization_uses(store, row["id"]):
+        if (row["task"], row["role"], row["fix_round"]) != (task, role, fix_round):
+            continue
+        uses = _authorization_uses(store, row["id"])
+        if not uses or recovered(store, uses[-1]) and _authorization_carried(store, uses):
             return row
     return None
 
@@ -1339,7 +1353,7 @@ def _validate_refusals(store):
             if "authorization" in move:
                 grant = _item(store["refusal_authorizations"], move["authorization"], "refusal authorization")
                 if ((grant["task"], grant["role"], grant["fix_round"], grant["provider"]) != (row["task"], row["role"], row["fix_round"], move["provider"])
-                        or len(_authorization_uses(store, grant["id"])) > 1
+                        or not _authorization_carried(store, _authorization_uses(store, grant["id"]))
                         or grant["brief"] == "unchanged" and (source.get("brief_identity") is None or source["brief_identity"] != row.get("brief_identity"))):
                     raise UsageError("An authorized refused dispatch exceeds its authorization's provider or brief scope, names another key, or reuses a consumed authorization; preserve the ledger for owner recovery.", {})
             elif (move["provider"] == move["from_provider"]

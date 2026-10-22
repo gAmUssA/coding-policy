@@ -254,13 +254,22 @@ def _retry_gate(state, saved, row, binding, client):
     _live(binding, saved["worktree"], ledger.task_record(state["recovery"], row["task"])["base_revision"], client)
 
 
-def recheck(state_path, state, task, fix_round, report, client):
+def _fresh_identity(store, saved, identifier):
+    """A new binding takes a new dispatch ID; a listed retry may retry its transport."""
+    # An older ID keeps its original `at`, which predates the receipt and
+    # would make the saved ledger unreadable.
+    if identifier not in saved["retries"] and any(row["id"] == identifier for row in store["dispatches"]):
+        refuse("Dispatch ID {} already names an earlier attempt; a no-work retry needs a fresh --dispatch-id.".format(identifier))
+
+
+def recheck(state_path, state, task, fix_round, report, identifier, client):
     """Repeat the live checks immediately before a retry's reservation."""
     if fix_round is not None or task is None:
         return
     saved = _open_receipt(state["recovery"], state["assignments"], task)
     if saved is None:
         return
+    _fresh_identity(state["recovery"], saved, identifier)
     row = _source(state["recovery"], saved["id"])
     binding = _binding(state_path, row)
     _fresh_report(report, binding, row)
@@ -283,6 +292,7 @@ def reserve(store, record_row, at):
         refuse("The retry reservation must follow its recovery receipt.")
     if record_row.get("brief_identity") != previous.get("brief_identity"):
         refuse("A no-work retry sends the unchanged brief; only its report path may differ.")
+    _fresh_identity(store, saved, record_row["id"])
     for identifier in saved["retries"]:
         retry = next(row for row in store["dispatches"] if row["id"] == identifier)
         if identifier != record_row["id"] and retry["status"] != "not_sent":

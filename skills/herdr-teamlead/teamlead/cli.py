@@ -960,7 +960,8 @@ def cmd_apply(args, client=None, warn=None, trace=None):
         record = {**dispatches[step["role"]], "observed_before": observed,
                   "brief": step["brief"], "common": step["common"]}
         if step["role"] == "developer":
-            no_work_recovery.recheck(state_path, state, args.task, args.fix_round, reports.get("developer"), client)
+            no_work_recovery.recheck(state_path, state, args.task, args.fix_round, reports.get("developer"),
+                                     record["id"], client)
         if supervised:
             _supervision_enrollment(state_path, record["id"], args.task, step["role"], step["agent"], reports[step["role"]], at,
                                     pane_id=step["pane_id"], persist=True)

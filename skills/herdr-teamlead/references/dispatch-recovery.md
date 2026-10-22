@@ -610,7 +610,7 @@ unchanged apart from that report path, and use a fresh context: no
 gone, enrollment resolved, report absent, checkout clean at the base) before
 any pane input and again immediately before the retry's reservation, which
 binds the retry to the receipt in the same save. A dry run runs every static and filesystem check but no Herdr probe.
-The receipt keeps the checkout's canonical real path; each retry gate first requires the brief's worktree field to still resolve to it. When the stalled dispatch was itself a refusal move, the retry carries the same refused brief to a provider that has not refused it. One receipt permits one retry. A retry that was `not_sent` may be replaced.
+The receipt keeps the checkout's canonical real path; each retry gate first requires the brief's worktree field to still resolve to it. When the stalled dispatch was itself a refusal move, the retry carries the same refused brief to a provider that has not refused it. When it was an operator-authorized dispatch, the retry carries that authorization, with its provider and brief limits. An ID that already names an earlier attempt is refused; only a transport retry of the receipt's own listed retry reuses its ID. One receipt permits one retry. A retry that was `not_sent` may be replaced.
 The original row keeps its assignment and dispatch history. The correction
 count does not move, and later corrections start at fix 1. Partial, committed,
 pushed or unknown stalls never use this path. The predicates live in
