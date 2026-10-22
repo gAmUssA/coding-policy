@@ -36,7 +36,7 @@ Version gates:
 
 Every other field, including per-agent `launch_args`, parses at every version. Missing capabilities mean an empty list, never inferred
 expertise. Capability entries are unique lowercase identifiers validated by
-`teamlead/config.py` (`parse_capabilities`). Declare them from available skills,
+`skills/herdr-teamlead/teamlead/config.py` (`parse_capabilities`). Declare them from available skills,
 tools and inspected evidence. The example leaves every capability list empty.
 See `skills/herdr-teamlead/references/model-tiers.md` for billing evidence. A missing config is refused with the exact `cp` command to run. The
 optional `idle_markers` / `working_markers` per-agent keys carry the footer
@@ -293,7 +293,7 @@ skills/herdr-teamlead/references/retrospectives.md
   ],
   "specialist_assessments": [],
   "recovery": {
-    "schema_version": 9,
+    "schema_version": 10,
     "tasks": {},
     "checkpoints": [],
     "plans": [],
@@ -303,6 +303,7 @@ skills/herdr-teamlead/references/retrospectives.md
     "refusal_authorizations": [],
     "diagnoses": [],
     "legacy_ruling_recoveries": [],
+    "no_work_recoveries": [],
     "hand_clearances": [],
     "historical_attempts": [],
     "role_clearances": [],
@@ -357,11 +358,11 @@ document and arrives already stamped.
 
 ## Recovery records
 
-The recovery document uses `schema_version: 9`; individual records retain their
+The recovery document uses `schema_version: 10`; individual records retain their
 independent versions. Version 6 adds the dispatch fields `brief_identity`, `refusal` and
 `refusal_move` and the `refusal_authorizations` collection; version 7 adds the
 dispatch's send-time `provider`; version 8 adds the `diagnoses` collection;
-version 9 adds `legacy_ruling_recoveries`. The
+version 9 adds `legacy_ruling_recoveries`; version 10 adds `no_work_recoveries`. The
 owner stamps an older store on load, adds the empty collections, and refuses one
 already carrying a field its version did not own. Generic records remain version 1; stale-Grok delivery and
 composition-bearing dispatch/result records use version 2. New checkpoints are
@@ -395,6 +396,7 @@ replacement for live readiness, source review, or release gates.
 | `refusal_authorizations` | Unique `id`, `task`, `role`, `fix_round` or null, approved `provider`, `brief` (`unchanged` or `revised`), the operator's `decision`, `authorization`. Permits one dispatch on its key to that provider after two recorded refusals, the brief held to the refused identity unless `revised`; the consuming dispatch names it in `refusal_move.authorization`. |
 | `delivery_recoveries` | Unique `id`, original `dispatch` and `assignment_index`, owner `input`, byte `receipts` for report/negative wait/pane/visible/native source/common/brief, archived `native_session`, `found: true`, `basis: archived_native_final_source`, null `native_session_proof`, and `grants_review_approval: false`. Original null session evidence is preserved; the archived user prompt binds its delivery to the saved dispatch. |
 | `legacy_ruling_recoveries` | Schema-1 receipts already written for historical version-2 citations. Unique `id`, `task`, `at`, operator `authorization` source/quote, `backup` path/SHA-256, `checkpoints` mapping original IDs to canonical JSON SHA-256 digests, and `grants_future_attempts: false`. Reading validates these bindings without fetching historical files. Altered, new or overlapping citations do not inherit a receipt. Empty after a schema-8 migration. |
+| `no_work_recoveries` | Schema-1 receipts owned by `skills/herdr-teamlead/teamlead/no_work_recovery.py`, written by `recover-no-work`. `id` is the source dispatch: an applied initial developer dispatch with no review or refusal. Fields: `task`, `at`, `assignment_index`, the complete owner `input` (`dispatch`, `reason`, `authorization`, `evidence`), the wait JSON byte `evidence` receipt, the stalled `worktree` as its canonical real path (every retry gate first requires the brief's worktree field to still resolve to it), `source_sha256` (canonical digest of the source dispatch row), and `retries`. `retries` lists the retry dispatch IDs `reserve` bound in the same save as each reservation. A receipt marks its source as bearing no work, so the task's initial slot admits one retry of the same `brief_identity`. At most one listed retry is other than `not_sent`, and a second applied row in the `(task, null)` slot is valid only when listed. The source row, its assignment and the correction count never change. Replay returns the receipt and grants nothing. Migrating version 9 adds the empty collection; a version-9 store already carrying it is refused. Readers do not migrate. |
 
 Dispatch/result version 2 carries `requirements`, `reviewer_scope`, or both.
 Requirements contain the assigned role's normalized object; reviewer scope is
@@ -571,7 +573,7 @@ retry and unsupported-schema behavior; only their owner commands mutate them.
 
 ### Supervision schema 1
 
-`teamlead/supervision.py` owns `<canonical selected state>.supervision.json`.
+`skills/herdr-teamlead/teamlead/supervision.py` owns `<canonical selected state>.supervision.json`.
 The document has `schema_version: 1`, canonical `state_path`, nullable `binding`,
 and arrays `members`, `events`, `acknowledgements`, `holds`, and `watchers`.
 Each array entry, binding, refinement, resolution, disposition, and evidence

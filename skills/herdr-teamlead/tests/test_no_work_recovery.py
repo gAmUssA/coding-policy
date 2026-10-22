@@ -1,0 +1,639 @@
+"""A closed no-work initial developer assignment, retried through the real CLI.
+
+The stall evidence comes from the real `wait-report.sh --worktree` run against a
+real git checkout; `recover-no-work`, `plan` and `supervision-resolve` run
+through `teamlead.sh`. Only Herdr's process transport is fake: a shell stub for
+the launcher and wait-report, the shared FakeRunner for in-process apply.
+"""
+
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from teamlead import recovery, retrospective as notes, retrospective_runtime as runtime, supervision
+from teamlead.cli import main
+from teamlead.config import load_config
+from teamlead.state import empty_state, load_state, save_state
+from tests import test_cli as fixture
+from tests.fakes import FakeCompleted, FakeRunner
+
+ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = ROOT / "teamlead.sh"
+WAIT_REPORT = ROOT / "wait-report.sh"
+TASK = "no-work-retry"
+AT = fixture.AT
+#: Fixed instants after `AT`: the initial apply, its closure, the recovery, the retry.
+FIRST_AT = "2026-02-03T10:01:00+00:00"
+CLOSED_AT = "2026-02-03T10:05:00+00:00"
+RECOVERED_AT = "2026-02-03T10:06:00+00:00"
+RETRY_AT = "2026-02-03T10:07:00+00:00"
+PANE_GONE = json.dumps({"error": {"code": "pane_not_found", "message": "pane w3:p1 not found"}})
+
+#: A Herdr stand-in for wait-report and the launcher. `agent get` reads idle on
+#: the original pane, the marker never matches, the pane shows no refusal, and
+#: `pane get` answers not-found unless FAKE_PANE_LIVE is set.
+FAKE_HERDR = r"""#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "agent get")
+    printf '{"result":{"type":"agent_info","agent":{"agent":"codex","agent_status":"idle","pane_id":"w3:p1","name":"%s"}}}\n' "$3"
+    ;;
+  "pane wait-output")
+    printf '{"error":{"code":"timeout","message":"timed out waiting for output match"}}\n' >&2
+    exit 1
+    ;;
+  "pane read")
+    printf 'nothing here\n'
+    ;;
+  "pane get")
+    if [[ -n "${FAKE_PANE_LIVE:-}" ]]; then
+      printf '{"result":{"pane":{"pane_id":"%s","agent_status":"idle"}}}\n' "$3"
+    else
+      printf '{"error":{"code":"pane_not_found","message":"pane %s not found"}}\n' "$3" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    printf '{"error":{"code":"unsupported","message":"fake herdr: %s"}}\n' "$*" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def seed_task(state_path, base):
+    """A registered task with no assignments yet."""
+    state = empty_state()
+    recovery.register_task(state["recovery"], {"task": TASK, "base_revision": base,
+        "scope": "Repair parser", "allowed_paths": ["src/*"],
+        "authorization": {"source": "fixture operator", "quote": "Repair the parser."}}, AT)
+    save_state(state_path, state)
+
+
+class NoWorkRecoveryTest(unittest.TestCase):
+    # Only Herdr's process transport is fake; all owner and retrospective gates run.
+    _client = fixture.ApplyCommandTest._client
+    #: `_client` binds the fake transport it built, exactly as its own class does.
+    runner: FakeRunner
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        environment = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.root / "xdg")})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.state = self.root / "state.json"
+        self.config = self.root / "config.json"
+        self.config.write_text(json.dumps(fixture.CONFIG))
+        self.agents = {agent.name: agent for agent in load_config(self.config)}
+        self.snapshot = self.root / "snapshot.json"
+        self.snapshot.write_text(json.dumps(fixture.SNAPSHOT))
+        self.common = self.root / "COMMON.md"
+        self.common.write_text("Preserve task scope and report actual evidence.\n")
+        self.brief = self.root / "developer.md"
+        self.note = self.root / "retrospective.md"
+        self.note.write_text("# Fixture retrospective\n" + "".join(
+            "\n## " + section + "\nFixture observations and next action.\n" for section in notes.SECTIONS))
+        supervision.bind(self.state, supervision.identity("fixture-lead", str(self.root), "fixture", pane_id="lead"),
+                         AT, root=supervision.default_state_path().parent / "supervision-bindings")
+        self.herdr = self.root / "herdr"
+        self.herdr.write_text(FAKE_HERDR)
+        self.herdr.chmod(0o755)
+        self.checkout = self.root / "checkout"
+        (self.checkout / "src").mkdir(parents=True)
+        self.git("init", "-q")
+        self.git("config", "user.name", "No-work Fixture")
+        self.git("config", "user.email", "no-work@example.invalid")
+        (self.checkout / "src/parser.py").write_text("result = 1\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "Initial fixture")
+        self.base = self.git("rev-parse", "HEAD")
+        seed_task(self.state, self.base)
+        self.first_report = str(self.root / "first.md")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.checkout), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def invoke(self, args, client=None):
+        out, err = io.StringIO(), io.StringIO()
+        code = main(["--config", str(self.config), "--state", str(self.state), *args],
+                    stdout=out, stderr=err, client=client)
+        return code, out.getvalue(), err.getvalue()
+
+    def args(self, agent, report, identifier, at, *extra, body):
+        self.brief.write_text(body)
+        return ["apply", "--assignments", json.dumps({"developer": agent}), "--task", TASK,
+                "--common", str(self.common), "--brief", "developer=" + str(self.brief),
+                "--report", "developer=" + report, "--dispatch-id", identifier, "--composer-settle", "0",
+                "--now", at, *extra]
+
+    def prepare_retrospective(self, agent, args, client, identifier):
+        """Record the retrospective coverage the real Guard requires for `args`."""
+        at = args[args.index("--now") + 1]
+        request = {"transitions": [{"agent": agent, "role": "developer", "task": TASK,
+            "context": "clear", "model": None, "effort": None,
+            "pane": {"codex": "w3:p1", "claude": "w2:p1", "grok": "w4:p1"}[agent],
+            "brief": str(self.brief), "common": str(self.common), "report": None,
+            "unavailable": "Fixture has no preceding report artifact."}]}
+        check = runtime.check(self.state, load_state(self.state), client, self.agents, request, at)
+        path = self.root / (identifier + "-check.json")
+        path.write_text(json.dumps(check))
+        with notes.lock(self.state):
+            notes.record(self.state, {"id": identifier, "note": str(self.note), "period_start": AT,
+                "period_end": at, "triggers": ["daily", "transition"], "tasks": [TASK], "participants": [agent],
+                "unavailable": {}, "sources": [], "completed": True, "check": str(path)}, check["coverage"], at)
+
+    def body(self, report, worktree=None):
+        """The developer template's worktree field, then the report contract."""
+        return ("Your worktree already exists at `{0}`, on branch `fix/parser`.\n"
+                "Repair the parser and report to `{1}`.\nREPORT: {1}\n").format(worktree or self.checkout, report)
+
+    def launch(self, *argv, live=False):
+        env = {**os.environ, "PY_BIN": sys.executable, "TEAMLEAD_HERDR_BIN": str(self.herdr)}
+        if live:
+            env["FAKE_PANE_LIVE"] = "1"
+        return subprocess.run(["bash", str(LAUNCHER), "--config", str(self.config), "--state", str(self.state), *argv],
+                              env=env, capture_output=True, text=True, check=False)
+
+    def plan(self, fix=None):
+        return self.launch("plan", "--roles", "developer", "--task", TASK, "--snapshot", str(self.snapshot),
+                           "--now", RECOVERED_AT, *(["--fix-round", str(fix)] if fix is not None else []))
+
+    def dispatch_initial(self, body=None):
+        args = self.args("codex", self.first_report, "first", FIRST_AT, body=body or self.body(self.first_report))
+        client = self._client({"codex": "idle"}, sessions={"codex": "codex-native"})
+        self.prepare_retrospective("codex", args, client, "before-first")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["applied"][0]["dispatch_id"]
+
+    def stall(self, agent="codex", report=None, worktree=None):
+        """The saved output of the real wait-report stall classification."""
+        result = subprocess.run(
+            ["bash", str(WAIT_REPORT), "--worktree", str(worktree or self.checkout), "--base", self.base,
+             agent, report or self.first_report],
+            env={**os.environ, "HERDR_ENV": "1", "HERDR_BIN": str(self.herdr), "TEAMLEAD_WAIT_INTERVAL_SEC": "0",
+                 "TEAMLEAD_WAIT_BUDGET_SEC": "0", "TEAMLEAD_BLOCKED_CONFIRM_SEC": "0", "TEAMLEAD_REFUSAL_CONFIRM_SEC": "0"},
+            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["stall"]["class"], "no_work", result.stdout)
+        path = self.root / "wait.json"
+        path.write_text(result.stdout)
+        return path
+
+    def close(self, dispatch, wait):
+        record = self.root / "resolve.json"
+        record.write_text(json.dumps({"id": dispatch, "outcome": "Stalled with no work; pane closed",
+                                      "evidence": [str(wait)]}))
+        result = self.launch("supervision-resolve", "--record", str(record), "--now", CLOSED_AT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def record(self, dispatch, wait, **changes):
+        data = {"dispatch": dispatch, "reason": "Initial developer stalled with no work and its pane closed",
+                "authorization": {"source": "fixture operator", "quote": "Retry the initial assignment."},
+                "evidence": str(wait), **changes}
+        path = self.root / "recover-no-work.json"
+        path.write_text(json.dumps(data))
+        return path
+
+    def recover(self, record, live=False):
+        return self.launch("recover-no-work", "--record", str(record), "--now", RECOVERED_AT, live=live)
+
+    def stalled_and_closed(self, body=None):
+        dispatch = self.dispatch_initial(body)
+        wait = self.stall()
+        self.close(dispatch, wait)
+        return dispatch, wait
+
+    def retry_client(self, statuses, closed="w3:p1"):
+        client = self._client(statuses)
+        self.runner.responses["pane get " + closed] = FakeCompleted(1, "", PANE_GONE)
+        return client
+
+    def retry_args(self, agent, report, identifier, *extra, body=None):
+        return self.args(agent, report, identifier, RETRY_AT, *extra, body=body or self.body(report))
+
+    def test_without_recovery_the_initial_assignment_cannot_be_retried(self):
+        self.stalled_and_closed()
+        result = self.plan()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("already has a developer assignment", result.stderr)
+
+    def test_closed_no_work_initial_assignment_is_retried_once(self):
+        dispatch, wait = self.stalled_and_closed()
+        result = self.recover(self.record(dispatch, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(result.stdout)
+        self.assertEqual((receipt["id"], receipt["task"], receipt["retries"]), (dispatch, TASK, []))
+        result = self.plan()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        retry_report = str(self.root / "retry.md")
+        args = self.retry_args("claude", retry_report, "retry")
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-retry")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        applied = json.loads(out)["applied"][0]
+        self.assertEqual((applied["agent"], applied["fix_round"]), ("claude", None))
+        state = load_state(self.state)
+        self.assertEqual([row["status"] for row in state["recovery"]["dispatches"]], ["applied", "applied"])
+        self.assertEqual(state["recovery"]["no_work_recoveries"][0]["retries"], [applied["dispatch_id"]])
+
+        # One recovery grants one retry: the initial slot is spent again, and
+        # the correction count is untouched.
+        result = self.plan()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("already has a developer assignment", result.stderr)
+        result = self.plan(1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.launch("status")
+        self.assertEqual(json.loads(result.stdout)["tasks"][TASK]["confirmed_fixes"], 0)
+
+        # An identical replay returns the durable receipt and grants nothing,
+        # even though the retry now owns the checkout.
+        (self.checkout / "src/parser.py").write_text("result = 2\n")
+        before = self.state.read_bytes()
+        result = self.recover(self.record(dispatch, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["retries"], [applied["dispatch_id"]])
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(self.plan().returncode, 1)
+        # A different record under the same identity is refused.
+        result = self.recover(self.record(dispatch, wait, reason="Another reason"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("already holds different", result.stderr)
+
+    def test_the_retry_keeps_the_brief_and_takes_a_fresh_report(self):
+        dispatch, wait = self.stalled_and_closed()
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        retry_report = str(self.root / "retry.md")
+        for label, report, body, extra, message in (
+                ("the original report path", self.first_report, None, (), "fresh report path"),
+                ("a reworded brief", retry_report, "Rewrite the parser in {}.\nREPORT: {}\n".format(self.checkout, retry_report), (),
+                 "unchanged brief"),
+                ("a kept context", retry_report, None, ("--no-clear",), "fresh developer context")):
+            with self.subTest(refused=label):
+                before = self.state.read_bytes()
+                client = self.retry_client({"claude": "idle"})
+                code, out, err = self.invoke(self.retry_args("claude", report, "invalid", "--dry-run", *extra, body=body), client)
+                self.assertEqual(code, 1)
+                self.assertEqual(out, "")
+                self.assertIn(message, err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+
+    def test_work_in_the_checkout_or_a_live_pane_refuses_recovery(self):
+        dispatch, wait = self.stalled_and_closed()
+        record = self.record(dispatch, wait)
+        before = self.state.read_bytes()
+        for label, change, live, message in (
+                ("a live pane", None, True, "still exists"),
+                ("an untracked file", lambda: (self.checkout / "src/new.py").write_text("x = 1\n"), False, "changed or untracked"),
+                ("a modified file", lambda: (self.checkout / "src/parser.py").write_text("result = 3\n"), False, "changed or untracked"),
+                ("a staged file", lambda: self.git("add", "src/parser.py"), False, "changed or untracked"),
+                ("a dispatch commit", lambda: (self.git("add", "-A"), self.git("commit", "-qm", "Worker commit")), False,
+                 "beyond the recorded base")):
+            with self.subTest(refused=label):
+                if change is not None:
+                    change()
+                result = self.recover(record, live=live)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(message, result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(self.plan().returncode, 1)
+
+    def test_an_open_enrollment_or_other_stall_class_refuses_recovery(self):
+        dispatch = self.dispatch_initial()
+        wait = self.stall()
+        before = self.state.read_bytes()
+        result = self.recover(self.record(dispatch, wait))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("supervision-resolve", result.stderr)
+        self.close(dispatch, wait)
+        partial = json.loads(wait.read_text())
+        partial["stall"]["class"] = "partial_work"
+        forged = self.root / "partial.json"
+        forged.write_text(json.dumps(partial))
+        result = self.recover(self.record(dispatch, forged))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no_work", result.stderr)
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_the_stalled_checkout_must_equal_the_briefs_worktree_field(self):
+        # Each case builds its brief and COMMON after its own fresh workspace.
+        cases = (("a path the brief's worktree only prefixes",
+                  lambda: (self.body(self.first_report, Path(str(self.checkout) + "-old")), None)),
+                 ("a path only COMMON mentions",
+                  lambda: ("Repair the parser and report to `{0}`.\nREPORT: {0}\n".format(self.first_report),
+                           "Shared checkout for reference: {}\n".format(self.checkout))))
+        for label, build in cases:
+            with self.subTest(refused=label):
+                self.setUp()
+                body, common = build()
+                if common is not None:
+                    self.common.write_text(common)
+                dispatch, wait = self.stalled_and_closed(body)
+                before = self.state.read_bytes()
+                result = self.recover(self.record(dispatch, wait))
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("worktree", result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(self.plan().returncode, 1)
+
+    def test_a_late_original_report_refuses_the_retry_at_apply(self):
+        for label, make in (("a report file", lambda path: path.write_text("Late report\n")),
+                            ("a dangling report link", lambda path: path.symlink_to(self.root / "missing.md"))):
+            with self.subTest(refused=label):
+                self.setUp()
+                dispatch, wait = self.stalled_and_closed()
+                self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+                make(Path(self.first_report))
+                before = self.state.read_bytes()
+                args = self.retry_args("claude", str(self.root / "retry.md"), "retry")
+                client = self.retry_client({"claude": "idle"})
+                self.prepare_retrospective("claude", args, client, "before-retry")
+                before = self.state.read_bytes()
+                code, out, err = self.invoke(args, client)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "")
+                self.assertIn("enrolled report", err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(load_state(self.state)["recovery"]["no_work_recoveries"][0]["retries"], [])
+
+    def test_a_retargeted_worktree_link_refuses_the_retry_at_apply(self):
+        link = self.root / "link"
+        link.symlink_to(self.checkout)
+        dispatch = self.dispatch_initial(self.body(self.first_report, link))
+        wait = self.stall(worktree=link)
+        self.close(dispatch, wait)
+        result = self.recover(self.record(dispatch, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["worktree"], str(self.checkout))
+        # Between recovery and apply the link moves to another clean checkout
+        # at the base, while the recovered checkout gains work.
+        other = self.root / "other"
+        subprocess.run(["git", "clone", "-q", str(self.checkout), str(other)], check=True, capture_output=True)
+        link.unlink()
+        link.symlink_to(other)
+        (self.checkout / "src/new.py").write_text("x = 1\n")
+        retry_report = str(self.root / "retry.md")
+        args = self.retry_args("claude", retry_report, "retry", body=self.body(retry_report, link))
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-retry")
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(out, "")
+        self.assertIn("no longer resolves", err)
+        self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_recovered_refusal_move_is_retried_to_a_third_provider(self):
+        # codex refuses the initial brief, claude takes the one move and
+        # stalls with no work, and its pane closes.
+        first = self.dispatch_initial()
+        receipt = self.root / "refusal.json"
+        receipt.write_text(json.dumps({"agent": "codex", "state": "idle", "report_path": self.first_report,
+            "found": False, "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        record = self.root / "record-refusal.json"
+        record.write_text(json.dumps({"dispatch": first, "receipt": str(receipt)}))
+        code, _, err = self.invoke(["record-refusal", "--record", str(record), "--now", "2026-02-03T10:01:30+00:00"])
+        self.assertEqual(code, 0, err)
+        moved_report = str(self.root / "moved.md")
+        args = self.args("claude", moved_report, "moved", "2026-02-03T10:02:00+00:00", body=self.body(moved_report))
+        client = self._client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-move")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        moved = json.loads(out)["applied"][0]["dispatch_id"]
+        wait = self.stall("claude", moved_report)
+        self.close(moved, wait)
+        result = self.recover(self.record(moved, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.plan().returncode, 0)
+        retry_report = str(self.root / "retry.md")
+        # The provider that refused stays refused.
+        before = self.state.read_bytes()
+        code, _, err = self.invoke(self.retry_args("codex", retry_report, "again", "--dry-run"),
+                                   self.retry_client({"codex": "idle"}, closed="w2:p1"))
+        self.assertEqual(code, 1)
+        self.assertIn("resend to the same provider is refused", err)
+        self.assertEqual(self.state.read_bytes(), before)
+        args = self.retry_args("grok", retry_report, "retry")
+        client = self.retry_client({"grok": "idle"}, closed="w2:p1")
+        self.prepare_retrospective("grok", args, client, "before-retry")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        applied = json.loads(out)["applied"][0]
+        state = load_state(self.state)
+        retry = next(row for row in state["recovery"]["dispatches"] if row["id"] == applied["dispatch_id"])
+        self.assertEqual(retry["refusal_move"]["from"], first)
+        self.assertEqual(state["recovery"]["no_work_recoveries"][0]["retries"], [applied["dispatch_id"]])
+        self.assertEqual(self.plan().returncode, 1)
+        self.assertEqual(json.loads(self.launch("status").stdout)["tasks"][TASK]["confirmed_fixes"], 0)
+
+    def test_an_occupied_retry_report_path_refuses_the_retry(self):
+        for label, make in (("a stale report file", lambda path: path.write_text("Stale report\n")),
+                            ("a dangling report link", lambda path: path.symlink_to(self.root / "missing.md"))):
+            with self.subTest(refused=label):
+                self.setUp()
+                dispatch, wait = self.stalled_and_closed()
+                self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+                retry_report = self.root / "retry.md"
+                make(retry_report)
+                args = self.retry_args("claude", str(retry_report), "retry")
+                client = self.retry_client({"claude": "idle"})
+                self.prepare_retrospective("claude", args, client, "before-retry")
+                before = self.state.read_bytes()
+                code, out, err = self.invoke(args, client)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "")
+                self.assertIn("retry report path", err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(load_state(self.state)["recovery"]["no_work_recoveries"][0]["retries"], [])
+
+    def test_a_recovered_retry_dry_run_contacts_no_herdr(self):
+        dispatch, wait = self.stalled_and_closed()
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        retry_report = str(self.root / "retry.md")
+        client = self.retry_client({"claude": "idle"})
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(self.retry_args("claude", retry_report, "retry", "--dry-run"), client)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["dry_run"])
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.state.read_bytes(), before)
+        # The static checks still run in a dry run.
+        Path(retry_report).write_text("Stale report\n")
+        code, _, err = self.invoke(self.retry_args("claude", retry_report, "retry", "--dry-run"), client)
+        self.assertEqual(code, 1)
+        self.assertIn("retry report path", err)
+        self.assertEqual(self.runner.calls, [])
+
+    def refuse_dispatch(self, dispatch, agent, report, at):
+        receipt = self.root / (dispatch.replace(":", "-") + "-refusal.json")
+        receipt.write_text(json.dumps({"agent": agent, "state": "idle", "report_path": report,
+            "found": False, "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        record = self.root / "record-refusal.json"
+        record.write_text(json.dumps({"dispatch": dispatch, "receipt": str(receipt)}))
+        code, _, err = self.invoke(["record-refusal", "--record", str(record), "--now", at])
+        self.assertEqual(code, 0, err)
+
+    def apply_ok(self, agent, report, identifier, at):
+        args = self.args(agent, report, identifier, at, body=self.body(report))
+        client = self._client({agent: "idle"})
+        self.prepare_retrospective(agent, args, client, "before-" + identifier)
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        return json.loads(out)["applied"][0]["dispatch_id"]
+
+    def test_an_older_not_sent_id_cannot_become_the_retry(self):
+        # The first initial dispatch fails before any input and stays not_sent.
+        args = self.args("codex", self.first_report, "first", FIRST_AT, body=self.body(self.first_report))
+        client = self._client({"codex": "idle"})
+        self.prepare_retrospective("codex", args, client, "before-first")
+        self.runner.set("pane send-text", returncode=1, stderr="injected pre-input failure")
+        self.runner.set("agent prompt codex", returncode=1, stderr="injected pre-input failure")
+        code, _, err = self.invoke(args, client)
+        self.assertEqual(code, 1, err)
+        self.assertEqual([row["status"] for row in load_state(self.state)["recovery"]["dispatches"]], ["not_sent"])
+        # A second initial dispatch is applied, stalls with no work and is recovered.
+        second_report = str(self.root / "second.md")
+        second = self.apply_ok("claude", second_report, "second", "2026-02-03T10:02:00+00:00")
+        wait = self.stall("claude", second_report)
+        self.close(second, wait)
+        self.assertEqual(self.recover(self.record(second, wait)).returncode, 0)
+        # Retrying the older not_sent ID with its original inputs is refused.
+        args = self.retry_args("codex", self.first_report, "first")
+        client = self.retry_client({"codex": "idle"}, closed="w2:p1")
+        self.prepare_retrospective("codex", args, client, "before-reuse")
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 1, out)
+        self.assertIn("fresh --dispatch-id", err)
+        self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(self.state.read_bytes(), before)
+        result = self.launch("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn(TASK, json.loads(result.stdout)["tasks"])
+
+    def test_an_authorized_dispatch_recovered_as_no_work_carries_its_authorization(self):
+        # codex and claude refuse; the operator authorizes grok, which stalls.
+        first = self.dispatch_initial()
+        self.refuse_dispatch(first, "codex", self.first_report, "2026-02-03T10:01:10+00:00")
+        moved_report = str(self.root / "moved.md")
+        moved = self.apply_ok("claude", moved_report, "moved", "2026-02-03T10:01:20+00:00")
+        self.refuse_dispatch(moved, "claude", moved_report, "2026-02-03T10:01:30+00:00")
+        record = self.root / "authorize.json"
+        record.write_text(json.dumps({"id": "authorize-1", "task": TASK, "role": "developer", "fix_round": None,
+            "provider": "grok", "brief": "unchanged", "decision": "Dispatch the unchanged brief to grok.",
+            "authorization": {"source": "fixture operator", "quote": "Send it to grok unchanged."}}))
+        code, _, err = self.invoke(["authorize-refused-dispatch", "--record", str(record), "--now", "2026-02-03T10:01:40+00:00"])
+        self.assertEqual(code, 0, err)
+        authorized_report = str(self.root / "authorized.md")
+        authorized = self.apply_ok("grok", authorized_report, "authorized", "2026-02-03T10:02:00+00:00")
+        wait = self.stall("grok", authorized_report)
+        self.close(authorized, wait)
+        result = self.recover(self.record(authorized, wait))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        retry_report = str(self.root / "retry.md")
+        # The carried authorization keeps its provider restriction.
+        before = self.state.read_bytes()
+        code, _, err = self.invoke(self.retry_args("claude", retry_report, "elsewhere", "--dry-run"),
+                                   self.retry_client({"claude": "idle"}, closed="w4:p1"))
+        self.assertEqual(code, 1)
+        self.assertIn("approves provider grok", err)
+        self.assertEqual(self.state.read_bytes(), before)
+        args = self.retry_args("grok", retry_report, "retry")
+        client = self.retry_client({"grok": "idle"}, closed="w4:p1")
+        self.prepare_retrospective("grok", args, client, "before-retry")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        retry_id = json.loads(out)["applied"][0]["dispatch_id"]
+        state = load_state(self.state)
+        retry = next(row for row in state["recovery"]["dispatches"] if row["id"] == retry_id)
+        self.assertEqual(retry["refusal_move"]["authorization"], "authorize-1")
+        self.assertEqual(state["recovery"]["no_work_recoveries"][0]["retries"], [retry_id])
+        self.assertEqual(self.plan().returncode, 1)
+        # Any other reuse of the authorization stays refused: without the
+        # receipt binding them, two uses read as a consumed authorization.
+        document = json.loads(self.state.read_text())
+        document["recovery"]["no_work_recoveries"] = []
+        self.state.write_text(json.dumps(document))
+        forged = self.state.read_bytes()
+        result = self.launch("status")
+        self.assertIn("reuses a consumed authorization", result.stderr)
+        self.assertNotIn(TASK, result.stdout)
+        self.assertEqual(self.state.read_bytes(), forged)
+
+    def test_an_unbound_second_initial_row_is_refused_on_read(self):
+        dispatch, wait = self.stalled_and_closed()
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        args = self.retry_args("claude", str(self.root / "retry.md"), "retry")
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-retry")
+        code, _, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.launch("status").returncode, 0)
+        document = json.loads(self.state.read_text())
+        document["recovery"]["no_work_recoveries"][0]["retries"] = []
+        self.state.write_text(json.dumps(document))
+        forged = self.state.read_bytes()
+        result = self.launch("status")
+        self.assertIn("consumed twice", result.stderr)
+        self.assertNotIn(TASK, result.stdout)
+        self.assertEqual(self.state.read_bytes(), forged)
+
+
+class NoWorkStoreMigrationTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name) / "state.json"
+        seed_task(self.state, "a" * 40)
+        document = json.loads(self.state.read_text())
+        document["recovery"]["schema_version"] = 9
+        del document["recovery"]["no_work_recoveries"]
+        self.document = document
+
+    def status(self):
+        return subprocess.run(["bash", str(LAUNCHER), "--state", str(self.state), "status"],
+                              env={**os.environ, "PY_BIN": sys.executable}, capture_output=True, text=True, check=False)
+
+    def test_a_version_nine_store_gains_the_empty_collection(self):
+        self.state.write_text(json.dumps(self.document))
+        result = self.status()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(TASK, json.loads(result.stdout)["tasks"])
+        migrated = json.loads(self.state.read_text())["recovery"]
+        self.assertEqual((migrated.pop("schema_version"), migrated.pop("no_work_recoveries")), (10, []))
+        self.assertEqual(migrated, {key: value for key, value in self.document["recovery"].items() if key != "schema_version"})
+
+    def test_a_version_nine_store_carrying_receipts_is_refused_untouched(self):
+        self.document["recovery"]["no_work_recoveries"] = []
+        self.state.write_text(json.dumps(self.document))
+        before = self.state.read_bytes()
+        result = self.status()
+        self.assertIn("unowned newer records", result.stderr)
+        self.assertNotIn(TASK, result.stdout)
+        self.assertEqual(self.state.read_bytes(), before)
+
+
+if __name__ == "__main__":
+    unittest.main()

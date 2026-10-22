@@ -320,7 +320,7 @@ class DeveloperRefusalTest(unittest.TestCase):
                                      self._client({"codex": "idle"}, sessions={"codex": "later-observation"}))
         self.assertEqual(code, 1)
         self.assertEqual(out, "")
-        self.assertIn("was refused and bore no work", err)
+        self.assertIn("bore no work (a provider refusal", err)
         self.assertEqual(self.state.read_bytes(), before)
 
     def test_operator_authorization_allows_one_more_dispatch_at_the_same_number(self):

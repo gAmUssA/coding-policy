@@ -57,6 +57,7 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
             })
         store["schema_version"] = 8
         del store["legacy_ruling_recoveries"]
+        del store["no_work_recoveries"]
         self.write_state()
 
     def write_state(self):
@@ -91,8 +92,9 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
         restored, usable = load_state_checked(self.path)
         self.assertTrue(usable)
         expected = copy.deepcopy(before)
-        expected["recovery"]["schema_version"] = 9
+        expected["recovery"]["schema_version"] = 10
         expected["recovery"]["legacy_ruling_recoveries"] = []
+        expected["recovery"]["no_work_recoveries"] = []
         self.assertEqual(restored, expected)
         self.assertEqual(restored["recovery"]["checkpoints"], before["recovery"]["checkpoints"])
         self.assertEqual(restored["assignments"], before["assignments"])
@@ -102,11 +104,12 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
 
     def test_schema9_receipts_and_appended_history_are_preserved(self):
         self.install_receipts()
+        # Version 10 adds only the empty no-work collection.
         before = copy.deepcopy(self.state)
-        raw = self.path.read_bytes()
+        before["recovery"].update(schema_version=10, no_work_recoveries=[])
         restored, usable = load_state_checked(self.path)
         self.assertTrue(usable)
-        self.assertEqual(self.path.read_bytes(), raw)
+        raw = self.path.read_bytes()
         self.assertEqual(restored, before)
         self.assertEqual(len(restored["recovery"]["legacy_ruling_recoveries"]), 1)
         self.assertEqual(restored["recovery"]["legacy_ruling_recoveries"][0]["checkpoints"],
@@ -192,7 +195,7 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
         del payload["recovery"]["legacy_ruling_recoveries"]
         cases.append(payload)
         payload = json.loads(self.path.read_bytes())
-        payload["recovery"]["schema_version"] = 10
+        payload["recovery"]["schema_version"] = 11
         cases.append(payload)
         for case in cases:
             encoded = json.dumps(case, indent=2).encode()
@@ -242,7 +245,7 @@ class SchemaNineCompatibilityTests(unittest.TestCase):
         # A store one version ahead of this build is what an older reader
         # meets after an upgrade elsewhere; it must not be read or rewritten.
         self.install_receipts()
-        self.state["recovery"]["schema_version"] = 10
+        self.state["recovery"]["schema_version"] = 11
         self.write_state()
         before = self.path.read_bytes()
         _, usable = load_state_checked(self.path, warn=lambda _: None, persist_migration=False)

@@ -23,7 +23,7 @@ from types import SimpleNamespace
 from . import __version__
 from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
-from . import attention, composition, engagement, gates, historical, memory, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
+from . import attention, composition, engagement, gates, historical, memory, no_work_recovery, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
 from .errors import ConfigError, PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
@@ -65,6 +65,12 @@ EPILOG = (
 def now_iso():
     """The wall clock, read here and nowhere else in the package."""
     return datetime.now(timezone.utc).isoformat()
+
+
+#: Recovery subcommands whose help says more than the generic line.
+RECOVERY_HELP = {
+    "recover-no-work": "Permit one retry of an initial developer assignment whose pane closed after a no_work stall; see dispatch-recovery.md No-Work Stalls.",
+}
 
 
 def add_measure_tuning(parser):
@@ -371,8 +377,8 @@ def build_parser():
     gates_parser.add_argument("--report", required=True, metavar="PATH", help="Absolute path of the worker report to check.")
     gates_parser.add_argument("--require", action="append", default=[], metavar="NAME", help="A gate name the report must list; repeatable.")
 
-    for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist"):
-        record_parser = sub.add_parser(command, parents=[common], help="Record owner-managed {} evidence.".format(command))
+    for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "recover-no-work", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist"):
+        record_parser = sub.add_parser(command, parents=[common], help=RECOVERY_HELP.get(command, "Record owner-managed {} evidence.".format(command)))
         record_parser.add_argument("--record", required=True, metavar="FILE", help="Structured evidence JSON; see dispatch-recovery.md.")
         record_parser.add_argument("--now", metavar="ISO8601")
     sub.add_parser("status", parents=[common], help="Show implementation budgets and paused work separately from active audit workers.")
@@ -918,6 +924,11 @@ def cmd_apply(args, client=None, warn=None, trace=None):
         if "tiers" in document and saved_tiers != tiers:
             raise UsageError("Plan tiers differ from current config or fix context; re-run plan before dispatch.", {})
     client = client if client is not None else _client(args, trace=trace)
+    if args.task and "developer" in assignments:
+        no_work_recovery.prepare(state_path, state, args.task, args.fix_round,
+                                 recovery.brief_identity(paths, "developer", reports.get("developer")),
+                                 reports.get("developer"), args.no_clear, args.retain_context,
+                                 None if args.dry_run else client)
 
     if args.retain_specialist:
         engagement.require_followup(state, state_path, assignments)
@@ -948,6 +959,9 @@ def cmd_apply(args, client=None, warn=None, trace=None):
             return
         record = {**dispatches[step["role"]], "observed_before": observed,
                   "brief": step["brief"], "common": step["common"]}
+        if step["role"] == "developer":
+            no_work_recovery.recheck(state_path, state, args.task, args.fix_round, reports.get("developer"),
+                                     record["id"], client)
         if supervised:
             _supervision_enrollment(state_path, record["id"], args.task, step["role"], step["agent"], reports[step["role"]], at,
                                     pane_id=step["pane_id"], persist=True)
@@ -1164,6 +1178,9 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
                                          report, aliases=aliases)
     elif args.command == "recover-report":
         result = report_delivery.recover(store, history, data, at)
+    elif args.command == "recover-no-work":
+        client = client if client is not None else _client(args, trace=trace)
+        result = no_work_recovery.record(state_path, state, data, at, client)
     elif args.command == "assess-specialist":
         result = engagement.record_assessment(state, state_path, data, at)
     elif args.command == "import-correction":
@@ -1421,7 +1438,7 @@ COMMANDS = {
     "apply": cmd_apply,
     "state": cmd_state,
     "status": cmd_status,
-    **{command: cmd_recovery for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist")},
+    **{command: cmd_recovery for command in ("task", "checkpoint", "authorize-corrections", "recover-context", "recover-role-clear", "record-report", "record-refusal", "authorize-refused-dispatch", "diagnose", "reconcile", "recover-no-work", "record-release-clear", "import-correction", "record-historical-review", "recover-report", "assess-specialist")},
     "detect-triggers": cmd_detect_triggers,
     "preflight": cmd_preflight,
     "validate-partition": cmd_validate_partition,

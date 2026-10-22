@@ -293,6 +293,7 @@ class RoleClearTests(fixture.fixture.CliCase):
         del state["recovery"]["refusal_authorizations"]
         del state["recovery"]["diagnoses"]
         del state["recovery"]["legacy_ruling_recoveries"]
+        del state["recovery"]["no_work_recoveries"]
         for row in state["recovery"]["dispatches"]:
             row.pop("provider", None)
             row.pop("brief_identity", None)
@@ -302,7 +303,7 @@ class RoleClearTests(fixture.fixture.CliCase):
         code, _, err = self.invoke(["state"])
         self.assertEqual(code, 0, err)
         expected = copy.deepcopy(state)
-        expected["recovery"].update(schema_version=9, role_clearances=[], delivery_recoveries=[], refusal_authorizations=[], diagnoses=[], legacy_ruling_recoveries=[])
+        expected["recovery"].update(schema_version=10, role_clearances=[], delivery_recoveries=[], refusal_authorizations=[], diagnoses=[], legacy_ruling_recoveries=[], no_work_recoveries=[])
         self.assertEqual(self.saved(), expected)
 
 

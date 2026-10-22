@@ -134,7 +134,7 @@ def record_role_clear(store, assignments, data, at, observed_session):
     if latest is None or latest[0] != data["assignment_index"] or data["next_fix"] != ledger.confirmed_fix(assignments, data["task"], store) + 1:
         raise UsageError("This developer attempt is no longer the preceding correction; never reuse a consumed attempt or stale recovery.", {})
     if data["assignment_index"] in ledger.refused_developer_indices(data["task"], store):
-        raise UsageError("That developer dispatch was refused and bore no work, so no correction follows it; move the unchanged brief to one other provider at the same number instead.", {})
+        raise UsageError("That developer dispatch bore no work (a provider refusal or a recovered no_work stall), so no correction follows it; send its unchanged brief again at the same number instead.", {})
     if timestamp(at, "recovery time") < timestamp(clear["at"], "clearing time"):
         raise UsageError("Recovery cannot precede the clearing assignment; preserve the actual observation times.", {})
     if any(row["task"] == data["task"] and row["next_fix"] == data["next_fix"] for row in store["role_clearances"]):

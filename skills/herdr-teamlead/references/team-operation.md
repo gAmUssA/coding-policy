@@ -273,6 +273,7 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - Classify what the stalled worker left in its own checkout before reading anything else off it
 - A worktree mid-operation, staged, modified or holding untracked files is recoverable partial work, preserved as evidence
 - A clean worktree with no commits against the dispatch's recorded base produced nothing; the dispatch is a `not_sent`-equivalent and may be retried
+- An initial developer dispatch is retried only after `recover-no-work` records it; see `skills/herdr-teamlead/references/dispatch-recovery.md` No-Work Stalls
 - An absent base establishes no such thing, and the classification says so rather than reading a clean tree as retryable
 - Commits present and unpushed are completed work with a failed transport, recovered through `skills/herdr-teamlead/references/dispatch-recovery.md`
 - Commits present and already pushed are completed work whose report did not arrive; they are recovery evidence, never a retryable dispatch
