@@ -604,12 +604,12 @@ and grants nothing more. A different record for the same dispatch is refused.
 Exit 1 is a refused or unverifiable record; exit 2 is CLI usage.
 
 Then use normal `plan` and `apply` for the same task without `--fix-round`.
-Use a fresh dispatch ID and report path. Keep the COMMON and developer brief
+Use a fresh dispatch ID and a report path that does not exist yet, not even as a dangling link. Keep the COMMON and developer brief
 unchanged apart from that report path, and use a fresh context: no
 `--retain-context`, no `--no-clear`. `apply` re-runs every live check (pane
 gone, enrollment resolved, report absent, checkout clean at the base) before
 any pane input and again immediately before the retry's reservation, which
-binds the retry to the receipt in the same save.
+binds the retry to the receipt in the same save. A dry run runs every static and filesystem check but no Herdr probe.
 The receipt keeps the checkout's canonical real path; each retry gate first requires the brief's worktree field to still resolve to it. When the stalled dispatch was itself a refusal move, the retry carries the same refused brief to a provider that has not refused it. One receipt permits one retry. A retry that was `not_sent` may be replaced.
 The original row keeps its assignment and dispatch history. The correction
 count does not move, and later corrections start at fix 1. Partial, committed,

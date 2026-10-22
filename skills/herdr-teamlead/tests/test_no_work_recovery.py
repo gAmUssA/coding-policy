@@ -446,6 +446,45 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.assertEqual(self.plan().returncode, 1)
         self.assertEqual(json.loads(self.launch("status").stdout)["tasks"][TASK]["confirmed_fixes"], 0)
 
+    def test_an_occupied_retry_report_path_refuses_the_retry(self):
+        for label, make in (("a stale report file", lambda path: path.write_text("Stale report\n")),
+                            ("a dangling report link", lambda path: path.symlink_to(self.root / "missing.md"))):
+            with self.subTest(refused=label):
+                self.setUp()
+                dispatch, wait = self.stalled_and_closed()
+                self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+                retry_report = self.root / "retry.md"
+                make(retry_report)
+                args = self.retry_args("claude", str(retry_report), "retry")
+                client = self.retry_client({"claude": "idle"})
+                self.prepare_retrospective("claude", args, client, "before-retry")
+                before = self.state.read_bytes()
+                code, out, err = self.invoke(args, client)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "")
+                self.assertIn("retry report path", err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(load_state(self.state)["recovery"]["no_work_recoveries"][0]["retries"], [])
+
+    def test_a_recovered_retry_dry_run_contacts_no_herdr(self):
+        dispatch, wait = self.stalled_and_closed()
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        retry_report = str(self.root / "retry.md")
+        client = self.retry_client({"claude": "idle"})
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(self.retry_args("claude", retry_report, "retry", "--dry-run"), client)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["dry_run"])
+        self.assertEqual(self.runner.calls, [])
+        self.assertEqual(self.state.read_bytes(), before)
+        # The static checks still run in a dry run.
+        Path(retry_report).write_text("Stale report\n")
+        code, _, err = self.invoke(self.retry_args("claude", retry_report, "retry", "--dry-run"), client)
+        self.assertEqual(code, 1)
+        self.assertIn("retry report path", err)
+        self.assertEqual(self.runner.calls, [])
+
     def test_an_unbound_second_initial_row_is_refused_on_read(self):
         dispatch, wait = self.stalled_and_closed()
         self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)

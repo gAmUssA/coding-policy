@@ -118,10 +118,24 @@ def _report_absent(binding):
 
 
 def _live(binding, worktree, base, client):
-    """Every live fact the recovery rests on, read now, against the canonical checkout."""
+    """Every live fact the recovery rests on, read now, against the canonical checkout.
+
+    `client` None is a dry run: it reads no Herdr state, so the pane probe
+    waits for the real apply, which repeats every check.
+    """
     _report_absent(binding)
-    _pane_gone(client, binding["pane_id"])
+    if client is not None:
+        _pane_gone(client, binding["pane_id"])
     _clean_checkout(worktree, base)
+
+
+def _fresh_report(report, binding, row):
+    """The retry's report path is new and holds nothing a wait could misread."""
+    if not isinstance(report, str) or Path(report).resolve() == Path(binding["report"]).resolve():
+        refuse("A no-work retry needs a fresh report path; the original one belongs to dispatch {}.".format(row["id"]))
+    # `is_symlink` also catches a dangling link, which `exists` misses.
+    if Path(report).exists() or Path(report).is_symlink():
+        refuse("The retry report path {} already exists; remove it or choose a fresh path so a stale file is never read as delivery.".format(report))
 
 
 def _binding(state_path, row):
@@ -212,7 +226,11 @@ def _open_receipt(store, assignments, task):
 
 
 def prepare(state_path, state, task, fix_round, identity, report, no_clear, retain_context, client):
-    """Recheck a pending retry's evidence before apply creates or sends anything."""
+    """Recheck a pending retry's evidence before apply creates or sends anything.
+
+    A dry run passes `client` None: every static and filesystem check runs,
+    the Herdr pane probe does not.
+    """
     if fix_round is not None or task is None:
         return
     saved = _open_receipt(state["recovery"], state["assignments"], task)
@@ -224,8 +242,7 @@ def prepare(state_path, state, task, fix_round, identity, report, no_clear, reta
     if identity != row.get("brief_identity"):
         refuse("A no-work retry sends the unchanged brief; only its report path may differ.")
     binding = _binding(state_path, row)
-    if not isinstance(report, str) or Path(report).resolve() == Path(binding["report"]).resolve():
-        refuse("A no-work retry needs a fresh report path; the original one belongs to dispatch {}.".format(row["id"]))
+    _fresh_report(report, binding, row)
     _retry_gate(state, saved, row, binding, client)
 
 
@@ -237,7 +254,7 @@ def _retry_gate(state, saved, row, binding, client):
     _live(binding, saved["worktree"], ledger.task_record(state["recovery"], row["task"])["base_revision"], client)
 
 
-def recheck(state_path, state, task, fix_round, client):
+def recheck(state_path, state, task, fix_round, report, client):
     """Repeat the live checks immediately before a retry's reservation."""
     if fix_round is not None or task is None:
         return
@@ -245,7 +262,9 @@ def recheck(state_path, state, task, fix_round, client):
     if saved is None:
         return
     row = _source(state["recovery"], saved["id"])
-    _retry_gate(state, saved, row, _binding(state_path, row), client)
+    binding = _binding(state_path, row)
+    _fresh_report(report, binding, row)
+    _retry_gate(state, saved, row, binding, client)
 
 
 def reserve(store, record_row, at):
