@@ -1,6 +1,0 @@
----
-bump: patch
----
-### Fixed
-
-- **`hooks/bounded-run.sh` holds its deadline in wall-clock time on a loaded machine**. The runner counted its deadline in polls of `sleep 0.1`, but every poll also forks `ps` and `awk`. Under load those forks outlast the sleep, so the deadline stretched with the load: a 1s deadline plus 2s grace took about 6s with ten suites running in parallel. That made `hooks/tests/test_check_git_sync.sh` flaky in a loaded parallel test run, because its ssh-deadline and nested-deadline cases ran past their 20s guard. It also failed `hooks/tests/test_bounded_run.sh` whenever its 8s sleepers finished first. The deadline now also ends once `$SECONDS` shows more than the budget elapsed, so it never fires early and fires under two seconds plus one poll late. The SIGTERM graces stay counted in polls. They stretch with the load, so a nested runner's shorter grace still ends before its outer runner escalates to SIGKILL. Capping them too failed the nested case once in 30 loaded runs. The bounded-run test's sleepers now run 60s so a stretched grace cannot outlast them. A new case 12 puts a fake `ps` that takes 2s per call on the process boundary. It fails before the fix (exit 0, a 15s command ran to completion under a 1s deadline) and passes after.
