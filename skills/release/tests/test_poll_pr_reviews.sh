@@ -720,6 +720,34 @@ t_ci_status_fail_with_cancel_is_failure() {
   assert_eq "a real fail still fails next to a cancel" "failure" "$ci"
 }
 
+# --- review lanes (docs/adr/0010-review-lanes.md) ---
+# Codex and Claude both post as github-actions[bot]; reviews.codex must read
+# the codex-policy lane only, and the lanes view must report every lane.
+t_main_reads_codex_verdict_per_lane() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REVIEWS_BODY='[
+    {"id":1,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"CHANGES_REQUESTED","submitted_at":"2026-10-20T10:00:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:codex-policy-review:v1 -->\nPolicy loaded: 30 rule files. One violation."},
+    {"id":2,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:05:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:claude-quality-review:v1 -->\nNo correctness issues found."}]'
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_REVIEWS_BODY
+  assert_eq "reviews.codex state" "CHANGES_REQUESTED" "$(jq -r '.reviews.codex.state' <<<"$out")" || return 1
+  assert_eq "codex lane gating"   "true"              "$(jq -r '.lanes["codex-policy"].gating' <<<"$out")" || return 1
+  assert_eq "claude lane state"   "COMMENTED"         "$(jq -r '.lanes["claude-quality"].state' <<<"$out")" || return 1
+  assert_eq "claude lane gating"  "false"             "$(jq -r '.lanes["claude-quality"].gating' <<<"$out")" || return 1
+  assert_eq "copilot lane state"  "none"              "$(jq -r '.lanes.copilot.state' <<<"$out")"
+}
+
+t_main_unmarked_review_is_codex_lane() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REVIEWS_BODY='[{"id":3,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:00:00Z","commit_id":"'"$HEAD_SHA"'","body":"Policy loaded: 30 rule files. All rules pass."}]'
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_REVIEWS_BODY
+  assert_eq "legacy review is codex" "COMMENTED" "$(jq -r '.reviews.codex.state' <<<"$out")" || return 1
+  assert_eq "claude lane empty"      "none"      "$(jq -r '.lanes["claude-quality"].state' <<<"$out")"
+}
+
 # --- driver ---
 
 echo "== poll-pr-reviews.sh tests =="
@@ -772,6 +800,8 @@ run "fetch_requested_logins filters the raw GraphQL response"         t_fetch_re
 run "a non-integer PR number is refused before any call"              t_non_integer_pr_number_is_refused_before_any_call
 run "main marks a lane nobody requested (#369)"                       t_main_marks_an_unrequested_lane
 run "main marks a requested-and-pending lane (#369)"                  t_main_marks_a_pending_lane_requested
+run "main reads the Codex verdict from its own lane"                  t_main_reads_codex_verdict_per_lane
+run "main classifies an unmarked legacy review as Codex"              t_main_unmarked_review_is_codex_lane
 
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="
 echo "test-summary: passed=${PASS_COUNT} failed=${FAIL_COUNT} token=${SUMMARY_TOKEN}"
