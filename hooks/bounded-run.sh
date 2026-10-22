@@ -32,6 +32,12 @@ TRAP_GRACE_SEC=1
 #: Seconds between liveness checks, and how many checks make one second.
 POLL_SEC=0.1
 POLLS_PER_SEC=10
+# A poll costs its sleep plus the ps/awk forks, so on a loaded machine
+# POLLS_PER_SEC polls take longer than a second. The deadline therefore also
+# ends once the wall clock ($SECONDS, whole seconds) shows more than its
+# seconds elapsed: never early, and under two seconds plus one poll late.
+# The SIGTERM graces stay counted in polls and stretch with the load, so a
+# nested runner's TRAP_GRACE_SEC still ends before its outer KILL_GRACE_SEC.
 
 #: The managed process group; empty until the command starts.
 PGID=""
@@ -41,7 +47,7 @@ main() {
     printf 'bounded-run: usage: bounded-run.sh <seconds> <command> [args...]\n' >&2
     return 125
   fi
-  local budget="$1" rc=0 i leader_done=0
+  local budget="$1" rc=0 i leader_done=0 start
   shift
 
   # A runner stopped from outside (an outer runner's deadline, a cancelled
@@ -51,6 +57,7 @@ main() {
 
   # Job control gives the background command its own process group (pgid ==
   # its pid), so `kill -- -<pgid>` reaches every descendant that stays in it.
+  start=$SECONDS
   set -m
   "$@" &
   PGID=$!
@@ -66,6 +73,7 @@ main() {
     if (( leader_done )) && ! group_alive; then
       return "$rc"
     fi
+    (( SECONDS - start > budget )) && break
     (( i == budget * POLLS_PER_SEC )) || sleep "$POLL_SEC"
   done
   stop_group "$KILL_GRACE_SEC"
