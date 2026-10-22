@@ -20,7 +20,7 @@ alwaysApply: true
 - Applies when a gating bot that cannot `APPROVE` (`github-actions[bot]` — GitHub returns HTTP 422) re-reviews clean but its earlier `CHANGES_REQUESTED` keeps the merge `BLOCKED` until dismissed
 - Preconditions (all required):
   1. The dismissed review is a `CHANGES_REQUESTED` from a bot on the `GATING_BOTS` allowlist in `skills/release/dismiss-stale-reviews.sh`, never a human reviewer
-  2. The same bot posted a later all-clear on the PR — the accepting states are the script's decision predicate, not restated here; `DISMISSED` or `PENDING` is not an all-clear
+  2. The same review lane (`skills/release/review-lanes.sh`) posted a later all-clear on the PR — the accepting states are the script's decision predicate, not restated here; `DISMISSED` or `PENDING` is not an all-clear
 - Deterministic form is `skills/release/dismiss-stale-reviews.sh`; a hand dismissal meeting both preconditions is equally sanctioned
 - Every other dismissal still gates: a bot `CHANGES_REQUESTED` no all-clear superseded, or any human's change request, blocks the merge until resolved through review
 

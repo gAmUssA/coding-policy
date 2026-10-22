@@ -32,7 +32,9 @@ description: Review findings carry a severity — blocking gates the merge, advi
 - Only advisory findings → the reviewer posts `COMMENTED` and the merge is allowed
 - The policy reviewer's posted state already encodes this — the event is derived from per-finding severity (see the `skills/onboard-repo/templates/post-review.sh` header; consumers carry a copy at `.github/codex-review/post-review.sh`)
 - The merge watcher gates on the policy reviewer's `CHANGES_REQUESTED` alone (see `skills/release/watch-pr-reviews.sh` header)
+- Each verdict is read per review lane, never per login (`skills/release/review-lanes.sh`)
 - Copilot never gates
+- The Claude quality lane is advisory until `docs/adr/0010-review-lanes.md` promotes it
 
 ## Judge-Accepted Defect Carve-Out
 

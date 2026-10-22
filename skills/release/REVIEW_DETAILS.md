@@ -8,6 +8,7 @@ Reference for Step 4 of the `release` skill — how the two PR reviewers are wir
 
 - **Trigger:** `pull_request` `opened` / `synchronize` / `reopened` — reviews on open and re-reviews each pushed commit. Fork PRs are skipped (no secret access).
 - **Authorship:** submitted with the workflow's `GITHUB_TOKEN`, so the author is `github-actions[bot]` everywhere.
+- **Lane marker:** `post-review.sh` opens the body with `<!-- coding-policy:codex-policy-review:v1 -->`, so `skills/release/review-lanes.sh` tells this lane from another reviewer posting as `github-actions[bot]`. Unmarked older reviews fall back to this lane by login (`docs/adr/0010-review-lanes.md`).
 - **Verdict:** derived from per-finding severity by `post-review.sh` — any blocking finding posts `REQUEST_CHANGES`, advisory-only posts `COMMENT`, a clean pass posts `APPROVE`.
 - **APPROVE limitation:** `github-actions[bot]` cannot `APPROVE` (GitHub returns HTTP 422), so a clean pass falls back to `COMMENT`. A later `COMMENT` never supersedes an earlier `CHANGES_REQUESTED` in GitHub's merge gate, so Step 7 dismisses the stale request via `skills/release/dismiss-stale-reviews.sh`.
 - **Auth / cost:** the token is read only from the secret at runtime and deleted before the post step; Codex refreshes the access token in-memory. If the refresh token expires, the review fails loudly — re-seed with `gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json` (the `target` from `skills/release/origin-repo.sh`).
