@@ -33,7 +33,7 @@ role; a single-seat round needs none.
 
 ## Validate before planning
 
-Run it through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
+Run it through the installed-plugin invocation in `skills/herdr-teamlead/references/round-setup.md`
 Step 3. The argument contract:
 
 ```text

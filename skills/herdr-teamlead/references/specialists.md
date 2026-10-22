@@ -89,7 +89,7 @@ an omitted field is not. Classification rules are in
 `detect` and `cli_surface` docstrings.
 
 Run it before `plan`, with the roles and requirements that round intends,
-through the installed-plugin invocation in `skills/herdr-teamlead/SKILL.md`
+through the installed-plugin invocation in `skills/herdr-teamlead/references/round-setup.md`
 Step 3. The argument contract:
 
 ```text

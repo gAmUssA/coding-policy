@@ -1,7 +1,8 @@
 # Round Setup Reference
 
-Detailed setup contracts and examples for Steps 2–7 of `skills/herdr-teamlead/SKILL.md`.
-The skill retains the execution order and continuation gates.
+Detailed setup contracts, commands and examples for Steps 2–7 of
+`skills/herdr-teamlead/SKILL.md`. The skill retains the execution order and
+continuation gates; each step's command block lives here.
 
 Step 5's brief-completeness requirements apply to every composed brief: identify
 every issue, finding, file, and prior report in full. Phase 2 names the pushed
@@ -17,6 +18,10 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" preflight [--config <config-file>] 
   --repo <repo-path> --slug <owner/repo> \
   [--base <recorded-base> [--head <pushed-head>] [--planned <planned.json>]]
 ```
+
+A round on a non-default config passes the same `--config <config-file>` to
+every `preflight`, `measure`, `plan`, `start-judge-worker.sh` and `apply` call;
+the default is `$XDG_CONFIG_HOME/teamlead/config.json`.
 
 Gathers the five pre-planning facts in one run. Each fact reuses its standalone
 owner; the sections below document those owners for recovery and for a
@@ -40,6 +45,7 @@ standalone rerun.
 - The headroom step is a real `measure`: it sends usage commands to idle
   workers and saves the snapshot to `--state`. It is skipped when the roster is
   empty or unavailable.
+  Busy workers are skipped; unmeasured billing stays `unknown`.
 - `--head` and `--planned` require `--base`. `--herdr-bin` also points
   `roster.sh` at that binary; `GH_BIN` reaches `verify-authority.sh` from the
   environment. `--now` fixes the check and snapshot time. The measure tuning
@@ -57,6 +63,38 @@ standalone rerun.
 | `retrospective_due`, `retrospective_unavailable` | `skills/herdr-teamlead/references/retrospectives.md` |
 | `headroom_failed`, `headroom_unavailable` | Headroom below |
 | `trigger_declaration`, `triggers_unclassified` | `skills/herdr-teamlead/references/specialists.md` |
+
+### Route the Verdict
+
+- **Non-zero exit** — report the diagnostic, fix the named argument or config,
+  and rerun.
+- **`verdict: "ready"`** — continue with After a Ready Verdict below.
+- **`verdict: "stop"`** — read every `read_next` reference, then resolve each
+  `stops` entry:
+  - `roster_empty`, `roster_unavailable`, `authority_failed` — report the
+    message verbatim and finish here.
+  - `authority_not_owned` — reuse explicit per-action operator permission;
+    absent permission, remain read-only or finish here.
+  - `retrospective_due`, `retrospective_unavailable` — complete or reconcile the
+    retrospective, then rerun the preflight.
+  - `headroom_failed`, `headroom_unavailable` — obtain the missing readings
+    before relying on those seats.
+  - `trigger_declaration`, `triggers_unclassified` — write the declaration or
+    pass `--planned`, then rerun the preflight.
+
+### After a Ready Verdict
+
+Record the `authority` evidence under Authority below. Record task
+authorization and permitted actions under the same section. Create or resume
+the stable ledger under `skills/herdr-teamlead/references/task-ledger.md`;
+record its absolute path before dispatch. Apply the accepted-behavior, resume
+and supervision binding requirements at the end of Authority.
+
+Record staffing gaps under Roster below. Leave unused specialist profiles
+unlaunched. Never duplicate targets or fold verification onto a contributor.
+Start workers in YOLO mode under `skills/herdr-teamlead/references/model-tiers.md`;
+preserve it on relaunch. Verify live permission flags before dispatch,
+including existing workers. Proceed immediately to Step 3.
 
 ### Roster
 
@@ -171,6 +209,8 @@ before relying on its role (`headroom_failed`).
 Choose the next needed responsibilities before selecting workers. Consult the
 profiles and requirement contract in `skills/herdr-teamlead/references/specialists.md`; available
 profiles need no activation until a bounded question or deliverable warrants it.
+Supply its requirements file for specialized work. Keep the developer reserved
+through early fixes; schedule consultation and verification as the task needs them.
 
 Step 2's preflight lists the fired triggers without a staffing check. Run
 `detect-triggers` against the task's base, with the roles and requirements
@@ -184,20 +224,60 @@ plan only once it exits 0. The declaration's fields, the
 decisions file and the answers each trigger accepts are in
 `skills/herdr-teamlead/references/specialists.md`.
 
+Staff each fired trigger in the roles below or record a decision with its
+reason, then confirm with the staffing check. Pass the same `--planned` for a
+pre-implementation round:
+
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" detect-triggers \
+  --repo <repo-path> --base <recorded-base> [--head <pushed-head>] \
+  --roles <role[,role...]> [--requirements <requirements.json>] \
+  [--planned <planned.json>] [--decisions <decisions.json>]
+```
+
+Exit 0 means every fired trigger is staffed or answered. On exit 1, read the
+stderr object: an absent declaration is written first (`skills/herdr-teamlead/references/specialists.md`),
+and an `unaddressed_trigger` is staffed in the roles below or answered by a
+recorded decision with its reason. Re-run the command with the updated
+declaration, roles, requirements and decisions after every such change, and
+plan only once it exits 0.
+
+A round that will split its review surface validates the partition first:
+
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" validate-partition \
+  --repo <repo-path> --base <recorded-base> [--head <pushed-head>] \
+  --partition <partition.json>
+```
+
+Exit 1 names every unowned path, every overlap and every slice owning nothing,
+in one run. Fix the partition and re-run; plan only once it exits 0. The
+document's format, the ownership payload and the seating it produces are in
+`skills/herdr-teamlead/references/review-partition.md`.
+
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/teamlead.sh" plan [--config <config-file>] \
   --roles <role[,role...]> [--requirements <requirements.json>] \
-  [--exclude <role>=<agent>[,<agent>...]]... \
+  [--exclude <role>=<agent>[,<agent>...]]... [--judge-mode adjudication|diagnosis] \
   [--round <role>=<round-type>] [--round-context <evidence.json>] \
+  [--snapshot <measure-output>] \
   --task <task-id> [--fix-round <N>] [--correction-plan <id> --work <work.json>]
 ```
+
+A judge seat declares its mode: `adjudication` rules on a contested verdict,
+`diagnosis` on the investigator's assessment at an exhausted allowance. Pass the
+same `--judge-mode` to `apply`. `--snapshot` plans against a named `measure`
+output instead of the newest saved one; the judge round passes its fresh
+re-measurement (`skills/herdr-teamlead/references/judge-round.md`).
 
 Pure computation over the newest snapshot plus the assignment ledger. Contacts
 no agent and appends no assignments. Loading older state may perform owner migrations.
 Emits the assignment plan with `rationale`, `snapshot_ref`, task context, and
 normalized `requirements` when supplied. Qualified tier data accompanies tiered plans.
-Exit 1 names the reason it could not plan.
+Exit 1 names the reason it could not plan; resolve the diagnostic before continuing.
 
 `--exclude` bars workers from one responsibility and repeats, once per role.
 The owner applies recorded contribution exclusions to task-bound reviewer and
@@ -246,7 +326,7 @@ billing-evidence contracts are in:
 skills/herdr-teamlead/references/model-tiers.md
 ```
 
-Save the output to a file for dispatch. Relay the `rationale` lines to the user
+Save the plan and its rationale to a file for dispatch. Relay the `rationale` lines to the user
 as the round's role announcement: they name the weight behind each seat, the
 exclusions applied, and any worker whose headroom reading is stale. Proceed
 immediately to Step 4.
@@ -325,7 +405,8 @@ Step 9 to confirm it; use a short reports directory). Exit 3 means the placehold
 itself failed, so whether the briefs are clean is unknown: re-run, never
 dispatch on it. The placeholder set and both validation directions are the
 script's contract; see the header of
-`skills/herdr-teamlead/compose-briefs.sh`.
+`skills/herdr-teamlead/compose-briefs.sh`. On any non-zero exit, fix the
+diagnostic before dispatch. Use a fresh absolute report path per role and attempt.
 
 What you decide, and it is the whole of your job here:
 
@@ -346,7 +427,7 @@ What you decide, and it is the whole of your job here:
 - For a judge adjudication: `DISPUTE_KIND`, `QUESTION`, `POSITION_A`,
   `POSITION_A_REPORT`, `POSITION_A_EVIDENCE`, `POSITION_B`,
   `POSITION_B_REPORT`, `POSITION_B_EVIDENCE`, `INVESTIGATION_REPORT`,
-  `GOVERNING_RULES`, and `TREE` (see `skills/herdr-teamlead/SKILL.md` Step 11).
+  `GOVERNING_RULES`, and `TREE` (see `skills/herdr-teamlead/references/judge-round.md` Step 11).
 - For a judge diagnosis under the role key `judge-diagnosis`:
   `INVESTIGATION_REPORT` (the assessed investigator report the judge rules on),
   `TASK`, `FIX_ROUNDS`, `REMAINING_WORK`, `ROUND_HISTORY`, `TREE`, and
@@ -374,8 +455,20 @@ release-gating verification is `full`. Proceed immediately to Step 6.
 
 ## Step 6 — Provision the Worktrees
 
-Run the prune in the skill's Step 6 first, every round. Then one call per
-worker that writes anything:
+Prune first, every round:
+
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/prune-worktrees.sh" <shared-checkout>
+```
+
+Emits the worktrees and branches removed, each kept one with its reason, and
+`failed`; exit 2 lists every check or removal git refused. Exit 1 decided
+nothing: fix its diagnostic and re-run before provisioning. Report every kept
+`dirty`, `unmerged`, `locked` and `detached` entry to the operator; never
+remove them by hand.
+
+Then run once per writing worker and every worktree named in a brief:
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -411,7 +504,8 @@ Names the lead's workspace, each worker's workspace after its agent, and each
 worker's pane after its kind. With no pairs, the workspaces come from the
 roster. Emits `{"lead":{...},"agents":[...]}` with a per-target
 `renamed|unchanged|failed`. Exit 3 means at least one rename failed and the
-JSON says which. A label failure never stops a round.
+JSON says which. Report label failures and continue; a label failure never
+stops a round.
 
 Run this once per team, not once per round: a name already in place is
 reported `unchanged` and nothing is sent. Skip it on a team whose sidebar is

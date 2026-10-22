@@ -19,6 +19,15 @@
 #    `[a | b]` bracketed alternatives are documentation syntax and are
 #    stripped before the operator scan.
 #
+# Block placement, checked across both Herdr skill trees:
+# 6. A `$CP` bootstrap block appears only in a file the script-delegation
+#    carve-out covers (COVERED_REFERENCES plus each SKILL.md), so a block
+#    moved into a new reference cannot escape checks 1-3.
+# 7. Every `skills/herdr-teamlead/references/<file>.md` path SKILL.md names
+#    exists, and every "`<path>` Step N" pointer lands on a `## Step N `
+#    heading in that file, so a step stub cannot point at detail or a command
+#    block that moved again or never arrived.
+#
 # Mode-gate conventions, checked against MODE_GATE_SKILL only:
 # 4. The first step gates on HERDR_ENV before any script, and the gate turns a
 #    standalone agent away by reading rather than by running a script.
@@ -44,6 +53,10 @@ unset TEST_SUMMARY_TOKEN
 # bare invocations while this suite resolved its target through its own
 # directory, so it only ever read herdr-teamlead's SKILL.md.
 SKILLS=(herdr-teamlead herdr-standup)
+
+# Reference files the bootstrap carve-out covers beside each SKILL.md
+# (rules/script-delegation.md). Paths are relative to the skills root.
+COVERED_REFERENCES=(herdr-teamlead/references/round-setup.md)
 
 # herdr-teamlead alone carries the standalone/Herdr mode gate. herdr-standup
 # turns a non-Herdr agent away through roster.sh's exit 1, not by reading.
@@ -166,6 +179,122 @@ check_invocations() { # <skill-name> <skill-file>
     fail "${name}: \$CP used in a block that never resolved it — each block is its own shell:"
     printf '%s\n' "$unresolved" >&2
   fi
+}
+
+# 6. No `$CP` bootstrap block outside the covered files. <skills-root> holds
+# the skill trees; each SKILL.md and every COVERED_REFERENCES entry is exempt.
+check_block_placement() { # <skills-root>
+  local root="$1" file rel stray="" rc listing
+  listing="$(find "$root/herdr-teamlead" "$root/herdr-standup" -type f -name '*.md')" \
+    || die "find failed listing the Herdr skill files under ${root}"
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    rel="${file#"$root"/}"
+    [[ "$rel" == */SKILL.md ]] && continue
+    local covered=0 entry
+    for entry in "${COVERED_REFERENCES[@]}"; do
+      [[ "$rel" == "$entry" ]] && covered=1
+    done
+    (( covered )) && continue
+    rc=0
+    # shellcheck disable=SC2016 # Match the documented `$CP` literally.
+    grep -qE '^CP=|^[[:space:]]*(bash|uv run)[^`]*"[$]CP/' "$file" || rc=$?
+    case "$rc" in
+      0) stray+="${rel}"$'\n' ;;
+      1) ;;
+      *) die "grep failed scanning ${file} for bootstrap blocks (exit ${rc})" ;;
+    esac
+  done <<< "$listing"
+  if [[ -z "$stray" ]]; then pass
+  else
+    fail "bootstrap command block outside the carve-out's covered files — keep it in SKILL.md or a COVERED_REFERENCES file and point to it:"
+    printf '%s' "$stray" >&2
+  fi
+}
+
+# 7. Every reference path SKILL.md names exists, and every "`<path>` Step N"
+# pointer lands on a `## Step N ` heading there. <skills-root> resolves the
+# `skills/...` paths the prose uses.
+check_step_pointers() { # <skill-file> <skills-root>
+  local skill="$1" root="$2" bad="" path target n rc refs pointers
+  rc=0
+  refs="$(grep -oE 'skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md' "$skill" | sort -u)" || rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) die "grep failed reading reference paths from ${skill} (exit ${rc})" ;;
+  esac
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    [[ -r "$root/${path#skills/}" ]] || bad+="missing file: ${path}"$'\n'
+  done <<< "$refs"
+  rc=0
+  # shellcheck disable=SC2016 # Backticks are literal Markdown in the pattern.
+  pointers="$(tr '\n' ' ' < "$skill" | grep -oE '`skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md`[[:space:]]+Step [0-9]+' | sort -u)" || rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) die "grep failed reading step pointers from ${skill} (exit ${rc})" ;;
+  esac
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    target="${path#\`}"; target="${target%%\`*}"
+    n="${path##* }"
+    [[ -r "$root/${target#skills/}" ]] || continue
+    rc=0
+    grep -q "^## Step ${n} " "$root/${target#skills/}" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) bad+="no '## Step ${n} ' heading in ${target}"$'\n' ;;
+      *) die "grep failed reading ${target} (exit ${rc})" ;;
+    esac
+  done <<< "$pointers"
+  if [[ -n "$refs" && -n "$pointers" && -z "$bad" ]]; then pass
+  elif [[ -z "$refs" || -z "$pointers" ]]; then
+    fail "${skill}: names no reference step pointers — the router regressed"
+  else
+    fail "${skill}: step pointer(s) that resolve nowhere:"
+    printf '%s' "$bad" >&2
+  fi
+}
+
+# Guards 6 and 7 each reject a broken fixture and accept a conforming one.
+check_placement_fixtures() {
+  local fixture root
+  fixture="$(mktemp -d)" || die "cannot create placement fixture"
+  INSTALL_FIXTURE="$fixture"
+  root="$fixture/skills"
+  mkdir -p "$root/herdr-teamlead/references" "$root/herdr-standup" || die "cannot build placement fixture"
+  # shellcheck disable=SC2016 # Backticks and `$CP` are Markdown fixture text.
+  printf '%s\n' '# Skill' '```bash' 'CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"' \
+    'bash "$CP/skills/herdr-teamlead/teamlead.sh" measure' '```' \
+    '## Step 1 — Go' 'Read `skills/herdr-teamlead/references/round-setup.md` Step 2 first.' \
+    > "$root/herdr-teamlead/SKILL.md" || die "cannot write placement fixture"
+  cp "$root/herdr-teamlead/SKILL.md" "$root/herdr-standup/SKILL.md" || die "cannot write placement fixture"
+  printf '%s\n' '# Setup' '## Step 2 — Run' > "$root/herdr-teamlead/references/round-setup.md" \
+    || die "cannot write placement fixture"
+  # shellcheck disable=SC2016 # Fixture text.
+  printf '%s\n' '# Moved' 'Use the `apply` in SKILL.md Step 8:' '```text' 'apply --task <id>' '```' \
+    > "$root/herdr-teamlead/references/moved.md" || die "cannot write placement fixture"
+  if bash -c 'source "$1"; check_block_placement "$2"; check_step_pointers "$2/herdr-teamlead/SKILL.md" "$2"; (( FAIL == 0 && PASS == 2 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "placement guards rejected a conforming tree"; cat "$fixture/guard.log" >&2; fi
+  # shellcheck disable=SC2016 # Fixture text.
+  printf '%s\n' '```bash' 'CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"' \
+    'bash "$CP/skills/herdr-teamlead/teamlead.sh" apply' '```' >> "$root/herdr-teamlead/references/moved.md" \
+    || die "cannot write placement fixture"
+  if bash -c 'source "$1"; check_block_placement "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "placement guard accepted a bootstrap block in an uncovered reference"; fi
+  printf '%s\n' '# Setup' '## Step 3 — Plan' > "$root/herdr-teamlead/references/round-setup.md" \
+    || die "cannot write placement fixture"
+  if bash -c 'source "$1"; check_step_pointers "$2/herdr-teamlead/SKILL.md" "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "pointer guard accepted a pointer to a missing step heading"; fi
+  rm "$root/herdr-teamlead/references/round-setup.md" || die "cannot stage missing reference"
+  if bash -c 'source "$1"; check_step_pointers "$2/herdr-teamlead/SKILL.md" "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "pointer guard accepted a pointer to a missing reference file"; fi
+  cleanup
+  [[ -z "$INSTALL_FIXTURE" ]] || die "placement fixture cleanup failed; the exit trap will retry"
 }
 
 check_mode_gate() { # <skill-name> <skill-file>
@@ -401,7 +530,14 @@ main() {
     check_install_shapes "$skill"
   done
 
-  check_invocations round-setup "$skills_root/herdr-teamlead/references/round-setup.md"
+  local ref
+  for ref in "${COVERED_REFERENCES[@]}"; do
+    [[ -r "$skills_root/$ref" ]] || die "covered reference not found at ${skills_root}/${ref}"
+    check_invocations "$ref" "$skills_root/$ref"
+  done
+  check_block_placement "$skills_root"
+  check_step_pointers "$skills_root/herdr-teamlead/SKILL.md" "$skills_root"
+  check_placement_fixtures
   check_cleanup_retry
 
   skill="${skills_root}/${MODE_GATE_SKILL}/SKILL.md"
