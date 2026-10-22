@@ -58,7 +58,7 @@ export PATH="$STUBDIR:$PATH"
 # Fake tessl. Bodies mirror the real versions API: a never-published plugin
 # answers the structured not-found body with exit 1 (observed live with
 # `tessl api v1/tiles/gamussa/<absent>/versions`).
-cat > "$STUBDIR/tessl" <<'STUB'
+cat > "$STUBDIR/tessl" <<'STUB' || { echo "fatal: cannot write the tessl fake to ${STUBDIR}/tessl — check that TMPDIR is writable and not full" >&2; exit 2; }
 #!/usr/bin/env bash
 [[ "${1:-}" == api && "${2:-}" == "v1/tiles/gamussa/coding-policy/versions" ]] \
   || { echo "fake tessl: unsupported invocation: $*" >&2; exit 98; }
@@ -117,12 +117,12 @@ case "${MOCK_MODE:-}" in
   *) echo "fake tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
 esac
 STUB
-chmod +x "$STUBDIR/tessl"
+chmod +x "$STUBDIR/tessl" || { echo "fatal: cannot make ${STUBDIR}/tessl executable — check the filesystem allows chmod there (TMPDIR mounted noexec?)" >&2; exit 2; }
 
 invoke() {
   OUT="$(MOCK_MODE="$1" bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"
   CODE=$?
-  ERR="$(cat "$STUBDIR/err")"
+  ERR="$(cat "$STUBDIR/err")" || { echo "fatal: cannot read captured stderr at ${STUBDIR}/err — check that TMPDIR is readable" >&2; exit 2; }
 }
 
 expect_value() { # <mode> <expected stdout> <label>

@@ -232,11 +232,16 @@ t_downgrade_returns_not_ok() {
 # FAKE_TESSL_MODE: `published` prints a versions page whose max is 0.1.0;
 # `absent` prints the versions API's structured not-found body and exits 1
 # (the live shape for a plugin with no versions).
+# Setup failures return 1 with a diagnostic; FAKE_BIN_READY flips only after
+# every write and chmod succeeded, so a half-built directory is never reused.
 FAKE_BIN=""
+FAKE_BIN_READY=0
 make_fake_bin() {
-  [[ -n "$FAKE_BIN" ]] && return 0
-  FAKE_BIN="$(mktemp -d)" || { echo "    FAIL: mktemp -d failed" >&2; return 1; }
-  cat > "$FAKE_BIN/tessl" <<'FAKE'
+  [[ "$FAKE_BIN_READY" == 1 ]] && return 0
+  if [[ -z "$FAKE_BIN" ]]; then
+    FAKE_BIN="$(mktemp -d)" || { echo "    FAIL: mktemp -d failed — check that TMPDIR is writable" >&2; FAKE_BIN=""; return 1; }
+  fi
+  cat > "$FAKE_BIN/tessl" <<'FAKE' || { echo "    FAIL: cannot write ${FAKE_BIN}/tessl — check that TMPDIR is writable and not full" >&2; return 1; }
 #!/usr/bin/env bash
 [[ "${1:-}" == api && "${2:-}" == "v1/tiles/gamussa/new-plugin/versions" ]] \
   || { echo "fake tessl: unsupported invocation: $*" >&2; exit 98; }
@@ -246,13 +251,15 @@ case "${FAKE_TESSL_MODE:-}" in
   *) echo "fake tessl: unknown FAKE_TESSL_MODE='${FAKE_TESSL_MODE:-}'" >&2; exit 99 ;;
 esac
 FAKE
-  cat > "$FAKE_BIN/gh" <<'FAKE'
+  cat > "$FAKE_BIN/gh" <<'FAKE' || { echo "    FAIL: cannot write ${FAKE_BIN}/gh — check that TMPDIR is writable and not full" >&2; return 1; }
 #!/usr/bin/env bash
 [[ "$*" == "run view 12345 --repo github.com/acme/widgets --json conclusion --jq .conclusion" ]] \
   || { echo "fake gh: unsupported invocation: $*" >&2; exit 98; }
 printf '%s\n' "${FAKE_GH_CONCLUSION:-success}"
 FAKE
-  chmod +x "$FAKE_BIN/tessl" "$FAKE_BIN/gh"
+  chmod +x "$FAKE_BIN/tessl" "$FAKE_BIN/gh" \
+    || { echo "    FAIL: cannot make the fakes in ${FAKE_BIN} executable — check the filesystem allows chmod there (TMPDIR mounted noexec?)" >&2; return 1; }
+  FAKE_BIN_READY=1
 }
 
 # run_entry <tessl-mode> <conclusion> <pre> — sets OUT, RC, ERRTEXT.
@@ -261,11 +268,12 @@ run_entry() {
   RC=0
   OUT=$(PATH="$FAKE_BIN:$PATH" FAKE_TESSL_MODE="$1" FAKE_GH_CONCLUSION="$2" \
     bash "$SCRIPT" gamussa new-plugin "$3" 12345 acme widgets 2>"$FAKE_BIN/err") || RC=$?
-  ERRTEXT=$(cat "$FAKE_BIN/err")
+  ERRTEXT=$(cat "$FAKE_BIN/err") \
+    || { echo "    FAIL: cannot read captured stderr at ${FAKE_BIN}/err — check that TMPDIR is readable" >&2; return 1; }
 }
 
 t_unpublished_baseline_first_publish_landed() {
-  run_entry published success unpublished
+  run_entry published success unpublished || return 1
   assert_eq "exit code" "0" "$RC" || { echo "    stderr: $ERRTEXT" >&2; return 1; }
   assert_eq "ok"      "true"        "$(echo "$OUT" | jq -r .ok)"      || return 1
   assert_eq "pre"     "unpublished" "$(echo "$OUT" | jq -r .pre)"     || return 1
@@ -273,7 +281,7 @@ t_unpublished_baseline_first_publish_landed() {
 }
 
 t_unpublished_baseline_still_absent_not_landed() {
-  run_entry absent success unpublished
+  run_entry absent success unpublished || return 1
   assert_eq "exit code" "1" "$RC" || { echo "    stderr: $ERRTEXT" >&2; return 1; }
   assert_eq "ok"      "false" "$(echo "$OUT" | jq -r .ok)"      || return 1
   assert_eq "current" ""      "$(echo "$OUT" | jq -r .current)" || return 1
@@ -282,7 +290,7 @@ t_unpublished_baseline_still_absent_not_landed() {
 }
 
 t_unpublished_baseline_failed_run_not_landed() {
-  run_entry published failure unpublished
+  run_entry published failure unpublished || return 1
   assert_eq "exit code" "1"     "$RC"                         || return 1
   assert_eq "ok"        "false" "$(echo "$OUT" | jq -r .ok)"
 }
@@ -293,7 +301,7 @@ t_unpublished_baseline_failed_run_not_landed() {
 t_invalid_pre_baseline_exits_two() {
   local bad
   for bad in null none 1.2 1.2.3-rc.1; do
-    run_entry published success "$bad"
+    run_entry published success "$bad" || return 1
     assert_eq "exit code for pre '$bad'" "2" "$RC" || return 1
     assert_eq "stdout for pre '$bad'" "" "$OUT" || return 1
   done

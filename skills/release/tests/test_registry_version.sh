@@ -53,7 +53,7 @@ export PATH="$STUBDIR:$PATH"
 # The `ok` fixture lists versions oldest-first with a double-digit and a
 # triple-digit patch so the script's NUMERIC max selection is genuinely
 # exercised (a lexical sort would pick 0.3.20).
-cat > "$STUBDIR/tessl" <<'STUB'
+cat > "$STUBDIR/tessl" <<'STUB' || { echo "fatal: cannot write the tessl stub to ${STUBDIR}/tessl — check that TMPDIR is writable and not full" >&2; exit 2; }
 #!/usr/bin/env bash
 case "$1" in
   api)
@@ -111,14 +111,14 @@ case "$1" in
   *) echo "stub tessl: unsupported invocation: $*" >&2; exit 2 ;;
 esac
 STUB
-chmod +x "$STUBDIR/tessl"
+chmod +x "$STUBDIR/tessl" || { echo "fatal: cannot make ${STUBDIR}/tessl executable — check the filesystem allows chmod there (TMPDIR mounted noexec?)" >&2; exit 2; }
 
 # Invoke with MOCK_MODE exported so it reaches the fake tessl subprocess.
 invoke() {
   local mode="$1"
   OUT="$(MOCK_MODE="$mode" bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"
   CODE=$?
-  ERR="$(cat "$STUBDIR/err")"
+  ERR="$(cat "$STUBDIR/err")" || { echo "fatal: cannot read captured stderr at ${STUBDIR}/err — check that TMPDIR is readable" >&2; exit 2; }
 }
 
 echo "== registry-version.sh tests =="
