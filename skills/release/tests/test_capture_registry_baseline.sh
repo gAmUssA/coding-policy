@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Outcome-based tests for capture-registry-baseline.sh.
 #
-# The contract under test is the one the pasted pipeline in SKILL.md could
-# not hold: a parse miss or a tool failure must exit 2 with a diagnostic,
-# never emit an empty baseline. An empty baseline is the dangerous output —
-# it flows into verify-publish-landed.sh's conjunct 2, where every version
-# compares as "advanced past empty", so an unpublished release confirms.
+# The contract under test: emit a baseline verify-publish-landed.sh can order,
+# or the verified `unpublished` sentinel, or exit 2 — never an empty or
+# guessed baseline. An empty baseline is the dangerous output: it flows into
+# verify-publish-landed.sh's conjunct 2, where every version compares as
+# "advanced past empty", so an unpublished release confirms.
 #
-# Approach: run the script as a subprocess with a stub `tessl` executable
-# placed first on PATH, so the real `set -euo pipefail`, the EXIT trap, and
-# the exit codes are all exercised end-to-end — a sourced-function harness
-# would approximate them and miss exactly the trap/exit-status defects this
-# script hit in development. The stub selects its fixture via MOCK_MODE.
-# jq is not used by the script, so stdout is asserted literally.
+# The unpublished cases are both directions of one guard: the versions API's
+# structured not-found body is a first-publish baseline, while a 404 of any
+# other shape, a 401, a 500 and a transport failure stay exit 2.
+#
+# Approach: run the script as a subprocess with a fake `tessl` executable
+# placed first on PATH (real jq stays reachable), so the real
+# `set -euo pipefail`, the EXIT trap, and the exit codes are all exercised
+# end-to-end. The fake answers only `tessl api v1/tiles/<ws>/<tile>/versions`
+# and selects its fixture via MOCK_MODE. Stdout is asserted literally.
 #
 # Run: bash skills/release/tests/test_capture_registry_baseline.sh
 # Exit 0 on all-pass; non-zero with a per-test diagnostic on failure.
@@ -33,20 +36,14 @@ PASS_COUNT=0
 pass() { PASS_COUNT=$((PASS_COUNT + 1)); echo "  pass: $1"; }
 fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); echo "  FAIL: $1" >&2; }
 
-# Invoke the script as a subprocess with a stubbed `tessl` on PATH, so the
-# real `set -euo pipefail` and exit codes are exercised end-to-end rather
-# than the sourced-function approximation of them.
 # `set -e` is deliberately off here (a failure-counting harness must not die
 # on its first red assertion), so an mktemp failure would otherwise leave
-# STUBDIR empty, put "" on PATH, and produce a cascade of confusing
-# assertion failures that look like the script's fault.
-STUBDIR="$(mktemp -d)" || { echo "fatal: mktemp -d failed — cannot stage the tessl stub; check TMPDIR is writable" >&2; exit 2; }
+# STUBDIR empty, put "" on PATH, and cascade confusing assertion failures.
+STUBDIR="$(mktemp -d)" || { echo "fatal: mktemp -d failed — cannot stage the tessl fake; check TMPDIR is writable" >&2; exit 2; }
 [[ -n "$STUBDIR" && -d "$STUBDIR" ]] || { echo "fatal: mktemp -d returned no usable directory (got '${STUBDIR}')" >&2; exit 2; }
-# Named handler ending `return 0`, not a bare `trap 'rm -rf ...'`: the EXIT
-# trap's final command status becomes the process's exit status, so a failed
-# cleanup (permissions, transient FS error) would turn an all-green run
-# non-zero and flake CI. `set -e` is off here, so the rm cannot abort the
-# handler — but its status still speaks for the run unless `return 0` does.
+# Named handler ending `return 0`: the EXIT trap's final command status
+# becomes the process's exit status, so a failed cleanup would turn an
+# all-green run non-zero.
 cleanup_stubdir() {
   if [[ -n "${STUBDIR:-}" ]]; then
     if ! rm -rf "$STUBDIR"; then
@@ -58,139 +55,95 @@ cleanup_stubdir() {
 trap cleanup_stubdir EXIT
 export PATH="$STUBDIR:$PATH"
 
-# MOCK_MODE selects the fixture the stub emits.
+# Fake tessl. Bodies mirror the real versions API: a never-published plugin
+# answers the structured not-found body with exit 1 (observed live with
+# `tessl api v1/tiles/gamussa/<absent>/versions`).
 cat > "$STUBDIR/tessl" <<'STUB'
 #!/usr/bin/env bash
+[[ "${1:-}" == api && "${2:-}" == "v1/tiles/gamussa/coding-policy/versions" ]] \
+  || { echo "fake tessl: unsupported invocation: $*" >&2; exit 98; }
 case "${MOCK_MODE:-}" in
   ok)
-    echo "Plugin gamussa/coding-policy"
-    echo "  Latest Version   0.3.91"
-    ;;
+    printf '{"data":[{"attributes":{"version":"0.3.9"}},{"attributes":{"version":"0.3.91"}}]}\n' ;;
   warning_on_stderr)
     echo "warn: registry cache stale, refetching" >&2
-    echo "  Latest Version   0.3.91"
-    ;;
-  no_version_line)
-    echo "Plugin gamussa/coding-policy"
-    echo "  Description   nothing useful here"
-    ;;
-  version_not_semver)
-    # The registry reporting an outage on the line we parse. Taking the
-    # last field on faith yielded {"version":"unavailable"} — a baseline
-    # verify-publish-landed.sh's version comparison cannot order.
-    echo "Plugin gamussa/coding-policy"
-    echo "  Latest Version   unavailable"
-    ;;
-  version_is_prose)
-    echo "  Latest Version   see registry status page"
-    ;;
-  tessl_fails)
-    echo "error: not authenticated" >&2
-    exit 1
-    ;;
-  *) echo "stub tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
+    printf '{"data":[{"attributes":{"version":"0.3.91"}}]}\n' ;;
+  empty)
+    printf '{"data":[]}\n' ;;
+  absent)
+    printf '{\n  "error": {\n    "title": "Not Found",\n    "status": 404,\n    "message": "Not Found"\n  }\n}\n'
+    exit 1 ;;
+  absent_404_bare)
+    printf '{"error":{"status":404}}\n'
+    exit 1 ;;
+  absent_404_extra_key)
+    printf '{"error":{"title":"Not Found","status":404},"links":{"self":"x"}}\n'
+    exit 1 ;;
+  absent_404_string_status)
+    printf '{"error":{"title":"Not Found","status":"404"}}\n'
+    exit 1 ;;
+  unauthorized)
+    printf '{"error":{"title":"Unauthorized","status":401,"message":"Unauthorized"}}\n'
+    exit 1 ;;
+  server_error)
+    printf '{"error":{"title":"Internal Server Error","status":500,"message":"Internal Server Error"}}\n'
+    exit 1 ;;
+  network_failure)
+    echo "error: fetch failed: getaddrinfo ENOTFOUND api.tessl.io" >&2
+    exit 1 ;;
+  non_json)
+    printf '<html>502 Bad Gateway</html>\n' ;;
+  no_data)
+    printf '{}\n' ;;
+  version_not_numeric)
+    printf '{"data":[{"attributes":{"version":"unavailable"}}]}\n' ;;
+  version_prerelease)
+    printf '{"data":[{"attributes":{"version":"1.2.3-rc.1+build.5"}}]}\n' ;;
+  *) echo "fake tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
 esac
 STUB
 chmod +x "$STUBDIR/tessl"
 
-invoke() { OUT="$(bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"; }
+invoke() {
+  OUT="$(MOCK_MODE="$1" bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"
+  CODE=$?
+  ERR="$(cat "$STUBDIR/err")"
+}
+
+expect_value() { # <mode> <expected stdout> <label>
+  invoke "$1"
+  if [[ "$CODE" == 0 && "$OUT" == "$2" ]]; then pass "$3"; else fail "$3: code=$CODE out='$OUT' err='$ERR'"; fi
+}
+
+expect_refusal() { # <mode> <label>
+  invoke "$1"
+  if [[ "$CODE" == 2 && -z "$OUT" && -n "$ERR" ]]; then pass "$2"; else fail "$2: code=$CODE out='$OUT' err='$ERR'"; fi
+}
 
 echo "capture-registry-baseline.sh tests"
 
-# --- happy path: version parsed, emitted as JSON ---
-MOCK_MODE=ok invoke
-if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":"0.3.91"}' ]]; then
-  pass "parses Latest Version -> {\"version\":\"0.3.91\"}"
-else
-  fail "happy path: code=$CODE out=$OUT err=$ERR"
-fi
+expect_value ok '{"version":"0.3.91"}' "published -> numeric max version"
+expect_value warning_on_stderr '{"version":"0.3.91"}' "stderr warning does not poison the version"
 
-# --- a tessl warning on stderr must not poison the parse ---
-# This is the failure the pasted `tessl plugin info | grep | awk` could not
-# see: with stdout and stderr merged, the warning line reaches the parse.
-MOCK_MODE=warning_on_stderr invoke
-if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":"0.3.91"}' ]]; then
-  pass "stderr warning does not poison the parsed version"
-else
-  fail "stderr warning: code=$CODE out=$OUT err=$ERR"
-fi
+# Accept: a verified never-published plugin is a first-publish baseline.
+expect_value absent '{"version":"unpublished"}' "structured Not Found/404 (exit 1) -> unpublished"
+expect_value empty '{"version":"unpublished"}' "empty versions array -> unpublished"
 
-# --- parse miss: exit 2, diagnostic, and NO empty baseline on stdout ---
-# The pasted pipeline yielded an empty PRE here, which then satisfied
-# conjunct 2 vacuously.
-MOCK_MODE=no_version_line invoke
-if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ "$ERR" == *"could not parse 'Latest Version'"* ]]; then
-  pass "parse miss -> exit 2, empty stdout, actionable diagnostic"
-else
-  fail "parse miss: code=$CODE out=$OUT err=$ERR"
-fi
+# Reject: anything short of the exact not-found shape stays an error.
+expect_refusal absent_404_bare "404 without the Not Found title -> exit 2"
+expect_refusal absent_404_extra_key "404 body with an extra top-level key -> exit 2"
+expect_refusal absent_404_string_status "404 as a string status -> exit 2"
+expect_refusal unauthorized "401 -> exit 2, never unpublished"
+expect_refusal server_error "500 -> exit 2, never unpublished"
+expect_refusal network_failure "transport failure (no body) -> exit 2"
+expect_refusal non_json "non-JSON body -> exit 2"
+expect_refusal no_data "JSON without .data -> exit 2"
+expect_refusal version_not_numeric "non-numeric version -> exit 2"
+# The comparator (version_gt) cannot order a prerelease/build value.
+expect_refusal version_prerelease "prerelease+build version -> exit 2"
 
-# --- a non-version token on the Latest Version line is exit 2, not a value ---
-# The contract promises numeric major.minor.patch. Emitting whatever the
-# registry printed hands verify-publish-landed.sh a baseline its comparator
-# cannot order — a registry outage silently becomes a bogus conjunct-2
-# verdict.
-MOCK_MODE=version_not_semver invoke
-if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ "$ERR" == *"not a numeric major.minor.patch"* ]]; then
-  pass "non-version token ('unavailable') -> exit 2, empty stdout"
-else
-  fail "non-semver: code=$CODE out=$OUT err=$ERR"
-fi
-
-# --- multi-word prose on the version line is also rejected ---
-# awk '{print $NF}' takes the LAST field, so prose yields a plausible-looking
-# single token ("page") that only a shape check catches.
-MOCK_MODE=version_is_prose invoke
-if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ "$ERR" == *"not a numeric major.minor.patch"* ]]; then
-  pass "prose version line -> exit 2, empty stdout"
-else
-  fail "prose version: code=$CODE out=$OUT err=$ERR"
-fi
-
-# --- a prerelease/build version is REJECTED, not accepted ---
-# The accepted shape is bounded by the consumer, not by semver. This
-# baseline's only reader is verify-publish-landed.sh's version_gt(), which
-# splits on '.' and feeds the fields to bash arithmetic: `1.2.3-rc.1+build.5`
-# arrives at `(( ))` as `3-rc.1+build.5`, and the arithmetic error makes the
-# comparison return "not greater" instead of raising — so a landed publish
-# reports as "Latest Version is not greater than baseline — investigate the
-# registry state". Accepting a shape the consumer cannot order buys a false
-# release verdict, so this script rejects it at the boundary.
-cat > "$STUBDIR/tessl" <<'STUB2'
-#!/usr/bin/env bash
-echo "  Latest Version   1.2.3-rc.1+build.5"
-STUB2
-chmod +x "$STUBDIR/tessl"
-invoke
-if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ "$ERR" == *"not a numeric major.minor.patch"* ]]; then
-  pass "prerelease+build version -> exit 2 (comparator cannot order it)"
-else
-  fail "prerelease rejection: code=$CODE out=$OUT err=$ERR"
-fi
-# restore the MOCK_MODE stub for the remaining cases
-cat > "$STUBDIR/tessl" <<'STUB'
-#!/usr/bin/env bash
-case "${MOCK_MODE:-}" in
-  ok)
-    echo "Plugin gamussa/coding-policy"
-    echo "  Latest Version   0.3.91"
-    ;;
-  tessl_fails)
-    echo "error: not authenticated" >&2
-    exit 1
-    ;;
-  *) echo "stub tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
-esac
-STUB
-chmod +x "$STUBDIR/tessl"
-
-# --- tessl itself failing is exit 2 with the tool's stderr surfaced ---
-MOCK_MODE=tessl_fails invoke
-if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ "$ERR" == *"not authenticated"* ]]; then
-  pass "tessl failure -> exit 2, tool stderr surfaced"
-else
-  fail "tessl failure: code=$CODE out=$OUT err=$ERR"
-fi
+invoke network_failure
+if [[ "$ERR" == *"ENOTFOUND"* ]]; then pass "transport failure surfaces tessl's stderr"; else fail "transport stderr: err='$ERR'"; fi
 
 # --- wrong arity is a usage error, not a silent default ---
 OUT="$(bash "$SCRIPT" gamussa 2>"$STUBDIR/err")"; CODE=$?; ERR="$(cat "$STUBDIR/err")"

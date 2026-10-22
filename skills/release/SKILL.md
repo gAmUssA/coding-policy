@@ -133,6 +133,8 @@ skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>
 PRE=$(skills/release/capture-registry-baseline.sh <workspace> <plugin> | jq -r .version)
 ```
 
+`PRE` is a numeric version, or `unpublished` for a verified never-published plugin (its first release). Pass it to `verify-publish-landed.sh` unchanged. A non-zero exit stops the release before merge: never substitute an empty or guessed baseline such as `0.0.0`. The output contract is the `skills/release/capture-registry-baseline.sh` header.
+
 **(A) From the base checkout:**
 
 ```bash
@@ -184,7 +186,7 @@ CURRENT=$(jq -r '.current' <<<"$landed")
 skills/release/verify-moderation-cleared.sh <workspace> <plugin> "$CURRENT"
 ```
 
-`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE`; `verify-moderation-cleared.sh` exits 0 only when the published version is installable (exit 1 = blocked or still pending at budget — an unconfirmed release, never reported as success).
+`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE` (from `unpublished`: shows a published version); `verify-moderation-cleared.sh` exits 0 only when the published version is installable (exit 1 = blocked or still pending at budget — an unconfirmed release, never reported as success).
 
 **GitHub tag/asset publication** — push the tag from the fast-forwarded `main`; its workflow fires on the tag, whose run carries the tag name as `headBranch`, so the resolver takes the tag as its fifth argument:
 

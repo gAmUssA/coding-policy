@@ -12,15 +12,15 @@
 # listing is eventually-consistent and lags the version API by minutes, so a
 # freshly-landed publish reads back as "not published yet" through it — a
 # false negative exactly when the caller is asking "did my publish land"
-# (#181). The versions API reflects a publish immediately. capture-registry-
-# baseline.sh reads plugin info for the PRE-merge baseline (staleness is fine
-# before the publish); this script reads the versions API for the POST
-# question (staleness is not).
+# (#181). The versions API reflects a publish immediately. Both release-gate
+# reads go through it: capture-registry-baseline.sh for the PRE-merge baseline
+# and verify-publish-landed.sh for the POST question. Both source this file.
 #
 # Sourceable AND runnable, with TWO stdout contracts for the two entry points:
 #   - the registry_version FUNCTION prints the BARE version string (empty when
-#     never published) — verify-publish-landed.sh sources this file and calls
-#     it so an in-process `tessl` shell-mock (its unit suite) reaches the read.
+#     never published) — capture-registry-baseline.sh and
+#     verify-publish-landed.sh source this file and call it, so an in-process
+#     `tessl` shell-mock (verify's unit suite) reaches the read.
 #   - the SCRIPT's main() emits STRUCTURED JSON (rules/script-delegation.md —
 #     deterministic scripts emit JSON, not prose) — scripts/assemble-release.sh
 #     runs it as a subprocess and parses `.version`.
@@ -31,6 +31,12 @@
 # Out:   one JSON object on stdout — {"version": "<major.minor.patch>"} for a
 #        published tile, or {"version": null} when the tile has never published
 #        (an empty registry is a valid first-publish baseline, not an error).
+#        Never published covers two bodies: `{"data":[]}`, and the structured
+#        not-found body the versions API answers for a plugin with no versions,
+#        `{"error":{"status":404,"title":"Not Found"[,"message":...]}}` with no
+#        other key (classified before the tessl exit status, which is non-zero
+#        for it). Any other error body — a 404 of another shape, 401, 5xx — a
+#        transport failure, or an unparseable body stays a failure.
 #        Callers parse `.version`: the gate's capture phase reads null as "no
 #        baseline yet". Diagnostics go to stderr.
 # Exit:  0 on a successful read (published version OR never-published null);
@@ -41,7 +47,7 @@ set -euo pipefail
 
 # Script-global, NOT a main() local: the EXIT trap fires after main() returns,
 # when a main-local would be out of scope and `set -u` would turn cleanup into
-# an unbound-variable failure (same reasoning as capture-registry-baseline.sh).
+# an unbound-variable failure.
 # registry_version() also clears it inline on every return path, so the
 # main-level EXIT trap is only a backstop for an unexpected signal.
 RV_ERR_FILE=""
@@ -81,8 +87,25 @@ registry_version() {
   # version — same capture discipline as verify-moderation-cleared.sh. One page
   # suffices: the endpoint returns newest-first and a publish only ever adds a
   # new highest version, so the maximum is always on page 1.
-  local versions_json
-  if ! versions_json=$(tessl api "$endpoint" 2>"$RV_ERR_FILE"); then
+  local versions_json call_rc=0
+  versions_json=$(tessl api "$endpoint" 2>"$RV_ERR_FILE") || call_rc=$?
+
+  # The versions endpoint answers a never-published plugin with a structured
+  # 404 and tessl exits non-zero for it, so classify the body BEFORE the exit
+  # status. Strict shape: the top level holds only `error`, which holds only
+  # status/title/message, with the number 404 and the title "Not Found". A
+  # looser match (any 404, any body naming "Not Found") would let a wrong-slug
+  # route or a proxy error page fabricate a first-publish baseline.
+  if printf '%s' "$versions_json" | jq -e '
+      type == "object" and (keys == ["error"])
+      and (.error | type == "object")
+      and ((.error | keys) - ["message", "status", "title"] | length == 0)
+      and .error.status == 404 and .error.title == "Not Found"' >/dev/null 2>&1; then
+    cleanup_rv_err_file
+    return 0
+  fi
+
+  if (( call_rc != 0 )); then
     local err; err=$(cat "$RV_ERR_FILE")
     cleanup_rv_err_file
     echo "error: 'tessl api ${endpoint}' failed: ${err} — verify (1) tessl CLI is installed and on PATH ('command -v tessl'), (2) the workspace/plugin slug is correct, (3) you have network access to the registry, then re-run 'tessl api ${endpoint}' directly to inspect the failure" >&2

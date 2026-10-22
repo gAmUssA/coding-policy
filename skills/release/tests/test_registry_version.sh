@@ -72,6 +72,18 @@ case "$1" in
         exit 1 ;;
       no_data)
         printf '{}\n' ;;
+      absent)
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
+        exit 1 ;;
+      absent_404_bare)
+        printf '{"error":{"status":404}}\n'
+        exit 1 ;;
+      absent_404_with_data)
+        printf '{"error":{"title":"Not Found","status":404},"data":[]}\n'
+        exit 1 ;;
+      server_error)
+        printf '{"error":{"title":"Internal Server Error","status":500}}\n'
+        exit 1 ;;
       malformed_version)
         printf '{"data":[{"attributes":{"version":"not-a-version"}}]}\n' ;;
       *) echo "stub tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
@@ -107,6 +119,25 @@ if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":null}' ]]; then
 else
   fail "empty data: code=$CODE out='$OUT' err='$ERR'"
 fi
+
+# --- never published: the versions API's structured not-found body, which
+#     tessl answers with exit 1, is a first-publish baseline ---
+invoke absent
+if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":null}' ]]; then
+  pass "structured Not Found/404 (exit 1) -> exit 0, {\"version\":null}"
+else
+  fail "structured 404: code=$CODE out='$OUT' err='$ERR'"
+fi
+
+# --- any other error body stays a failure, never a fabricated baseline ---
+for mode in absent_404_bare absent_404_with_data server_error; do
+  invoke "$mode"
+  if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ -n "$ERR" ]]; then
+    pass "$mode -> exit 2, never a first-publish baseline"
+  else
+    fail "$mode: code=$CODE out='$OUT' err='$ERR'"
+  fi
+done
 
 # --- a tessl warning on stderr must not poison the parsed version ---
 invoke warning_on_stderr

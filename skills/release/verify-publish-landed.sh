@@ -22,7 +22,8 @@
 #      registry advance came from a different, interleaved run and must
 #      NOT be attributed to ours.
 #   2. The registry's `Latest Version` is strictly greater than the
-#      pre-merge baseline. A non-advance after a `success` conclusion
+#      pre-merge baseline (from an `unpublished` baseline: the registry
+#      shows any published version). A non-advance after a `success` conclusion
 #      means the workflow exited cleanly without publishing (conditional
 #      skip, no-op publish step) and must NOT be reported as published.
 #
@@ -35,6 +36,12 @@
 # the workflow design layer — keep publish as the last step.
 #
 # Usage: verify-publish-landed.sh <workspace> <plugin> <pre-baseline> <run-id> <owner> <repo>
+#   pre-baseline  capture-registry-baseline.sh's .version: numeric
+#               MAJOR.MINOR.PATCH, or the literal `unpublished` that script
+#               emits only for a verified never-published plugin. Any other
+#               value is an argument error (exit 2). From `unpublished`,
+#               conjunct 2 becomes "the registry now shows a published
+#               version"; a registry that still shows none is exit 1.
 #   owner/repo  the GitHub repository the run belongs to — origin's, from
 #               skills/release/origin-repo.sh. gh reads the run there, never
 #               from gh's default repository (gh repo set-default).
@@ -146,6 +153,10 @@ main() {
     echo "error: <pre-baseline> is empty — capture it before merge with 'skills/release/capture-registry-baseline.sh ${workspace} ${tile}' and read .version (the guarded script this repo extracted, never a raw 'tessl plugin info | grep | awk' pipeline)" >&2
     exit 2
   fi
+  if [[ "$pre" != "unpublished" && ! "$pre" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: <pre-baseline> '${pre}' is neither a numeric MAJOR.MINOR.PATCH version nor the verified 'unpublished' sentinel — capture it before merge with 'skills/release/capture-registry-baseline.sh ${workspace} ${tile}' and pass its .version unchanged; never substitute a guessed baseline such as 0.0.0" >&2
+    exit 2
+  fi
 
   # `gh run view --jq '.conclusion'` returns the literal string "null"
   # (not an empty string) when the run hasn't reached a terminal state
@@ -183,15 +194,15 @@ main() {
   # failure (tessl unreachable, non-JSON body) — registry_version already
   # wrote the actionable diagnostic to stderr, so map it straight to this
   # script's rc-2 tool-state path. An empty result means the versions API
-  # carried no published version — this script requires one for the
-  # conjunction, so it stays a rc-2 error here (a never-published tile is not
-  # a valid input to "did my publish advance the registry").
+  # carried no published version. From a numeric baseline that is an anomaly
+  # (the registry lost versions) and stays rc 2. From an `unpublished`
+  # baseline it is a definitive "this publish did not land", decided below.
   local current rc=0
   current=$(registry_version "$workspace" "$tile") || rc=$?
   if [[ $rc -ne 0 ]]; then
     exit 2
   fi
-  if [[ -z "$current" ]]; then
+  if [[ -z "$current" && "$pre" != "unpublished" ]]; then
     echo "error: 'tessl api v1/tiles/${workspace}/${tile}/versions' returned no published version — response carried no .data[].attributes.version entries; the endpoint shape may have changed or the plugin has never published. Inspect it directly with 'tessl api v1/tiles/${workspace}/${tile}/versions'" >&2
     exit 2
   fi
@@ -201,8 +212,22 @@ main() {
   # different, interleaved run.
   if [[ "$conclusion" != "success" ]]; then
     emit_and_exit "false" \
-      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed' to diagnose" \
+      "publish run ${run_id} concluded '${conclusion}', not 'success' — any registry advance from ${pre} to ${current:-no published version} is attributable to interleaved publishes, not this run; inspect 'gh run view ${run_id} --repo github.com/${owner}/${repo} --log-failed' to diagnose" \
       "$conclusion" "$pre" "$current" 1
+  fi
+
+  # Conjunct 2 from a verified never-published baseline: any published
+  # version is an advance, and none is a publish that did not land. There is
+  # no version to compare, so version_gt is skipped.
+  if [[ "$pre" == "unpublished" ]]; then
+    if [[ -z "$current" ]]; then
+      emit_and_exit "false" \
+        "publish run ${run_id} concluded success but the registry still shows no published version for ${workspace}/${tile} — the first publish did not land; inspect the run's job/step logs to confirm the publish step ran" \
+        "$conclusion" "$pre" "$current" 1
+    fi
+    emit_and_exit "true" \
+      "publish landed: run ${run_id} = success and registry advanced unpublished -> ${current}" \
+      "$conclusion" "$pre" "$current" 0
   fi
 
   # Conjunct 2: registry must have strictly advanced past the baseline.
