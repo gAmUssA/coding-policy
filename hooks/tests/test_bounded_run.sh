@@ -30,6 +30,11 @@
 #                           probe EPERM, as macOS does mid-exec: the runner
 #                           still enforces the deadline (124) and stops the
 #                           command, never reading EPERM as "group gone".
+#  12. Slow polls        -> a fake `ps` (the process boundary) that takes
+#                           SLOW_PS_SEC per call, standing in for a loaded
+#                           machine: the deadline still stops the command
+#                           before its sleeper finishes, rather than stretching
+#                           with the poll count.
 #
 # Run: bash hooks/tests/test_bounded_run.sh
 set -uo pipefail
@@ -50,11 +55,14 @@ main() {
   TMP="$(mktemp -d -t bounded-run-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
   local out rc
+  # Read before case 10 changes PATH inside a subshell.
+  local HARNESS_PATH="$PATH"
 
   # Outcomes are deterministic, never elapsed time: each sleeper outlives every
   # deadline under test and touches a "finished" marker only if nothing stopped
   # it. A case passes only on the runner's exit code, the sleeper dead, and no
-  # marker.
+  # marker. Sleepers run 60s: the SIGTERM grace is counted in polls and
+  # stretches on a loaded machine, so a short sleeper can finish inside it.
   # stopped <pid-file> <marker>: the recorded process is gone and never finished.
   stopped() {
     local pid
@@ -77,7 +85,7 @@ main() {
   # 2. Deadline: the command waits on a descendant sleeper.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
-  bash "$SCRIPT" 1 bash -c '(sleep 8; touch "$2") & echo $! > "$1"; wait' _ "$TMP/c2.pid" "$TMP/c2.done" </dev/null 2>"$TMP/err2" || rc=$?
+  bash "$SCRIPT" 1 bash -c '(sleep 60; touch "$2") & echo $! > "$1"; wait' _ "$TMP/c2.pid" "$TMP/c2.done" </dev/null 2>"$TMP/err2" || rc=$?
   if [[ $rc -eq 124 ]] && grep -q 'deadline' "$TMP/err2" && stopped "$TMP/c2.pid" "$TMP/c2.done"; then
     pass; else fail "deadline: expected 124, a diagnostic, and the descendant stopped; got rc=$rc"; fi
   reap "$TMP/c2.pid"
@@ -85,7 +93,7 @@ main() {
   # 3. A command that ignores SIGTERM is stopped after the grace period.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
-  bash "$SCRIPT" 1 bash -c 'trap "" TERM; echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c3.pid" "$TMP/c3.done" </dev/null 2>/dev/null || rc=$?
+  bash "$SCRIPT" 1 bash -c 'trap "" TERM; echo $$ > "$1"; sleep 60; touch "$2"' _ "$TMP/c3.pid" "$TMP/c3.done" </dev/null 2>/dev/null || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c3.pid" "$TMP/c3.done"; then pass; else fail "TERM ignored: expected 124 and the command stopped, got rc=$rc"; fi
   reap "$TMP/c3.pid"
 
@@ -99,16 +107,18 @@ main() {
   # is inherited).
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shells, not here
-  bash "$SCRIPT" 1 bash -c 'bash -c "trap \"\" TERM; echo \$\$ > \"\$1\"; sleep 8; touch \"\$2\"" _ "$1" "$2" & wait' _ "$TMP/c5.pid" "$TMP/c5.done" </dev/null 2>/dev/null || rc=$?
+  bash "$SCRIPT" 1 bash -c 'bash -c "trap \"\" TERM; echo \$\$ > \"\$1\"; sleep 60; touch \"\$2\"" _ "$1" "$2" & wait' _ "$TMP/c5.pid" "$TMP/c5.done" </dev/null 2>/dev/null || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c5.pid" "$TMP/c5.done"; then
     pass; else fail "escalation: expected 124 and the TERM-ignoring descendant stopped, got rc=$rc"; fi
   reap "$TMP/c5.pid"
 
   # 6. Nested runners, outer deadline first. Command substitution waits for
   # every holder of stdout, so a surviving innermost process would finish.
+  # The inner deadline outlasts the sleeper, so only the outer deadline can
+  # stop it.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
-  out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 30 bash -c 'echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c6.pid" "$TMP/c6.done" </dev/null 2>/dev/null)" || rc=$?
+  out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 120 bash -c 'echo $$ > "$1"; sleep 60; touch "$2"' _ "$TMP/c6.pid" "$TMP/c6.done" </dev/null 2>/dev/null)" || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c6.pid" "$TMP/c6.done"; then
     pass; else fail "nested: expected 124 and the innermost process stopped, got rc=$rc"; fi
   reap "$TMP/c6.pid"
@@ -116,7 +126,7 @@ main() {
   # 7. The leader exits 0 at once; its background descendant holds stdout.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
-  out="$(bash "$SCRIPT" 1 bash -c '(sleep 8; touch "$2") & echo $! > "$1"; exit 0' _ "$TMP/c7.pid" "$TMP/c7.done" </dev/null 2>/dev/null)" || rc=$?
+  out="$(bash "$SCRIPT" 1 bash -c '(sleep 60; touch "$2") & echo $! > "$1"; exit 0' _ "$TMP/c7.pid" "$TMP/c7.done" </dev/null 2>/dev/null)" || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c7.pid" "$TMP/c7.done"; then
     pass; else fail "leader exits early: expected 124 and the descendant stopped, got rc=$rc"; fi
   reap "$TMP/c7.pid"
@@ -206,11 +216,31 @@ ZOMBIE
     }
     export -f kill
     # shellcheck disable=SC2016 # expands inside the child shell, not here
-    bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep 8; touch "$2"' _ "$TMP/c11.pid" "$TMP/c11.done" </dev/null 2>/dev/null
+    bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep 60; touch "$2"' _ "$TMP/c11.pid" "$TMP/c11.done" </dev/null 2>/dev/null
   ) || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c11.pid" "$TMP/c11.done"; then
     pass; else fail "kill -0 refused: expected 124 and the command stopped, got rc=$rc"; fi
   reap "$TMP/c11.pid"
+
+  # 12. Each poll forks ps. Under load those forks outlast POLL_SEC, so a
+  # deadline counted in polls stretches. With SLOW_PS_SEC per call, the
+  # SLOW_SLEEP_SEC sleeper finishes inside a poll-counted 1s deadline, and
+  # only a wall-clock deadline stops it first.
+  local SLOW_PS_SEC=2 SLOW_SLEEP_SEC=15 slowps real_ps
+  real_ps="$(command -v ps)" || die "ps not found on PATH — install procps (Linux) or restore /bin/ps; case 12 wraps it"
+  slowps="$TMP/slowps"
+  mkdir -p "$slowps" || die "could not create $slowps"
+  printf '#!/bin/sh\nsleep %s\nexec "%s" "$@"\n' "$SLOW_PS_SEC" "$real_ps" > "$slowps/ps" || die "slow ps write failed"
+  chmod +x "$slowps/ps" || die "slow ps chmod failed"
+  # A broken fake reads as "group alive" to the runner, so case 12 would pass
+  # without exercising slow polls. Prove the fake answers before relying on it.
+  "$slowps/ps" -p $$ -o pid= >/dev/null || die "slow ps fake at $slowps/ps does not run — check $real_ps"
+  rc=0
+  # shellcheck disable=SC2016 # expands inside the child shell, not here
+  PATH="$slowps:$HARNESS_PATH" bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep "$3"; touch "$2"' _ "$TMP/c12.pid" "$TMP/c12.done" "$SLOW_SLEEP_SEC" </dev/null 2>/dev/null || rc=$?
+  if [[ $rc -eq 124 ]] && stopped "$TMP/c12.pid" "$TMP/c12.done"; then
+    pass; else fail "slow polls: expected 124 and the command stopped before its ${SLOW_SLEEP_SEC}s sleeper finished, got rc=$rc"; fi
+  reap "$TMP/c12.pid"
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
