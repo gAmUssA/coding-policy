@@ -224,11 +224,15 @@ ZOMBIE
   # deadline counted in polls stretches. With SLOW_PS_SEC per call, the
   # SLOW_SLEEP_SEC sleeper finishes inside a poll-counted 1s deadline, and
   # only a wall-clock deadline stops it first.
-  local SLOW_PS_SEC=2 SLOW_SLEEP_SEC=15 slowps
+  local SLOW_PS_SEC=2 SLOW_SLEEP_SEC=15 slowps real_ps
+  real_ps="$(command -v ps)" || die "ps not found on PATH — install procps (Linux) or restore /bin/ps; case 12 wraps it"
   slowps="$TMP/slowps"
   mkdir -p "$slowps" || die "could not create $slowps"
-  printf '#!/bin/sh\nsleep %s\nexec %s "$@"\n' "$SLOW_PS_SEC" "$(command -v ps)" > "$slowps/ps" || die "slow ps write failed"
+  printf '#!/bin/sh\nsleep %s\nexec "%s" "$@"\n' "$SLOW_PS_SEC" "$real_ps" > "$slowps/ps" || die "slow ps write failed"
   chmod +x "$slowps/ps" || die "slow ps chmod failed"
+  # A broken fake reads as "group alive" to the runner, so case 12 would pass
+  # without exercising slow polls. Prove the fake answers before relying on it.
+  "$slowps/ps" -p $$ -o pid= >/dev/null || die "slow ps fake at $slowps/ps does not run — check $real_ps"
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
   PATH="$slowps:$HARNESS_PATH" bash "$SCRIPT" 1 bash -c 'echo $$ > "$1"; sleep "$3"; touch "$2"' _ "$TMP/c12.pid" "$TMP/c12.done" "$SLOW_SLEEP_SEC" </dev/null 2>/dev/null || rc=$?
