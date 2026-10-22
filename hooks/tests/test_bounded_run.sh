@@ -114,9 +114,11 @@ main() {
 
   # 6. Nested runners, outer deadline first. Command substitution waits for
   # every holder of stdout, so a surviving innermost process would finish.
+  # The inner deadline outlasts the sleeper, so only the outer deadline can
+  # stop it.
   rc=0
   # shellcheck disable=SC2016 # expands inside the child shell, not here
-  out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 30 bash -c 'echo $$ > "$1"; sleep 60; touch "$2"' _ "$TMP/c6.pid" "$TMP/c6.done" </dev/null 2>/dev/null)" || rc=$?
+  out="$(bash "$SCRIPT" 1 bash "$SCRIPT" 120 bash -c 'echo $$ > "$1"; sleep 60; touch "$2"' _ "$TMP/c6.pid" "$TMP/c6.done" </dev/null 2>/dev/null)" || rc=$?
   if [[ $rc -eq 124 ]] && stopped "$TMP/c6.pid" "$TMP/c6.done"; then
     pass; else fail "nested: expected 124 and the innermost process stopped, got rc=$rc"; fi
   reap "$TMP/c6.pid"
