@@ -1332,20 +1332,23 @@ class RecoveryTests(unittest.TestCase):
         del old["refusal_authorizations"]
         del old["diagnoses"]
         del old["legacy_ruling_recoveries"]
+        del old["no_work_recoveries"]
         for row in old["dispatches"]:
             del row["brief_identity"]
             del row["provider"]
         before = copy.deepcopy(old)
         self.assertTrue(migrate_store(old))
-        self.assertEqual(old["schema_version"], 9)
+        self.assertEqual(old["schema_version"], 10)
         self.assertEqual(old.pop("refusal_authorizations"), [])
         self.assertEqual(old.pop("diagnoses"), [])
         self.assertEqual(old.pop("legacy_ruling_recoveries"), [])
+        self.assertEqual(old.pop("no_work_recoveries"), [])
         self.assertEqual({key: value for key, value in old.items() if key != "schema_version"},
                          {key: value for key, value in before.items() if key != "schema_version"})
         old["refusal_authorizations"] = []
         old["diagnoses"] = []
         old["legacy_ruling_recoveries"] = []
+        old["no_work_recoveries"] = []
         validate_store(old, self.history)
         self.assertFalse(migrate_store(old))
         stale = copy.deepcopy(self.store)
@@ -1361,16 +1364,18 @@ class RecoveryTests(unittest.TestCase):
         six["schema_version"] = 6
         del six["diagnoses"]
         del six["legacy_ruling_recoveries"]
+        del six["no_work_recoveries"]
         with self.assertRaisesRegex(UsageError, "unowned newer refusal"):
             migrate_store(six)
         six = copy.deepcopy(self.store)
         six["schema_version"] = 6
         del six["diagnoses"]
         del six["legacy_ruling_recoveries"]
+        del six["no_work_recoveries"]
         for row in six["dispatches"]:
             del row["provider"]
         self.assertTrue(migrate_store(six))
-        self.assertEqual(six["schema_version"], 9)
+        self.assertEqual(six["schema_version"], 10)
         self.assertEqual(six["diagnoses"], [])
         validate_store(six, self.history)
         record_refusal(self.store, {"dispatch": first, "receipt": self.refusal_receipt("codex-a")}, AT, "codex", self.REPORT)

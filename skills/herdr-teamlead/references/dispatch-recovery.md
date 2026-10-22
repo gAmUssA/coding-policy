@@ -570,6 +570,49 @@ time.
 Proceed to Step 10 once every dispatched worker has been waited on, or once you
 have recorded which of them produced no report.
 
+## No-Work Stalls
+
+An exit 1 whose `stall.class` is `no_work` proves the worker left nothing.
+For an initial developer dispatch (no `--fix-round`) the slot stays spent
+until the owner records that fact; `plan` and `apply` otherwise refuse a second
+initial assignment, and a fix 1 would spend a correction on work nobody did.
+
+1. Save the wait JSON unchanged. It must come from a run with `--worktree`
+   and `--base`.
+2. Close the worker's pane, then resolve its enrollment with
+   `teamlead supervision-resolve`, citing the saved JSON.
+3. Run `teamlead recover-no-work --record FILE` with the original `--state`.
+
+The record is a JSON object with exactly these fields:
+
+| Field | Input |
+| --- | --- |
+| `dispatch` | The applied initial developer dispatch ID |
+| `reason` | Why the retry is needed |
+| `authorization` | The task's authorization as `{source, quote}` |
+| `evidence` | Absolute path of the saved wait JSON |
+
+The owner checks the saved stall against the dispatch's enrolled worker,
+report and the task's recorded base. It also checks that the checkout is the
+one the frozen brief names. Then it checks live state: the pane is gone
+(`pane_not_found`), the enrollment is resolved, the report is absent, and the
+checkout is clean at the base. It sends no input and rewrites no history.
+Success prints the schema-1 receipt. An identical record replays the receipt
+and grants nothing more. A different record for the same dispatch is refused.
+Exit 1 is a refused or unverifiable record; exit 2 is CLI usage.
+
+Then use normal `plan` and `apply` for the same task without `--fix-round`.
+Use a fresh dispatch ID and report path. Keep the COMMON and developer brief
+unchanged apart from that report path, and use a fresh context: no
+`--retain-context`, no `--no-clear`. `apply` re-runs the live checks before
+any pane input and binds the retry to the receipt in the reservation save.
+One receipt permits one retry. A retry that was `not_sent` may be replaced.
+The original row keeps its assignment and dispatch history. The correction
+count does not move, and later corrections start at fix 1. Partial, committed,
+pushed or unknown stalls never use this path. The predicates live in
+`skills/herdr-teamlead/teamlead/no_work_recovery.py`; the receipt shape is in
+`skills/herdr-teamlead/state-schema.md` under Recovery records.
+
 ## Completed native report recovery
 
 The watcher calls `teamlead probe-report` for native display evidence. Its

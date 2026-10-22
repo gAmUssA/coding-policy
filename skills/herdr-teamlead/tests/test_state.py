@@ -42,10 +42,10 @@ class EmptyStateTest(unittest.TestCase):
             empty_state(),
             {"schema_version": STATE_SCHEMA_VERSION, "snapshots": [], "assignments": [],
              "specialist_assessments": [],
-             "recovery": {"schema_version": 9, "tasks": {}, "checkpoints": [], "plans": [],
+             "recovery": {"schema_version": 10, "tasks": {}, "checkpoints": [], "plans": [],
                           "dispatches": [], "context_permissions": [], "events": [],
                           "hand_clearances": [], "historical_attempts": [], "role_clearances": [], "delivery_recoveries": [],
-                          "refusal_authorizations": [], "diagnoses": [], "legacy_ruling_recoveries": []}},
+                          "refusal_authorizations": [], "diagnoses": [], "legacy_ruling_recoveries": [], "no_work_recoveries": []}},
         )
 
 
