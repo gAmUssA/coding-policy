@@ -56,7 +56,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | Authoring | [script-delegation](rules/script-delegation.md) | Deterministic work goes in scripts, reasoning stays in the LLM; skills cite a script's contract |
 | Authoring | [skill-authoring](rules/skill-authoring.md) | `SKILL.md` structure, flat step numbering, typed `Skill()` calls, manifest reference |
 | Authoring | [context-artifacts](rules/context-artifacts.md) | Plugin structure, rule format and frontmatter, writing style, surface sync, manual versioning |
-| Authoring | [stateful-artifacts](rules/stateful-artifacts.md) | Cross-invocation state: schema, owner skill, `schema_version`, hints-not-authority, migration |
+| Authoring | [stateful-artifacts](rules/stateful-artifacts.md) | Cross-invocation state: schema, single owner, `schema_version`, hints-not-authority, migration |
 
 ### Skills
 

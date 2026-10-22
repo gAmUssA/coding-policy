@@ -6,16 +6,16 @@ alwaysApply: true
 
 ## What Counts
 
-- JSON (or similar) state files a skill writes and/or reads across invocations to maintain continuity between runs
+- JSON (or similar) state files a component writes and/or reads across invocations to maintain continuity between runs
 - Distinct from the plugin's static context artifacts (rules, skills, scripts per `rules/context-artifacts.md`) — those don't change between runs; these do
 - Lifecycle and packaging expectations come from `rules/context-artifacts.md`; this rule adds the stateful-specific requirements below
 
 ## Required Attributes
 
-- A **schema** documented next to the owner skill (e.g., `skills/<name>/state-schema.md` or a JSON Schema file); no schema, no artifact
-- A single **owner skill** responsible for shape changes
+- A **schema** documented next to its owner (e.g., `skills/<name>/state-schema.md`, `hooks/state-schema.md`, or a JSON Schema file); no schema, no artifact
+- A single **owner** responsible for shape changes: a skill, hook, runtime, or service
 - A `schema_version` field on every record
-- A **writer / reader contract** — which skills write, which read, what each promises about field presence, defaults, and format
+- A **writer / reader contract** — which components write, which read, what each promises about field presence, defaults, and format
 
 ## Hints, Not Authority
 
@@ -25,25 +25,25 @@ alwaysApply: true
 ## Migration Policy
 
 - Bump `schema_version` for any shape change — don't repurpose a field silently
-- Only the owner skill migrates: on reading an older record, detect the old `schema_version`, upgrade the record, rewrite
-- Non-owner reader skills must not migrate
-- On an older record, a reader treats it as read-only "no usable prior state" — the next owner-skill run upgrades it
+- Only the owner migrates: on reading an older record, detect the old `schema_version`, upgrade the record, rewrite
+- Non-owner readers must not migrate
+- On an older record, a reader treats it as read-only "no usable prior state" — the next owner run upgrades it
 - On a record newer than it accepts, a reader is lagging, not awaiting migration — treat it as "no usable prior state" and update the reader to accept the new version (see Cross-Pipeline Schema Bumps when writer and readers deploy through separate pipelines)
 - Narrow exception for operator-authored configuration.
 - Preconditions (all required):
-  1. No skill writes the file
+  1. No component writes the file
   2. The operator authors every change
-  3. The owner skill's reader accepts every schema version it ever documented
+  3. The owner's reader accepts every schema version it ever documented
   4. The reader upgrades older records in memory only
   5. A field gated on a newer version, found in an older-version file, is refused with an actionable message naming the version to set
   6. The owner's schema doc names the file operator-owned
   7. The owner's schema doc lists the version that gates each field
-- Every other artifact migrates through its owner skill as above
+- Every other artifact migrates through its owner as above
 
 ## Rename / Removal
 
-- Renaming or removing an artifact follows surface sync (see `rules/context-artifacts.md`): update the owner skill's schema doc, update every reader skill, add a CHANGELOG entry
-- Keep reader skills tolerant of missing artifacts — an artifact that was never written (first run) is indistinguishable from one that was removed; both mean "no prior state"
+- Renaming or removing an artifact follows surface sync (see `rules/context-artifacts.md`): update the owner's schema doc, update every reader, add a CHANGELOG entry
+- Keep readers tolerant of missing artifacts — an artifact that was never written (first run) is indistinguishable from one that was removed; both mean "no prior state"
 
 ## Cross-Pipeline Schema Bumps
 
