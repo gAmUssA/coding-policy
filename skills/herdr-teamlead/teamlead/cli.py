@@ -927,7 +927,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     if args.task and "developer" in assignments:
         no_work_recovery.prepare(state_path, state, args.task, args.fix_round,
                                  recovery.brief_identity(paths, "developer", reports.get("developer")),
-                                 reports.get("developer"), args.no_clear, args.retain_context,
+                                 reports.get("developer"), paths["developer"], args.no_clear, args.retain_context,
                                  None if args.dry_run else client)
 
     if args.retain_specialist:
@@ -961,7 +961,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
                   "brief": step["brief"], "common": step["common"]}
         if step["role"] == "developer":
             no_work_recovery.recheck(state_path, state, args.task, args.fix_round, reports.get("developer"),
-                                     record["id"], client)
+                                     step["brief"], record["id"], client)
         if supervised:
             _supervision_enrollment(state_path, record["id"], args.task, step["role"], step["agent"], reports[step["role"]], at,
                                     pane_id=step["pane_id"], persist=True)
