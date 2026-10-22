@@ -19,9 +19,10 @@ description: Herdr team rounds — the mode switch, the worker essentials, and w
 
 ## The Lead
 
-- The lead reads `skills/herdr-teamlead/references/team-operation.md` in full before planning a round
+- The lead reads the core of `skills/herdr-teamlead/references/team-operation.md` before planning a round
+- The lead reads each other section at the `herdr-teamlead` step that names it, before acting on that step
 - That reference is the team contract: composition, specialists, judge seat, tiers, fix loops, dispatch safety, ledger, memory, attention, supervision, retrospectives, review before PR, authority
-- It binds every team round as a rule does
+- Every section binds every team round as a rule does, whether or not the lead has read it yet
 - The `herdr-teamlead` skill runs the round under it
 
 ## Workers
