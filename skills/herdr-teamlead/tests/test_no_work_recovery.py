@@ -130,20 +130,22 @@ class NoWorkRecoveryTest(unittest.TestCase):
                     stdout=out, stderr=err, client=client)
         return code, out.getvalue(), err.getvalue()
 
-    def args(self, agent, report, identifier, at, *extra, body):
-        self.brief.write_text(body)
+    def args(self, agent, report, identifier, at, *extra, body, brief=None):
+        brief = brief or self.brief
+        brief.write_text(body)
         return ["apply", "--assignments", json.dumps({"developer": agent}), "--task", TASK,
-                "--common", str(self.common), "--brief", "developer=" + str(self.brief),
+                "--common", str(self.common), "--brief", "developer=" + str(brief),
                 "--report", "developer=" + report, "--dispatch-id", identifier, "--composer-settle", "0",
                 "--now", at, *extra]
 
     def prepare_retrospective(self, agent, args, client, identifier):
         """Record the retrospective coverage the real Guard requires for `args`."""
         at = args[args.index("--now") + 1]
+        brief = args[args.index("--brief") + 1].removeprefix("developer=")
         request = {"transitions": [{"agent": agent, "role": "developer", "task": TASK,
             "context": "clear", "model": None, "effort": None,
             "pane": {"codex": "w3:p1", "claude": "w2:p1", "grok": "w4:p1"}[agent],
-            "brief": str(self.brief), "common": str(self.common), "report": None,
+            "brief": brief, "common": str(self.common), "report": None,
             "unavailable": "Fixture has no preceding report artifact."}]}
         check = runtime.check(self.state, load_state(self.state), client, self.agents, request, at)
         path = self.root / (identifier + "-check.json")
@@ -581,6 +583,84 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.assertIn("reuses a consumed authorization", result.stderr)
         self.assertNotIn(TASK, result.stdout)
         self.assertEqual(self.state.read_bytes(), forged)
+
+    def test_the_retry_briefs_own_worktree_must_be_the_recovered_checkout(self):
+        # Each report path prefixes its brief's checkout path, so masking the
+        # report path gives both briefs one identity.
+        report = str(self.root / "check")
+        args = self.args("codex", report, "first", FIRST_AT, body=self.body(report))
+        client = self._client({"codex": "idle"}, sessions={"codex": "codex-native"})
+        self.prepare_retrospective("codex", args, client, "before-first")
+        code, out, err = self.invoke(args, client)
+        self.assertEqual(code, 0, err)
+        dispatch = json.loads(out)["applied"][0]["dispatch_id"]
+        wait = self.stall(report=report)
+        self.close(dispatch, wait)
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        other = self.root / "otherout"
+        subprocess.run(["git", "clone", "-q", str(self.checkout), str(other)], check=True, capture_output=True)
+        retry_report = str(self.root / "other")
+        retry_brief = self.root / "retry-brief.md"
+        args = self.retry_args("claude", retry_report, "retry", body=self.body(retry_report, other))
+        args[args.index("--brief") + 1] = "developer=" + str(retry_brief)
+        retry_brief.write_text(self.body(retry_report, other))
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args, client, "before-retry")
+        self.brief.write_text(self.body(report))
+        for label, extra in (("a dry run", ["--dry-run"]), ("a real apply", [])):
+            with self.subTest(refused=label):
+                before = self.state.read_bytes()
+                code, out, err = self.invoke(args + extra, client)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "")
+                self.assertIn("retry brief's worktree", err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+
+    def test_a_listed_retry_id_is_refused_once_another_retry_took_the_receipt(self):
+        dispatch, wait = self.stalled_and_closed()
+        self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+        # Retry B fails before any input and stays not_sent.
+        b_report = str(self.root / "b.md")
+        args_b = self.retry_args("claude", b_report, "b")
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args_b, client, "before-b")
+        self.runner.set("pane send-text", returncode=1, stderr="injected pre-input failure")
+        self.runner.set("agent prompt claude", returncode=1, stderr="injected pre-input failure")
+        code, _, err = self.invoke(args_b, client)
+        self.assertEqual(code, 1, err)
+        # Retry C applies, then its provider refuses it.
+        c_report = str(self.root / "c.md")
+        args_c = self.retry_args("grok", c_report, "c")
+        client = self.retry_client({"grok": "idle"})
+        self.prepare_retrospective("grok", args_c, client, "before-c")
+        code, out, err = self.invoke(args_c, client)
+        self.assertEqual(code, 0, err)
+        c = json.loads(out)["applied"][0]["dispatch_id"]
+        receipt = self.root / "c-refusal.json"
+        receipt.write_text(json.dumps({"agent": "grok", "state": "idle", "report_path": c_report,
+            "found": False, "elapsed_seconds": 12, "reason": "terminal_provider_refusal"}))
+        record = self.root / "record-refusal.json"
+        record.write_text(json.dumps({"dispatch": c, "receipt": str(receipt)}))
+        code, _, err = self.invoke(["record-refusal", "--record", str(record), "--now", "2026-02-03T10:08:00+00:00"])
+        self.assertEqual(code, 0, err)
+        statuses = {row["id"]: row["status"] for row in load_state(self.state)["recovery"]["dispatches"]}
+        self.assertEqual((statuses["b:developer"], statuses[c]), ("not_sent", "applied"))
+        # Re-applying B with its original inputs is refused before any save.
+        args_b[args_b.index("--now") + 1] = "2026-02-03T10:09:00+00:00"
+        self.brief.write_text(self.body(b_report))
+        client = self.retry_client({"claude": "idle"})
+        self.prepare_retrospective("claude", args_b, client, "before-b-again")
+        before = self.state.read_bytes()
+        code, out, err = self.invoke(args_b, client)
+        self.assertEqual(code, 1, out)
+        self.assertIn("fresh --dispatch-id", err)
+        self.assertEqual(self.runner.writes(), [])
+        self.assertEqual(self.state.read_bytes(), before)
+        result = self.launch("status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn(TASK, json.loads(result.stdout)["tasks"])
 
     def test_an_unbound_second_initial_row_is_refused_on_read(self):
         dispatch, wait = self.stalled_and_closed()

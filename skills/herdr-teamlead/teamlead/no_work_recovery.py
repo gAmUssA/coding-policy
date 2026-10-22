@@ -225,7 +225,7 @@ def _open_receipt(store, assignments, task):
     return saved
 
 
-def prepare(state_path, state, task, fix_round, identity, report, no_clear, retain_context, client):
+def prepare(state_path, state, task, fix_round, identity, report, brief, no_clear, retain_context, client):
     """Recheck a pending retry's evidence before apply creates or sends anything.
 
     A dry run passes `client` None: every static and filesystem check runs,
@@ -243,14 +243,20 @@ def prepare(state_path, state, task, fix_round, identity, report, no_clear, reta
         refuse("A no-work retry sends the unchanged brief; only its report path may differ.")
     binding = _binding(state_path, row)
     _fresh_report(report, binding, row)
-    _retry_gate(state, saved, row, binding, client)
+    _retry_gate(state, saved, row, binding, brief, client)
 
 
-def _retry_gate(state, saved, row, binding, client):
-    """The brief must still resolve to the receipt's canonical checkout, then the live checks run on it."""
+def _retry_gate(state, saved, row, binding, brief, client):
+    """Both briefs must resolve to the receipt's canonical checkout, then the live checks run on it.
+
+    `brief` is the retry's own developer brief. Its identity masks the report
+    path, so a different report path can hide a different worktree.
+    """
     # The receipt's path is a hint: a retargeted link or ancestor moves what it names.
     if os.path.realpath(saved["worktree"]) != saved["worktree"] or _brief_worktree(row["brief"]) != saved["worktree"]:
         refuse("The original brief's worktree no longer resolves to the recovered checkout {}.".format(saved["worktree"]))
+    if _brief_worktree(brief) != saved["worktree"]:
+        refuse("The retry brief's worktree does not resolve to the recovered checkout {}.".format(saved["worktree"]))
     _live(binding, saved["worktree"], ledger.task_record(state["recovery"], row["task"])["base_revision"], client)
 
 
@@ -262,10 +268,24 @@ def _fresh_identity(store, saved, identifier):
         refuse("Dispatch ID {} already names an earlier attempt; a no-work retry needs a fresh --dispatch-id.".format(identifier))
 
 
-def recheck(state_path, state, task, fix_round, report, identifier, client):
+def _spent_listing(store, identifier):
+    """Refuse an ID listed on a receipt another retry already consumed.
+
+    Read from the ID's own receipt, whatever the latest applied dispatch is:
+    once a later retry has applied, that receipt is no longer the open one.
+    """
+    for saved in receipts(store):
+        if identifier in saved["retries"] and any(
+                other != identifier and next(row for row in store["dispatches"] if row["id"] == other)["status"] != "not_sent"
+                for other in saved["retries"]):
+            refuse("Dispatch ID {} belongs to no-work recovery {}, whose retry another dispatch already took; use a fresh --dispatch-id.".format(identifier, saved["id"]))
+
+
+def recheck(state_path, state, task, fix_round, report, brief, identifier, client):
     """Repeat the live checks immediately before a retry's reservation."""
     if fix_round is not None or task is None:
         return
+    _spent_listing(state["recovery"], identifier)
     saved = _open_receipt(state["recovery"], state["assignments"], task)
     if saved is None:
         return
@@ -273,13 +293,14 @@ def recheck(state_path, state, task, fix_round, report, identifier, client):
     row = _source(state["recovery"], saved["id"])
     binding = _binding(state_path, row)
     _fresh_report(report, binding, row)
-    _retry_gate(state, saved, row, binding, client)
+    _retry_gate(state, saved, row, binding, brief, client)
 
 
 def reserve(store, record_row, at):
     """Bind a retry's identity to its receipt inside the reservation save."""
     if record_row["role"] != "developer" or record_row["fix_round"] is not None:
         return
+    _spent_listing(store, record_row["id"])
     applied = [row for row in store["dispatches"] if row["task"] == record_row["task"]
                and row["role"] == "developer" and row["status"] == "applied"]
     if not applied:
