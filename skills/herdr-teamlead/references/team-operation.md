@@ -1,11 +1,70 @@
 # Team Operation
 
-The full Herdr team contract. `rules/agent-team-operation.md` loads in every session and carries only the mode switch and the worker essentials; the lead reads this file before planning a round, and it binds every team round in full.
+The Herdr team contract. `rules/agent-team-operation.md` loads in every session and carries only the mode switch and the worker essentials. Every section of this file binds every team round.
+
+## Reading This Contract
+
+- The core is every section above Team Composition
+- The lead reads the core before Step 1 of `skills/herdr-teamlead/SKILL.md`
+- The lead reads each other section at the skill step that names it, before acting on that step
+- Read a section from its `## ` heading to the next `## ` heading, never the whole file
+- `grep -n '^## '` on this file lists each heading's line
+- Reuse a section already in context instead of reading it again
+- A section not yet read still binds the round
+- An action no step names reads its governing section first
 
 ## Two Modes
 
 - The standalone/team mode switch lives in `rules/agent-team-operation.md` Two Modes, which every session loads
 - **Every section below governs a Herdr team round only**
+
+## Lead Seat
+
+- The shared checkout stays on the default branch
+- The lead reads the shared checkout and never edits it
+- The lead answers a question, or one bounded read-only lookup, itself and cites what it read
+- Any edit or review of existing code goes to a worker, whatever its size
+
+## Reports
+
+- The worker directives of this section live in `rules/agent-team-operation.md` Workers, which every session loads
+- The lead reads every report body in full before gating the round
+
+## Authority and Policy
+
+- The lead verifies repo authority through a script before composing briefs
+- Ownership is namespace ownership; write permission is not ownership
+- A brief states the authority as a verified fact, never as a standing claim
+- A repo the operator does not own gets explicit per-repo, per-action permission recorded in the brief, or the round stays read-only
+- An unanswerable authority check is not permission
+- See `rules/external-repo-contributions.md`
+- Every worker runs the same plugin from the shared checkout
+- A runtime that does not auto-load the rules reads them from its brief
+- The brief names the rule index and the release-skill path in full
+## User Attention
+
+- Persist unanswered questions, requested reviews, user-relevant blockers or failures, and promised follow-ups when they arise
+- Keep each obligation's context, source, consequence, and resolution condition with its stable identity
+- Present outstanding attention before routine housekeeping in a catch-up
+- Showing an item never resolves it
+- An unrelated message or context reset never resolves an item
+- Record the actual user answer or outcome evidence before closing an obligation
+- Defer an obligation with a return condition instead of silently dropping it
+- An open decision or blocker on a task refuses further dispatch on that task until it is resolved or explicitly deferred with recorded rationale
+- Record an answer required before further dispatch as a decision or blocker, never as a question
+- Keep attention records separate from task acceptance and worker lifecycle observations
+- Follow `skills/herdr-teamlead/references/attention.md`
+
+## Fleet Supervision
+
+- Bind supervision to the lead's actual session before dispatching a team round
+- Enroll every dispatched assignment before sending its brief
+- Observe all enrolled workers while awaiting reports
+- Preserve wake events until the lead records their handling
+- Acknowledging an observation never accepts the assignment or completes the task
+- Reconcile interrupted supervision against its saved events and live process evidence
+- Never finish a lead turn with active work lacking continued supervision or an explicit recorded pause or handoff
+- Follow `skills/herdr-teamlead/references/supervision.md`
 
 ## Team Composition
 
@@ -210,10 +269,6 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 ## Writers and Checkouts
 
 - The worker directives of this section live in `rules/agent-team-operation.md` Workers, which every session loads
-- The shared checkout stays on the default branch
-- The lead reads the shared checkout and never edits it
-- The lead answers a question, or one bounded read-only lookup, itself and cites what it read
-- Any edit or review of existing code goes to a worker, whatever its size
 - The lead provisions every worktree a brief names, before dispatch
 - A read-only role that writes no repository content needs no worktree
 - The lead prunes merged, clean worktrees and merged local branches every round, before provisioning and after the merge
@@ -239,11 +294,6 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - The worktree writes above and the restoration precondition 9 requires are unchanged
 - Every code-touching command carries its own `cd <worktree> &&` prefix
 - See `rules/agent-worktree-isolation.md`
-
-## Reports
-
-- The worker directives of this section live in `rules/agent-team-operation.md` Workers, which every session loads
-- The lead reads every report body in full before gating the round
 
 ## Dispatch Safety
 
@@ -325,31 +375,6 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - Working memory grants no authority, acceptance, or gate waiver
 - Follow `skills/herdr-teamlead/references/working-memory.md`
 
-## User Attention
-
-- Persist unanswered questions, requested reviews, user-relevant blockers or failures, and promised follow-ups when they arise
-- Keep each obligation's context, source, consequence, and resolution condition with its stable identity
-- Present outstanding attention before routine housekeeping in a catch-up
-- Showing an item never resolves it
-- An unrelated message or context reset never resolves an item
-- Record the actual user answer or outcome evidence before closing an obligation
-- Defer an obligation with a return condition instead of silently dropping it
-- An open decision or blocker on a task refuses further dispatch on that task until it is resolved or explicitly deferred with recorded rationale
-- Record an answer required before further dispatch as a decision or blocker, never as a question
-- Keep attention records separate from task acceptance and worker lifecycle observations
-- Follow `skills/herdr-teamlead/references/attention.md`
-
-## Fleet Supervision
-
-- Bind supervision to the lead's actual session before dispatching a team round
-- Enroll every dispatched assignment before sending its brief
-- Observe all enrolled workers while awaiting reports
-- Preserve wake events until the lead records their handling
-- Acknowledging an observation never accepts the assignment or completes the task
-- Reconcile interrupted supervision against its saved events and live process evidence
-- Never finish a lead turn with active work lacking continued supervision or an explicit recorded pause or handoff
-- Follow `skills/herdr-teamlead/references/supervision.md`
-
 ## Retrospectives
 
 - The lead completes a retrospective at least every 24 hours during active team work
@@ -419,15 +444,3 @@ The full Herdr team contract. `rules/agent-team-operation.md` loads in every ses
 - The lead enforces the blocking findings a report or a COMMENT review carries
 - Severity classification follows `rules/review-severity.md`
 - The developer then runs the release skill for the PR, the merge, and the cleanup
-
-## Authority and Policy
-
-- The lead verifies repo authority through a script before composing briefs
-- Ownership is namespace ownership; write permission is not ownership
-- A brief states the authority as a verified fact, never as a standing claim
-- A repo the operator does not own gets explicit per-repo, per-action permission recorded in the brief, or the round stays read-only
-- An unanswerable authority check is not permission
-- See `rules/external-repo-contributions.md`
-- Every worker runs the same plugin from the shared checkout
-- A runtime that does not auto-load the rules reads them from its brief
-- The brief names the rule index and the release-skill path in full

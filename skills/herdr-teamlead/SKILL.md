@@ -18,19 +18,31 @@ Before any finish with enrolled work, reconcile the whole fleet under
 or handoff covering every active assignment. Keep user attention visible under
 `skills/herdr-teamlead/references/attention.md`.
 
-Read the team contract in full before Step 1; every step runs under it:
+Every step runs under the whole team contract. Read its core, every section
+above Team Composition, before Step 1:
 
 ```text
-skills/herdr-teamlead/references/team-operation.md
+skills/herdr-teamlead/references/team-operation.md Reading This Contract
 ```
+
+Each step lists its step reference and contract sections to read before
+acting on it.
 
 Each command resolves `CP` to the local or home plugin. Repeat its resolver in
 every call. Prose `skills/...` paths are relative to that root.
 
 ## Step 1 — Determine the Mode
 
-For catch-up or saved attention, follow `skills/herdr-teamlead/references/attention.md`. For lesson
-curation, saved lead context, or a lead handoff, follow `skills/herdr-teamlead/references/working-memory.md`.
+For catch-up or saved attention, follow the attention reference. For lesson
+curation, saved lead context, or a lead handoff, follow the working-memory
+reference and the contract's Working Memory:
+
+```text
+skills/herdr-teamlead/references/attention.md
+skills/herdr-teamlead/references/working-memory.md
+skills/herdr-teamlead/references/team-operation.md Working Memory
+```
+
 Use the recorded state override or default; these commands need no live Herdr.
 Finish here after the requested operation. They grant no new task authority.
 
@@ -76,40 +88,89 @@ to latest. For other requests, read `HERDR_ENV` before running scripts.
 
 ## Step 2 — Run the Preflight
 
-For an explicit retrospective request, complete a new retrospective under
-`skills/herdr-teamlead/references/retrospectives.md` and finish here. Otherwise
-run the `preflight` on every round start, resume, and return from a later step,
-route its verdict, and record authority, ledger and staffing. Read
-`skills/herdr-teamlead/references/round-setup.md` Step 2 first; it holds the command.
+For an explicit retrospective request, complete a new retrospective and
+finish here:
+
+```text
+skills/herdr-teamlead/references/retrospectives.md
+skills/herdr-teamlead/references/team-operation.md Retrospectives
+```
+
+Otherwise run the `preflight` on every round start, resume, and return from a
+later step, route its verdict, and record authority, ledger and staffing. Read
+first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 2
+skills/herdr-teamlead/references/team-operation.md Task Ledger
+skills/herdr-teamlead/references/team-operation.md Retrospectives
+```
 
 ## Step 3 — Plan the Roles
 
 Staff the fired triggers, validate any review partition, and plan the roles.
-Read `skills/herdr-teamlead/references/round-setup.md` Step 3 first; it holds the commands.
+Read first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 3
+skills/herdr-teamlead/references/team-operation.md Team Composition
+skills/herdr-teamlead/references/team-operation.md Round Tiers
+skills/herdr-teamlead/references/team-operation.md Review Before PR
+```
+
+A planned consultation also reads Specialist Consultations; a fix round also
+reads Fix Loops:
+
+```text
+skills/herdr-teamlead/references/team-operation.md Specialist Consultations
+skills/herdr-teamlead/references/team-operation.md Fix Loops
+```
 
 ## Step 4 — Build the Review Package
 
 Reviewer and tester briefs need a review package bound to the recorded base
-and pushed head. Read `skills/herdr-teamlead/references/round-setup.md` Step 4 first; it holds the command.
+and pushed head. Read first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 4
+```
 
 ## Step 5 — Compose the Briefs
 
-Resolve policy paths, write the values file, and compose. Read
-`skills/herdr-teamlead/references/round-setup.md` Step 5 first; it holds the commands.
+Resolve policy paths, write the values file, and compose. Read first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 5
+skills/herdr-teamlead/references/team-operation.md Assignment Reasoning
+skills/herdr-teamlead/references/team-operation.md Working Memory
+```
 
 ## Step 6 — Provision the Worktrees
 
-Prune every round, then provision every worktree a brief names. Read
-`skills/herdr-teamlead/references/round-setup.md` Step 6 first; it holds the commands.
+Prune every round, then provision every worktree a brief names. Read first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 6
+skills/herdr-teamlead/references/team-operation.md Writers and Checkouts
+```
 
 ## Step 7 — Label the Layout
 
-Optional, once per team; skip an already named sidebar. Read
-`skills/herdr-teamlead/references/round-setup.md` Step 7 first; it holds the command.
+Optional, once per team; skip an already named sidebar. Read first:
+
+```text
+skills/herdr-teamlead/references/round-setup.md Step 7
+```
 
 ## Step 8 — Dispatch the Briefs
 
-Send the planned briefs through `apply`. Read `skills/herdr-teamlead/references/round-dispatch.md` Step 8 first.
+Send the planned briefs through `apply`. Read first:
+
+```text
+skills/herdr-teamlead/references/round-dispatch.md Step 8
+skills/herdr-teamlead/references/team-operation.md Dispatch Safety
+skills/herdr-teamlead/references/team-operation.md Worker Launch Mode
+```
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -125,7 +186,17 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" apply [--config <config-file>] \
 ## Step 9 — Observe the Fleet
 
 Watch every enrolled assignment, then confirm each report's delivery. Read
-`skills/herdr-teamlead/references/round-dispatch.md` Step 9 first.
+first:
+
+```text
+skills/herdr-teamlead/references/round-dispatch.md Step 9
+```
+
+A wait that ends in a stall also reads Stalled Workers:
+
+```text
+skills/herdr-teamlead/references/team-operation.md Stalled Workers
+```
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -142,16 +213,35 @@ bash "$CP/skills/herdr-teamlead/wait-report.sh" --once \
 ## Step 10 — Gate the Round
 
 Read every report in full, classify findings, and route the task to Step 2,
-Step 11, Step 19 or Step 20. Read `skills/herdr-teamlead/references/round-dispatch.md` Step 10 first.
+Step 11, Step 19 or Step 20. Read first:
+
+```text
+skills/herdr-teamlead/references/round-dispatch.md Step 10
+```
+
+Any blocking finding also reads Fix Loops:
+
+```text
+skills/herdr-teamlead/references/team-operation.md Fix Loops
+```
 
 ## Step 11 — Compose the Judge Brief
 
 Optional. No judge trigger — proceed to Step 18. A dispute or an exhausted
-allowance needs a judge; read `skills/herdr-teamlead/references/judge-round.md` before Steps 11–15 and 17.
+allowance needs a judge; read these before Steps 11–15 and 17:
+
+```text
+skills/herdr-teamlead/references/judge-round.md
+skills/herdr-teamlead/references/team-operation.md Judge Seat
+```
 
 ## Step 12 — Re-measure the Shared Window
 
-Run `measure` alone, not the preflight; `skills/herdr-teamlead/references/judge-round.md` Step 12 routes the result.
+Run `measure` alone, not the preflight; the step reference routes the result:
+
+```text
+skills/herdr-teamlead/references/judge-round.md Step 12
+```
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -160,12 +250,19 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" measure
 
 ## Step 13 — Plan the Judge Seat
 
-Plan the pinned judge against Step 12's snapshot under `skills/herdr-teamlead/references/judge-round.md` Step 13.
+Plan the pinned judge against Step 12's snapshot under:
+
+```text
+skills/herdr-teamlead/references/judge-round.md Step 13
+```
 
 ## Step 14 — Start the Judge Worker on Its Pinned Tier
 
-An existing judge worker goes to Step 15. An empty shell pane starts under
-`skills/herdr-teamlead/references/judge-round.md` Step 14:
+An existing judge worker goes to Step 15. An empty shell pane starts under:
+
+```text
+skills/herdr-teamlead/references/judge-round.md Step 14
+```
 
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
@@ -176,7 +273,11 @@ bash "$CP/skills/herdr-teamlead/start-judge-worker.sh" \
 
 ## Step 15 — Dispatch the Judge
 
-Dispatch the judge with Step 8's `apply` under `skills/herdr-teamlead/references/judge-round.md` Step 15.
+Dispatch the judge with Step 8's `apply` under:
+
+```text
+skills/herdr-teamlead/references/judge-round.md Step 15
+```
 
 ## Step 16 — Wait for the Ruling
 
@@ -186,12 +287,19 @@ under observation.
 
 ## Step 17 — Act on the Ruling or Remedy
 
-Route the ruling or remedy under `skills/herdr-teamlead/references/judge-round.md` Step 17.
+Route the ruling or remedy under:
+
+```text
+skills/herdr-teamlead/references/judge-round.md Step 17
+```
 
 ## Step 18 — Release the Pull Request
 
-Dispatch the release as a fresh `release` assignment and verify it. Read
-`skills/herdr-teamlead/references/round-completion.md` Step 18 first.
+Dispatch the release as a fresh `release` assignment and verify it. Read first:
+
+```text
+skills/herdr-teamlead/references/round-completion.md Step 18
+```
 
 ## Step 19 — Clean Up the Worktree
 
@@ -202,8 +310,11 @@ for the round's other worktrees. Proceed immediately to Step 20.
 ## Step 20 — Log the Round
 
 Finalize the ledger, save progress and the lead's handoff, reconcile
-supervision, and report. Read `skills/herdr-teamlead/references/round-completion.md` Step 20
-first, then finish here.
+supervision, and report. Read first, then finish here:
+
+```text
+skills/herdr-teamlead/references/round-completion.md Step 20
+```
 
 For the daily standup, use
 `Skill(skill: "herdr-standup")`.

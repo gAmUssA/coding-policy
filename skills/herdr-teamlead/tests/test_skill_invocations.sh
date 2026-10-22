@@ -24,9 +24,12 @@
 #    carve-out covers (COVERED_REFERENCES plus each SKILL.md), so a block
 #    moved into a new reference cannot escape checks 1-3.
 # 7. Every `skills/herdr-teamlead/references/<file>.md` path SKILL.md names
-#    exists, and every "`<path>` Step N" pointer lands on a `## Step N `
-#    heading in that file, so a step stub cannot point at detail or a command
-#    block that moved again or never arrived.
+#    exists. Every pointer lands on a real heading in that file: a prose
+#    "`<path>` Step N" or a typed ```text block line "<path> Step N" lands on a
+#    `## Step N ` heading, and a block line "<path> <Section>" lands on an
+#    exact `## <Section>` heading. Every other ```text block line is refused.
+#    A step stub cannot point at detail, a command block, or a team-contract
+#    section that moved again or never arrived.
 #
 # Mode-gate conventions, checked against MODE_GATE_SKILL only:
 # 4. The first step gates on HERDR_ENV before any script, and the gate turns a
@@ -34,7 +37,7 @@
 # 5. Inside a Herdr round, a Step 1 branch the lead finishes itself never
 #    covers an edit or a code review, and an edit routes on to Step 2. The
 #    lead never edits the shared checkout (references/team-operation.md
-#    Writers and Checkouts); a direct-finish edit branch contradicts it.
+#    Lead Seat); a direct-finish edit branch contradicts it.
 #
 # `set -e` is dropped so every check runs and the suite reports an aggregate;
 # each check captures its own status (rules/error-handling.md
@@ -212,11 +215,13 @@ check_block_placement() { # <skills-root>
   fi
 }
 
-# 7. Every reference path SKILL.md names exists, and every "`<path>` Step N"
-# pointer lands on a `## Step N ` heading there. <skills-root> resolves the
+# 7. Every reference path SKILL.md names exists, and every pointer lands on a
+# real heading there: "`<path>` Step N" in prose, or a ```text block line
+# "<path> Step N" or "<path> <Section>". <skills-root> resolves the
 # `skills/...` paths the prose uses.
 check_step_pointers() { # <skill-file> <skills-root>
-  local skill="$1" root="$2" bad="" path target n rc refs pointers
+  local skill="$1" root="$2" bad="" path target heading rc refs inline block line pointers=""
+  local steps=0 sections=0
   rc=0
   refs="$(grep -oE 'skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md' "$skill" | sort -u)" || rc=$?
   case "$rc" in
@@ -229,29 +234,51 @@ check_step_pointers() { # <skill-file> <skills-root>
   done <<< "$refs"
   rc=0
   # shellcheck disable=SC2016 # Backticks are literal Markdown in the pattern.
-  pointers="$(tr '\n' ' ' < "$skill" | grep -oE '`skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md`[[:space:]]+Step [0-9]+' | sort -u)" || rc=$?
+  inline="$(tr '\n' ' ' < "$skill" | grep -oE '`skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md`[[:space:]]+Step [0-9]+' | sort -u)" || rc=$?
   case "$rc" in
     0|1) ;;
     *) die "grep failed reading step pointers from ${skill} (exit ${rc})" ;;
   esac
-  while IFS= read -r path; do
-    [[ -n "$path" ]] || continue
-    target="${path#\`}"; target="${target%%\`*}"
-    n="${path##* }"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    target="${line#\`}"; target="${target%%\`*}"
+    pointers+="${target}"$'\t'"Step ${line##* }"$'\n'
+  done <<< "$inline"
+  rc=0
+  # shellcheck disable=SC2016 # Backticks are literal Markdown in the pattern.
+  block="$(awk '/^```text[[:space:]]*$/ { t = 1; next } /^```/ { t = 0; next } t && NF { print FNR "\t" $0 }' "$skill")" || rc=$?
+  (( rc == 0 )) || die "awk failed reading text blocks from ${skill} (exit ${rc})"
+  while IFS=$'\t' read -r n line; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" =~ ^(skills/herdr-teamlead/references/[A-Za-z0-9_-]+\.md)(\ (.+))?$ ]]; then
+      [[ -n "${BASH_REMATCH[3]}" ]] && pointers+="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[3]}"$'\n'
+    else
+      bad+="line ${n}: text block line is not a reference pointer: ${line}"$'\n'
+    fi
+  done <<< "$block"
+  while IFS=$'\t' read -r target heading; do
+    [[ -n "$target" ]] || continue
     [[ -r "$root/${target#skills/}" ]] || continue
     rc=0
-    grep -q "^## Step ${n} " "$root/${target#skills/}" || rc=$?
+    if [[ "$heading" =~ ^Step\ [0-9]+$ ]]; then
+      steps=$((steps+1))
+      grep -q "^## ${heading} " "$root/${target#skills/}" || rc=$?
+    else
+      sections=$((sections+1))
+      grep -qxF "## ${heading}" "$root/${target#skills/}" || rc=$?
+    fi
     case "$rc" in
       0) ;;
-      1) bad+="no '## Step ${n} ' heading in ${target}"$'\n' ;;
+      1) bad+="no '## ${heading}' heading in ${target}"$'\n' ;;
       *) die "grep failed reading ${target} (exit ${rc})" ;;
     esac
   done <<< "$pointers"
-  if [[ -n "$refs" && -n "$pointers" && -z "$bad" ]]; then pass
-  elif [[ -z "$refs" || -z "$pointers" ]]; then
-    fail "${skill}: names no reference step pointers — the router regressed"
+  if [[ -n "$refs" ]] && (( steps > 0 && sections > 0 )) && [[ -z "$bad" ]]; then pass
+  elif [[ -z "$refs" ]] || (( steps == 0 || sections == 0 )); then
+    fail "${skill}: names no reference step pointer or no contract section pointer — the router regressed"
+    [[ -z "$bad" ]] || printf '%s' "$bad" >&2
   else
-    fail "${skill}: step pointer(s) that resolve nowhere:"
+    fail "${skill}: pointer(s) that resolve nowhere:"
     printf '%s' "$bad" >&2
   fi
 }
@@ -267,9 +294,14 @@ check_placement_fixtures() {
   printf '%s\n' '# Skill' '```bash' 'CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"' \
     'bash "$CP/skills/herdr-teamlead/teamlead.sh" measure' '```' \
     '## Step 1 — Go' 'Read `skills/herdr-teamlead/references/round-setup.md` Step 2 first.' \
+    '```text' 'skills/herdr-teamlead/references/round-setup.md Step 2' \
+    'skills/herdr-teamlead/references/team-operation.md Lead Seat' \
+    'skills/herdr-teamlead/references/team-operation.md' '```' \
     > "$root/herdr-teamlead/SKILL.md" || die "cannot write placement fixture"
   cp "$root/herdr-teamlead/SKILL.md" "$root/herdr-standup/SKILL.md" || die "cannot write placement fixture"
   printf '%s\n' '# Setup' '## Step 2 — Run' > "$root/herdr-teamlead/references/round-setup.md" \
+    || die "cannot write placement fixture"
+  printf '%s\n' '# Team Operation' '## Lead Seat' '- rule' > "$root/herdr-teamlead/references/team-operation.md" \
     || die "cannot write placement fixture"
   # shellcheck disable=SC2016 # Fixture text.
   printf '%s\n' '# Moved' 'Use the `apply` in SKILL.md Step 8:' '```text' 'apply --task <id>' '```' \
@@ -284,6 +316,18 @@ check_placement_fixtures() {
   if bash -c 'source "$1"; check_block_placement "$2"; (( FAIL > 0 ))' \
     bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
   else fail "placement guard accepted a bootstrap block in an uncovered reference"; fi
+  printf '%s\n' '# Team Operation' '## Lead Seats' '- rule' > "$root/herdr-teamlead/references/team-operation.md" \
+    || die "cannot write placement fixture"
+  if bash -c 'source "$1"; check_step_pointers "$2/herdr-teamlead/SKILL.md" "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "pointer guard accepted a pointer to a missing contract section heading"; fi
+  printf '%s\n' '# Team Operation' '## Lead Seat' '- rule' > "$root/herdr-teamlead/references/team-operation.md" \
+    || die "cannot write placement fixture"
+  { cat "$root/herdr-teamlead/SKILL.md"; printf '%s\n' '```text' 'skils/herdr-teamlead/references/team-operation.md Lead Seat' '```'; } \
+    > "$root/herdr-teamlead/typo.md" || die "cannot write placement fixture"
+  if bash -c 'source "$1"; check_step_pointers "$2/herdr-teamlead/typo.md" "$2"; (( FAIL > 0 ))' \
+    bash "${BASH_SOURCE[0]}" "$root" > "$fixture/guard.log" 2>&1; then pass
+  else fail "pointer guard accepted a text block line that is not a reference pointer"; fi
   printf '%s\n' '# Setup' '## Step 3 — Plan' > "$root/herdr-teamlead/references/round-setup.md" \
     || die "cannot write placement fixture"
   if bash -c 'source "$1"; check_step_pointers "$2/herdr-teamlead/SKILL.md" "$2"; (( FAIL > 0 ))' \
