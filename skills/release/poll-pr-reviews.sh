@@ -276,25 +276,25 @@ main() {
     exit 1
   fi
 
-  # `cancel` is NOT failure, and it is NOT a signal at all. Pushing a fix to an
-  # open PR auto-cancels the prior SHA's in-flight runs, and a re-dispatched
-  # workflow cancels its own earlier run on the same head via concurrency — so
-  # a cancelled bucket is a superseded run, and its replacement drives the
-  # state. Treating it as failure false-red'd a green PR the instant a reviewer
-  # was addressed (#182). So drop cancels, then judge the LIVE buckets: a real
-  # `fail` still fails; a `success` alongside a cancelled twin still succeeds
-  # (folding cancel into `pending` would have wedged that case). Only when
-  # cancels are ALL there is — the replacement not yet registered — fall to
-  # pending so the watcher waits for it. `gh pr checks` is head-scoped, so that
-  # replacement always concludes and the pending never wedges. `skipping`
-  # stays success-equivalent (a skipped required check is a pass), unchanged.
+  # `cancel` is NOT failure. Pushing a fix to an open PR auto-cancels the prior
+  # SHA's in-flight runs, and a re-dispatched workflow cancels its own earlier
+  # run on the same head via concurrency, so a cancelled bucket is a superseded
+  # run whose replacement drives the state (#182). Supersession is per check
+  # NAME on head: a cancel is settled only by a live run of the same name, never
+  # by other checks passing. An unreplaced cancel reads `pending`, so a
+  # cancelled required job that never re-ran can never read success
+  # (rules/ship-on-green.md Red). A real `fail` takes precedence. A cancel whose
+  # replacement never appears is bounded by the watcher's own budget
+  # (watch-pr-reviews.sh pending_at_budget), never an agent-chosen timeout.
+  # `skipping` stays success-equivalent (a skipped required check is a pass).
   local ci_status
   ci_status=$(echo "$checks_json" | jq -r '
     (map(select(.bucket != "cancel"))) as $live
+    | (map(select(.bucket == "cancel") | .name) - ($live | map(.name))) as $unreplaced
     | if (. | length) == 0 then "none"
       elif ($live | any(.bucket == "fail")) then "failure"
       elif ($live | any(.bucket == "pending")) then "pending"
-      elif ($live | length) == 0 then "pending"
+      elif ($unreplaced | length) > 0 then "pending"
       else "success" end
   ')
 

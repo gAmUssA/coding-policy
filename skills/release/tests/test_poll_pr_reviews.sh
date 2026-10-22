@@ -645,7 +645,7 @@ t_main_no_head_sha_fails() {
 # have wedged this.
 t_ci_status_cancel_with_success_is_success() {
   MOCK_MERGE_STATE=clean
-  MOCK_CHECKS_BODY='[{"name":"CI","bucket":"success"},{"name":"CI","bucket":"cancel"}]'
+  MOCK_CHECKS_BODY='[{"name":"CI","bucket":"pass"},{"name":"CI","bucket":"cancel"}]'
   local out ci
   out=$(main "owner" "repo" "1")
   ci=$(echo "$out" | jq -r '.ci.status')
@@ -661,6 +661,53 @@ t_ci_status_only_cancels_is_pending() {
   out=$(main "owner" "repo" "1")
   ci=$(echo "$out" | jq -r '.ci.status')
   assert_eq "all-cancelled reads pending" "pending" "$ci"
+}
+
+# Fixtures below use the exact `gh pr checks --json name,bucket` shape this
+# repo's own PRs return. Supersession is per check name: a cancel is settled
+# only by a live run of the SAME name on head, never by other checks passing.
+
+# A cancelled required check with no replacement, next to other passing
+# checks, stays pending — never success, so the watcher never reports ready.
+t_ci_status_unreplaced_cancel_with_other_passes_is_pending() {
+  MOCK_MERGE_STATE=clean
+  MOCK_CHECKS_BODY='[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"},{"bucket":"pass","name":"changelog-fragment"},{"bucket":"pass","name":"diagnostics"}]'
+  local out ci
+  out=$(main "owner" "repo" "1")
+  ci=$(echo "$out" | jq -r '.ci.status')
+  assert_eq "other passing checks do not settle an unreplaced cancel" "pending" "$ci"
+}
+
+# The cancelled check re-ran on head and passed: its replacement's result
+# drives the state.
+t_ci_status_cancel_replaced_by_pass_is_success() {
+  MOCK_MERGE_STATE=clean
+  MOCK_CHECKS_BODY='[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"}]'
+  local out ci
+  out=$(main "owner" "repo" "1")
+  ci=$(echo "$out" | jq -r '.ci.status')
+  assert_eq "a passing same-name replacement settles the cancel" "success" "$ci"
+}
+
+# The cancelled check re-ran on head and failed: the replacement's failure
+# is the result.
+t_ci_status_cancel_replaced_by_fail_is_failure() {
+  MOCK_MERGE_STATE=clean
+  MOCK_CHECKS_BODY='[{"bucket":"cancel","name":"unit-tests"},{"bucket":"fail","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"}]'
+  local out ci
+  out=$(main "owner" "repo" "1")
+  ci=$(echo "$out" | jq -r '.ci.status')
+  assert_eq "a failing same-name replacement is failure" "failure" "$ci"
+}
+
+# One cancelled check's replacement cannot settle a different cancelled check.
+t_ci_status_replacement_does_not_cover_another_cancel() {
+  MOCK_MERGE_STATE=clean
+  MOCK_CHECKS_BODY='[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"unit-tests"},{"bucket":"cancel","name":"diagnostics"},{"bucket":"pass","name":"lint"}]'
+  local out ci
+  out=$(main "owner" "repo" "1")
+  ci=$(echo "$out" | jq -r '.ci.status')
+  assert_eq "each cancelled check needs its own replacement" "pending" "$ci"
 }
 
 # A real failure on head still fails, even next to a cancelled run.
@@ -712,6 +759,10 @@ run "main surfaces head_sha as a top-level field"                     t_main_sur
 run "main fails loudly on an empty headRefOid"                        t_main_no_head_sha_fails
 run "ci.status: success next to a cancelled twin is success (#182)"   t_ci_status_cancel_with_success_is_success
 run "ci.status: only-cancels reads pending (#182)"                    t_ci_status_only_cancels_is_pending
+run "ci.status: an unreplaced cancel next to passes is pending"      t_ci_status_unreplaced_cancel_with_other_passes_is_pending
+run "ci.status: a cancel replaced by a pass is success"               t_ci_status_cancel_replaced_by_pass_is_success
+run "ci.status: a cancel replaced by a fail is failure"               t_ci_status_cancel_replaced_by_fail_is_failure
+run "ci.status: one replacement cannot settle another cancel"         t_ci_status_replacement_does_not_cover_another_cancel
 run "ci.status: a real fail next to a cancel still fails (#182)"      t_ci_status_fail_with_cancel_is_failure
 
 run "requested_among: a pending bot request matches (#369)"           t_requested_among_matches_a_pending_bot
