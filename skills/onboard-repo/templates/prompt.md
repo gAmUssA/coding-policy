@@ -18,6 +18,8 @@ Do this:
 5. For every changed line, check it against every rule. Flag concrete violations only:
    - a new/changed rule file that violates a rule it itself declares (self-consistency),
    - a `skills/*/SKILL.md` that violates the `skill-authoring` rule,
+   - a stateful artifact that breaks `stateful-artifacts` (its single owner may be a skill,
+     hook, runtime, or service; never demand an owner skill),
    - secrets, missing error handling, formatting, dependency hygiene, `ci-safety`,
      `no-secrets`, and the rest.
 6. Minor style preferences that no rule covers are NOT grounds for a finding.
