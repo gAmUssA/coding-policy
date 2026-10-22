@@ -75,6 +75,13 @@ case "$1" in
       absent)
         printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
         exit 1 ;;
+      absent_rc2|absent_rc126|absent_rc137)
+        # The exact not-found body, but a status other than tessl's
+        # documented 1 for it: a crashed or killed CLI, not a registry answer.
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
+        exit "${MOCK_MODE#absent_rc}" ;;
+      absent_rc0)
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n' ;;
       absent_404_bare)
         printf '{"error":{"status":404}}\n'
         exit 1 ;;
@@ -130,7 +137,7 @@ else
 fi
 
 # --- any other error body stays a failure, never a fabricated baseline ---
-for mode in absent_404_bare absent_404_with_data server_error; do
+for mode in absent_rc0 absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
   invoke "$mode"
   if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ -n "$ERR" ]]; then
     pass "$mode -> exit 2, never a first-publish baseline"

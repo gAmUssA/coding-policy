@@ -73,6 +73,9 @@ case "${MOCK_MODE:-}" in
   absent)
     printf '{\n  "error": {\n    "title": "Not Found",\n    "status": 404,\n    "message": "Not Found"\n  }\n}\n'
     exit 1 ;;
+  absent_rc2|absent_rc137)
+    printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
+    exit "${MOCK_MODE#absent_rc}" ;;
   absent_404_bare)
     printf '{"error":{"status":404}}\n'
     exit 1 ;;
@@ -130,6 +133,8 @@ expect_value absent '{"version":"unpublished"}' "structured Not Found/404 (exit 
 expect_value empty '{"version":"unpublished"}' "empty versions array -> unpublished"
 
 # Reject: anything short of the exact not-found shape stays an error.
+expect_refusal absent_rc2 "not-found body with exit 2 -> exit 2, never unpublished"
+expect_refusal absent_rc137 "not-found body with exit 137 (killed) -> exit 2"
 expect_refusal absent_404_bare "404 without the Not Found title -> exit 2"
 expect_refusal absent_404_extra_key "404 body with an extra top-level key -> exit 2"
 expect_refusal absent_404_string_status "404 as a string status -> exit 2"

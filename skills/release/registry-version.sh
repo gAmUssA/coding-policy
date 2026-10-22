@@ -34,8 +34,8 @@
 #        Never published covers two bodies: `{"data":[]}`, and the structured
 #        not-found body the versions API answers for a plugin with no versions,
 #        `{"error":{"status":404,"title":"Not Found"[,"message":...]}}` with no
-#        other key (classified before the tessl exit status, which is non-zero
-#        for it). Any other error body — a 404 of another shape, 401, 5xx — a
+#        other key, AND tessl's exit status 1 for it. The same body with any
+#        other exit status is a failure. Any other error body — a 404 of another shape, 401, 5xx — a
 #        transport failure, or an unparseable body stays a failure.
 #        Callers parse `.version`: the gate's capture phase reads null as "no
 #        baseline yet". Diagnostics go to stderr.
@@ -91,12 +91,13 @@ registry_version() {
   versions_json=$(tessl api "$endpoint" 2>"$RV_ERR_FILE") || call_rc=$?
 
   # The versions endpoint answers a never-published plugin with a structured
-  # 404 and tessl exits non-zero for it, so classify the body BEFORE the exit
-  # status. Strict shape: the top level holds only `error`, which holds only
+  # 404 and tessl exits 1 for it. Both are required: the same body with any
+  # other status (0, 2, 126, a 137 kill) is not that registry answer and
+  # falls through to the failure paths below. Strict shape: the top level holds only `error`, which holds only
   # status/title/message, with the number 404 and the title "Not Found". A
   # looser match (any 404, any body naming "Not Found") would let a wrong-slug
   # route or a proxy error page fabricate a first-publish baseline.
-  if printf '%s' "$versions_json" | jq -e '
+  if (( call_rc == 1 )) && printf '%s' "$versions_json" | jq -e '
       type == "object" and (keys == ["error"])
       and (.error | type == "object")
       and ((.error | keys) - ["message", "status", "title"] | length == 0)

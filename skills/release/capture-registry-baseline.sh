@@ -37,6 +37,10 @@
 #        `unpublished` is a sentinel verify-publish-landed.sh accepts in place
 #        of a version; it then requires the registry to show any published
 #        version. An empty or guessed baseline (e.g. 0.0.0) is never emitted.
+#        Callers capture this JSON in its own guarded assignment, then parse
+#        `.version` with a guarded `jq -e` (skills/release/SKILL.md Step 7).
+#        Never pipe this script into jq: the pipeline reports jq's status, jq
+#        accepts the empty stdout of exit 2, and the baseline comes out empty.
 # Exit:  0 on a verified read; 2 on tool-state error (tessl or jq absent, a
 #        non-404 or non-structured error body, a transport failure, an
 #        unparseable body, or a version outside the shape above). Stdout is
