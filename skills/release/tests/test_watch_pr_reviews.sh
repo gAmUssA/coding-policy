@@ -22,6 +22,9 @@
 #  11. Env-var validation — INTERVAL=0 and INTERVAL>BUDGET → exit 2.
 #  12. Poll failure → exit 2.
 #  13. Non-JSON snapshot → exit 2.
+#  14. Cancelled checks, end to end — the real poll-pr-reviews.sh behind the
+#      real entry point, with a fake `gh` on PATH: an unreplaced cancel is
+#      never ready (pending_at_budget); a cancel replaced by a pass is ready.
 #
 # Approach mirrors test_resolve_publish_run.sh: source the script (the main()
 # guard prevents auto-run) and override `fetch_snapshot` + `sleep`. Because
@@ -377,6 +380,74 @@ test_non_json() {
   echo "$err" | grep -q "non-JSON" || { echo "    FAIL: should flag non-JSON, got: ${err}" >&2; return 1; }
 }
 run "non-JSON snapshot exits 2" test_non_json
+
+# --- Test 14: cancelled checks through the real entry point ------------------
+# Runs `bash watch-pr-reviews.sh` as a subprocess, so the real fetch_snapshot
+# calls the real poll-pr-reviews.sh. Only `gh` is faked, at the process
+# boundary: it refuses any call not pinned to github.com and answers with the
+# `gh pr checks --json name,bucket` shape GitHub returns. Both bots posted at
+# head and the branch is mergeable, so ci.status alone decides ready.
+FAKE_BIN="$TMPDIR_TEST/bin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/gh" <<'FAKEGH'
+#!/usr/bin/env bash
+set -euo pipefail
+head="0123456789abcdef0123456789abcdef01234567"
+args=" $* "
+if [[ "$1" == api ]]; then
+  [[ "$args" == *" --hostname github.com "* ]] || { echo "fake gh: unpinned api call: $*" >&2; exit 97; }
+else
+  [[ "$args" == *" --repo github.com/"* ]] || { echo "fake gh: unpinned call: $*" >&2; exit 97; }
+fi
+case "$1 ${2:-}" in
+  "pr view")   echo '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","headRefOid":"'"$head"'"}' ;;
+  "pr checks") cat "$FAKE_GH_CHECKS_FILE" ;;
+  "api --hostname")
+    if [[ "$args" == *" graphql "* ]]; then
+      filter=""
+      while [[ $# -gt 0 ]]; do [[ "$1" == --jq ]] && filter="$2"; shift; done
+      echo '{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[]}}}}}' | jq "$filter"
+    elif [[ "$args" == *"/reviews"* ]]; then
+      echo '[{"id":1,"user":{"login":"github-actions[bot]"},"state":"COMMENTED","submitted_at":"2026-10-20T10:00:00Z","body":"ok","commit_id":"'"$head"'"},{"id":2,"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","submitted_at":"2026-10-20T10:01:00Z","body":"ok","commit_id":"'"$head"'"}]'
+    else
+      echo '[]'
+    fi ;;
+  *) echo "fake gh: unsupported: $*" >&2; exit 2 ;;
+esac
+FAKEGH
+chmod +x "$FAKE_BIN/gh"
+
+watch_with_checks() {
+  local checks="$1"
+  printf '%s' "$checks" > "$TMPDIR_TEST/checks.json"
+  FAKE_GH_CHECKS_FILE="$TMPDIR_TEST/checks.json" PATH="$FAKE_BIN:$PATH" \
+    bash "$SCRIPT" gamussa coding-policy 42 2>/dev/null
+}
+
+test_e2e_unreplaced_cancel_never_ready() {
+  local out rc=0
+  out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"},{"bucket":"pass","name":"diagnostics"}]') || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  assert_eq "result" "pending_at_budget" "$(result_of "$out")" || return 1
+  assert_eq "ci" "pending" "$(echo "$out" | jq -r '.ci.status')" || return 1
+}
+run "e2e: an unreplaced cancelled check is never ready" test_e2e_unreplaced_cancel_never_ready
+
+test_e2e_replaced_cancel_is_ready() {
+  local out rc=0
+  out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"pass","name":"unit-tests"},{"bucket":"pass","name":"review"},{"bucket":"pass","name":"lint"}]') || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+}
+run "e2e: a cancel replaced by a pass is ready" test_e2e_replaced_cancel_is_ready
+
+test_e2e_replaced_by_fail_is_ci_failure() {
+  local out rc=0
+  out=$(watch_with_checks '[{"bucket":"cancel","name":"unit-tests"},{"bucket":"fail","name":"unit-tests"},{"bucket":"pass","name":"review"}]') || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ci_failure" "$(result_of "$out")" || return 1
+}
+run "e2e: a cancel replaced by a fail is ci_failure" test_e2e_replaced_by_fail_is_ci_failure
 
 echo
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"
