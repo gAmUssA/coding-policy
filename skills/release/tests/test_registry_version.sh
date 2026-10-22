@@ -82,6 +82,18 @@ case "$1" in
         exit "${MOCK_MODE#absent_rc}" ;;
       absent_rc0)
         printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n' ;;
+      entry_no_version)
+        printf '%s\n' '{"data":[{"attributes":{}}]}' ;;
+      entry_null_version)
+        printf '%s\n' '{"data":[{"attributes":{"version":null}}]}' ;;
+      entry_numeric_version)
+        printf '%s\n' '{"data":[{"attributes":{"version":123}}]}' ;;
+      entry_no_attributes)
+        printf '%s\n' '{"data":[{}]}' ;;
+      entry_not_object)
+        printf '%s\n' '{"data":[1]}' ;;
+      entry_mixed)
+        printf '%s\n' '{"data":[{"attributes":{"version":"0.1.0"}},{"attributes":{}}]}' ;;
       absent_404_bare)
         printf '{"error":{"status":404}}\n'
         exit 1 ;;
@@ -137,7 +149,7 @@ else
 fi
 
 # --- any other error body stays a failure, never a fabricated baseline ---
-for mode in absent_rc0 absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
+for mode in absent_rc0 entry_no_version entry_null_version entry_numeric_version entry_no_attributes entry_not_object entry_mixed absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
   invoke "$mode"
   if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ -n "$ERR" ]]; then
     pass "$mode -> exit 2, never a first-publish baseline"

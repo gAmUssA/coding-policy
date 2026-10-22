@@ -76,6 +76,18 @@ case "${MOCK_MODE:-}" in
   absent_rc2|absent_rc137)
     printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
     exit "${MOCK_MODE#absent_rc}" ;;
+  entry_no_version)
+    printf '%s\n' '{"data":[{"attributes":{}}]}' ;;
+  entry_null_version)
+    printf '%s\n' '{"data":[{"attributes":{"version":null}}]}' ;;
+  entry_numeric_version)
+    printf '%s\n' '{"data":[{"attributes":{"version":123}}]}' ;;
+  entry_no_attributes)
+    printf '%s\n' '{"data":[{}]}' ;;
+  entry_not_object)
+    printf '%s\n' '{"data":[1]}' ;;
+  entry_mixed)
+    printf '%s\n' '{"data":[{"attributes":{"version":"0.1.0"}},{"attributes":{}}]}' ;;
   absent_404_bare)
     printf '{"error":{"status":404}}\n'
     exit 1 ;;
@@ -135,6 +147,12 @@ expect_value empty '{"version":"unpublished"}' "empty versions array -> unpublis
 # Reject: anything short of the exact not-found shape stays an error.
 expect_refusal absent_rc2 "not-found body with exit 2 -> exit 2, never unpublished"
 expect_refusal absent_rc137 "not-found body with exit 137 (killed) -> exit 2"
+expect_refusal entry_no_version "malformed entry (entry_no_version) -> exit 2, never unpublished"
+expect_refusal entry_null_version "malformed entry (entry_null_version) -> exit 2, never unpublished"
+expect_refusal entry_numeric_version "malformed entry (entry_numeric_version) -> exit 2, never unpublished"
+expect_refusal entry_no_attributes "malformed entry (entry_no_attributes) -> exit 2, never unpublished"
+expect_refusal entry_not_object "malformed entry (entry_not_object) -> exit 2, never unpublished"
+expect_refusal entry_mixed "malformed entry (entry_mixed) -> exit 2, never unpublished"
 expect_refusal absent_404_bare "404 without the Not Found title -> exit 2"
 expect_refusal absent_404_extra_key "404 body with an extra top-level key -> exit 2"
 expect_refusal absent_404_string_status "404 as a string status -> exit 2"

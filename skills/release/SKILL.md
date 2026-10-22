@@ -136,7 +136,7 @@ PRE=$(jq -er '.version | strings' <<<"$baseline_json") \
   || { echo "Baseline output has no .version string — the release stops before merge" >&2; exit 1; }
 ```
 
-Each step is guarded on its own: a `script | jq` pipeline would report jq's status, and jq accepts empty input. `PRE` is a numeric version, or `unpublished` for a verified never-published plugin (its first release). Pass it to `verify-publish-landed.sh` unchanged. Either guard firing stops the release before merge: never substitute an empty or guessed baseline such as `0.0.0`. The output contract is the `skills/release/capture-registry-baseline.sh` header.
+`PRE` is a numeric version or `unpublished`. Pass it to `verify-publish-landed.sh` unchanged. Either guard firing stops the release before merge. The output contract is the `skills/release/capture-registry-baseline.sh` header.
 
 **(A) From the base checkout:**
 

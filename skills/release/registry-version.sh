@@ -41,7 +41,8 @@
 #        baseline yet". Diagnostics go to stderr.
 # Exit:  0 on a successful read (published version OR never-published null);
 #        2 on tool/parse failure (tessl or jq absent, tessl unreachable,
-#        non-JSON body). On exit 2 stdout is empty — no JSON is emitted.
+#        non-JSON body, a .data entry without a string version, a failed
+#        extraction). On exit 2 stdout is empty — no JSON is emitted.
 
 set -euo pipefail
 
@@ -135,18 +136,32 @@ registry_version() {
     return 2
   fi
 
+  # Every entry must carry a string .attributes.version. A missing, null or
+  # non-string version is a malformed entry, never skipped: skipping it would
+  # turn a page of malformed entries into an empty (never-published) result.
+  # Only an empty .data array, or the exit-1 not-found body above, may yield
+  # an empty successful read.
+  if ! printf '%s' "$versions_json" | jq -e '
+      all(.data[]; type == "object" and (.attributes | type == "object")
+                   and (.attributes.version | type == "string"))' >/dev/null 2>&1; then
+    echo "error: 'tessl api ${endpoint}' has a .data entry without a string .attributes.version — an endpoint shape change or malformed entry, not an empty registry. Inspect it directly with 'tessl api ${endpoint}' (body was: ${versions_json})" >&2
+    return 2
+  fi
+
   # Max version across the page, ranked numerically. sort_by a per-element
   # parsed [major,minor,patch] key (jq compares arrays element-wise, so
-  # [0,3,119] outranks [0,3,20]) and take the last — depends only on the
-  # `.version` string, not the endpoint's split-out int fields, so a shape
-  # change there can't silently mis-rank. `tonumber? // 0` neutralises a
-  # non-numeric component rather than aborting the whole rank. `// empty`
-  # yields an empty string when the tile has never published.
+  # [0,3,119] outranks [0,3,20]) and take the last. `tonumber? // 0`
+  # neutralises a non-numeric component; the shape check below rejects it.
+  # `// empty` yields an empty string only for an empty .data array. The
+  # extraction's own exit status is checked: a jq failure is exit 2.
   local current
-  current=$(printf '%s' "$versions_json" | jq -r '
-    [.data[]?.attributes.version | select(. != null)]
-    | sort_by(split(".") | map(tonumber? // 0))
-    | last // empty')
+  if ! current=$(printf '%s' "$versions_json" | jq -r '
+      [.data[].attributes.version]
+      | sort_by(split(".") | map(tonumber? // 0))
+      | last // empty'); then
+    echo "error: could not extract the latest version from 'tessl api ${endpoint}' — inspect it directly (body was: ${versions_json})" >&2
+    return 2
+  fi
 
   # A non-empty result must be numeric MAJOR.MINOR.PATCH — the shape version_gt
   # and the numeric sort assume. A malformed max (a schema change slipping a
