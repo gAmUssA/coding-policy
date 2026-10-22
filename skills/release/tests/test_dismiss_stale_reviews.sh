@@ -232,6 +232,63 @@ t_fetch_failure_hint_is_pinned() {
   gh_hints_pinned "$err"
 }
 
+# --- review lanes (docs/adr/0010-review-lanes.md) ---
+# The Codex and Claude reviewers both post as github-actions[bot]; the body
+# marker is the only thing that tells them apart. Real-shaped review objects.
+CODEX_MARK='<!-- coding-policy:codex-policy-review:v1 -->'
+CLAUDE_MARK='<!-- coding-policy:claude-quality-review:v1 -->'
+
+lane_review() { # <id> <state> <day> <body> [login]
+  jq -cn --argjson id "$1" --arg state "$2" --arg at "2026-01-0$3T00:00:00Z" --arg body "$4" \
+    --arg login "${5:-github-actions[bot]}" \
+    '{id: $id, node_id: "PRR_\($id)", user: {login: $login, type: "Bot"}, body: $body, state: $state,
+      commit_id: "sha\($id)", submitted_at: $at, author_association: "NONE"}'
+}
+
+# A clean Claude-lane COMMENT after a Codex CHANGES_REQUESTED must NOT dismiss
+# the Codex block: it is a different reviewer under the same login.
+t_claude_comment_does_not_dismiss_codex_block() {
+  MOCK_REVIEWS_BODY="[$(lane_review 81 CHANGES_REQUESTED 1 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. One violation.'),$(lane_review 82 COMMENTED 2 "${CLAUDE_MARK}"$'\nNo correctness issues found.')]"
+  local out active
+  out=$(main "owner" "repo" "1") || return 1
+  active=$(jq -r '.left_active | map("\(.lane):\(.review_id)") | join(",")' <<<"$out")
+  assert_eq "no dismissals"          "0"                "$(dismiss_count)" || return 1
+  assert_eq "codex block left active" "codex-policy:81" "$active"
+}
+
+# A clean Codex COMMENT after its own CHANGES_REQUESTED dismisses it.
+t_codex_comment_dismisses_own_block() {
+  MOCK_REVIEWS_BODY="[$(lane_review 83 CHANGES_REQUESTED 1 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. One violation.'),$(lane_review 84 COMMENTED 2 "${CLAUDE_MARK}"$'\nLooks fine.'),$(lane_review 85 COMMENTED 3 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.')]"
+  local out ids
+  out=$(main "owner" "repo" "1") || return 1
+  ids=$(jq -r '.dismissed | map("\(.lane):\(.review_id)") | join(",")' <<<"$out")
+  assert_eq "codex block dismissed" "codex-policy:83" "$ids" || return 1
+  assert_eq "logged dismissed id"   "83" "$(tr -d '\n' < "$DISMISS_LOG")"
+}
+
+# An unmarked legacy Codex block is cleared by a marked Codex all-clear (same
+# lane by login fallback), never by a Claude-lane one.
+t_unmarked_legacy_codex_is_codex_lane() {
+  MOCK_REVIEWS_BODY="[$(lane_review 86 CHANGES_REQUESTED 1 $'Policy loaded: 30 rule files. One violation.'),$(lane_review 87 COMMENTED 2 "${CLAUDE_MARK}"$'\nLooks fine.')]"
+  local out
+  out=$(main "owner" "repo" "1") || return 1
+  assert_eq "claude comment dismisses nothing" "0" "$(dismiss_count)" || return 1
+  assert_eq "legacy block is codex lane" "codex-policy:86" "$(jq -r '.left_active | map("\(.lane):\(.review_id)") | join(",")' <<<"$out")" || return 1
+  : > "$DISMISS_LOG"
+  MOCK_REVIEWS_BODY="[$(lane_review 86 CHANGES_REQUESTED 1 $'Policy loaded: 30 rule files. One violation.'),$(lane_review 88 COMMENTED 2 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.')]"
+  out=$(main "owner" "repo" "1") || return 1
+  assert_eq "marked codex clears legacy block" "86" "$(jq -r '.dismissed | map(.review_id) | join(",")' <<<"$out")"
+}
+
+# A Claude-lane all-clear clears only the Claude lane's own earlier block.
+t_claude_lane_clears_only_itself() {
+  MOCK_REVIEWS_BODY="[$(lane_review 91 CHANGES_REQUESTED 1 "${CODEX_MARK}"$'\nOne violation.'),$(lane_review 92 CHANGES_REQUESTED 2 "${CLAUDE_MARK}"$'\nA bug.'),$(lane_review 93 COMMENTED 3 "${CLAUDE_MARK}"$'\nFixed.')]"
+  local out
+  out=$(main "owner" "repo" "1") || return 1
+  assert_eq "claude block dismissed" "claude-quality:92" "$(jq -r '.dismissed | map("\(.lane):\(.review_id)") | join(",")' <<<"$out")" || return 1
+  assert_eq "codex block left active" "codex-policy:91" "$(jq -r '.left_active | map("\(.lane):\(.review_id)") | join(",")' <<<"$out")"
+}
+
 # --- runner ---
 
 echo "test_dismiss_stale_reviews.sh"
@@ -244,6 +301,10 @@ run "latest DISMISSED leaves earlier active CR" t_latest_dismissed_leaves_earlie
 run "multiple stale CRs all dismissed"          t_multiple_stale_crs_all_dismissed
 run "login is glob-safe against cwd files"      t_login_is_glob_safe_against_cwd_files
 run "fetch failure hint is pinned to github.com" t_fetch_failure_hint_is_pinned
+run "Claude-lane comment never dismisses a Codex block" t_claude_comment_does_not_dismiss_codex_block
+run "Codex comment dismisses its own block"     t_codex_comment_dismisses_own_block
+run "unmarked legacy Codex review is Codex lane" t_unmarked_legacy_codex_is_codex_lane
+run "Claude-lane all-clear clears only itself"  t_claude_lane_clears_only_itself
 
 echo
 echo "passed: ${PASS_COUNT}, failed: ${FAIL_COUNT}"

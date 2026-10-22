@@ -66,10 +66,12 @@ t_pass() {
   # preamble line before the summary would pass it. Here `=~` matches against the
   # whole body string (not line by line), so the pattern's leading `^` anchors to
   # the body's start.
-  local body indicator_re='^Policy loaded: [0-9]+ rule files'
+  # The lane marker line comes first (the classifier needs it at byte 0), then
+  # the summary.
+  local body indicator_re=$'^<!-- coding-policy:codex-policy-review:v1 -->\nPolicy loaded: [0-9]+ rule files'
   body=$(jq -r .body "$GH_CAPTURE")
-  [[ "$body" =~ $indicator_re ]]                              || { bad "pass: body begins with the load indicator"; rm -rf "$dir"; return; }
-  ok "no findings -> APPROVE, summary body, 0 findings"
+  [[ "$body" =~ $indicator_re ]]                              || { bad "pass: body begins with the lane marker, then the load indicator"; rm -rf "$dir"; return; }
+  ok "no findings -> APPROVE, marker + summary body, 0 findings"
   rm -rf "$dir"
 }
 
@@ -185,6 +187,25 @@ t_invalid_json() {
   rm -rf "$dir"
 }
 
+# The posted body must classify into the codex-policy lane BY MARKER through
+# the release skill's classifier entry point (skills/release/review-lanes.sh),
+# so a reviewer sharing the login can be told apart (ADR 0010).
+t_body_classifies_by_marker() {
+  local dir; dir=$(mktemp -d) || { bad "marker: mktemp -d failed"; return; }
+  GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
+  printf '{"summary":"Policy loaded: 23 rule files from rules/. One nit.","findings":[{"path":"a.sh","line":1,"rule":"file-hygiene","message":"m","severity":"advisory"}]}' > "$dir/final.json" || fatal "cannot write $dir/final.json"
+  run_main owner repo 5 "$dir/final.json" >/dev/null || { bad "marker: post-review.sh failed"; rm -rf "$dir"; return; }
+  local lanes cfg
+  lanes="$(cd "$(dirname "$SCRIPT")/../../release" && pwd)/review-lanes.sh"
+  cfg=$(bash "$lanes") || { bad "marker: review-lanes.sh failed"; rm -rf "$dir"; return; }
+  if jq -e --argjson cfg "$cfg" '.body | startswith($cfg["codex-policy"].marker)' "$GH_CAPTURE" >/dev/null; then
+    ok "posted body carries the codex-policy lane marker the classifier reads"
+  else
+    bad "posted body does not start with the classifier's codex-policy marker"
+  fi
+  rm -rf "$dir"
+}
+
 echo "== post-review.sh tests =="
 t_pass
 t_pass_422_fallback
@@ -194,6 +215,7 @@ t_mixed
 t_missing_severity_blocks
 t_missing_file
 t_invalid_json
+t_body_classifies_by_marker
 echo "== summary: ${pass} passed, ${fail} failed =="
 echo "test-summary: passed=${pass} failed=${fail} token=${SUMMARY_TOKEN}"
 [[ "$fail" -eq 0 ]]

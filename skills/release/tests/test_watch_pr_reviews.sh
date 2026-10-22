@@ -411,6 +411,8 @@ case "$1 ${2:-}" in
       filter=""
       while [[ $# -gt 0 ]]; do [[ "$1" == --jq ]] && filter="$2"; shift; done
       echo '{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[]}}}}}' | jq "$filter"
+    elif [[ "$args" == *"/reviews"* && -n "${FAKE_GH_REVIEWS_FILE:-}" ]]; then
+      sed "s/@HEAD@/${head}/g" "$FAKE_GH_REVIEWS_FILE"
     elif [[ "$args" == *"/reviews"* ]]; then
       echo '[{"id":1,"user":{"login":"github-actions[bot]"},"state":"COMMENTED","submitted_at":"2026-10-20T10:00:00Z","body":"ok","commit_id":"'"$head"'"},{"id":2,"user":{"login":"copilot-pull-request-reviewer[bot]"},"state":"COMMENTED","submitted_at":"2026-10-20T10:01:00Z","body":"ok","commit_id":"'"$head"'"}]'
     else
@@ -476,6 +478,97 @@ test_e2e_replaced_by_fail_is_ci_failure() {
   assert_eq "result" "ci_failure" "$(result_of "$out")" || return 1
 }
 run "e2e: a cancel replaced by a fail is ci_failure" test_e2e_replaced_by_fail_is_ci_failure
+
+# --- Test 15: review lanes through the real entry point (ADR 0010) ----------
+# Real-shaped GitHub review objects, every one bound to head (@HEAD@ is
+# substituted by the fake gh). The Codex reviewer and a Claude reviewer both
+# post as github-actions[bot]; only the body marker tells them apart.
+CODEX_MARK='<!-- coding-policy:codex-policy-review:v1 -->'
+CLAUDE_MARK='<!-- coding-policy:claude-quality-review:v1 -->'
+PASSING_CHECKS='[{"bucket":"pass","name":"unit-tests"},{"bucket":"pass","name":"review"}]'
+
+watch_with_reviews() {
+  printf '%s' "$1" > "$TMPDIR_TEST/reviews.json" \
+    || { echo "    FAIL: could not write the reviews fixture under ${TMPDIR_TEST}" >&2; return 2; }
+  FAKE_GH_REVIEWS_FILE="$TMPDIR_TEST/reviews.json" watch_with_checks "$PASSING_CHECKS"
+}
+
+review_json() { # <id> <login> <state> <minute> <body>
+  jq -cn --argjson id "$1" --arg login "$2" --arg state "$3" --arg at "2026-10-20T10:$4:00Z" --arg body "$5" \
+    '{id: $id, user: {login: $login, type: "Bot"}, state: $state, submitted_at: $at, body: $body,
+      commit_id: "@HEAD@", html_url: "https://github.com/gamussa/coding-policy/pull/42#pullrequestreview-\($id)"}'
+}
+
+test_e2e_claude_comment_does_not_clear_codex_block() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' CHANGES_REQUESTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files.\n\n## Blocking findings (gate the merge)\n- `a.sh:1` — **error-handling** — m'),$(review_json 2 'copilot-pull-request-reviewer[bot]' COMMENTED 01 'Copilot reviewed 3 files'),$(review_json 3 'github-actions[bot]' COMMENTED 02 "${CLAUDE_MARK}"$'\nNo correctness issues found.')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
+  assert_eq "codex state" "CHANGES_REQUESTED" "$(echo "$out" | jq -r '.reviews.codex.state')" || return 1
+  assert_eq "claude lane state" "COMMENTED" "$(echo "$out" | jq -r '.lanes["claude-quality"].state')" || return 1
+  assert_eq "claude lane gating" "false" "$(echo "$out" | jq -r '.lanes["claude-quality"].gating')" || return 1
+}
+run "e2e: a clean Claude-lane comment never clears a Codex block" test_e2e_claude_comment_does_not_clear_codex_block
+
+test_e2e_codex_comment_clears_its_own_block() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' CHANGES_REQUESTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. One violation.'),$(review_json 2 'copilot-pull-request-reviewer[bot]' COMMENTED 01 'Copilot reviewed 3 files'),$(review_json 3 'github-actions[bot]' COMMENTED 02 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "codex state" "COMMENTED" "$(echo "$out" | jq -r '.reviews.codex.state')" || return 1
+}
+run "e2e: a clean Codex comment clears its own block" test_e2e_codex_comment_clears_its_own_block
+
+test_e2e_unmarked_legacy_codex_review_still_gates() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' CHANGES_REQUESTED 00 $'Policy loaded: 30 rule files. One violation.\n\n## Blocking findings (gate the merge)'),$(review_json 2 'copilot-pull-request-reviewer[bot]' COMMENTED 01 'Copilot reviewed 3 files')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
+  assert_eq "codex lane state" "CHANGES_REQUESTED" "$(echo "$out" | jq -r '.lanes["codex-policy"].state')" || return 1
+}
+run "e2e: an unmarked legacy Codex review still classifies as Codex" test_e2e_unmarked_legacy_codex_review_still_gates
+
+# A lane flagged gating in the snapshot gates; the same verdict on an advisory
+# lane does not. This is the switch ADR 0010's promotion flips.
+lanes_snap() { # <claude-state> <claude-gating>
+  snap MERGEABLE CLEAN success COMMENTED COMMENTED | jq -c --arg s "$1" --argjson g "$2" \
+    '. + {lanes: {"codex-policy": (.reviews.codex + {gating: true}),
+                  "claude-quality": {state: $s, submitted_at: null, body: null, commit_id: null, stale: false, gating: $g},
+                  "copilot": (.reviews.copilot + {gating: false})}}'
+}
+
+test_advisory_claude_block_does_not_gate() {
+  reset_mocks
+  queue "$(lanes_snap CHANGES_REQUESTED false)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")"
+}
+run "an advisory Claude-lane CHANGES_REQUESTED does not gate" test_advisory_claude_block_does_not_gate
+
+test_gating_claude_block_gates() {
+  reset_mocks
+  queue "$(lanes_snap CHANGES_REQUESTED true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")"
+}
+run "a gating Claude-lane CHANGES_REQUESTED gates" test_gating_claude_block_gates
+
+test_gating_lane_absent_is_not_ready() {
+  reset_mocks
+  queue "$(lanes_snap none true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  assert_eq "result" "pending_at_budget" "$(result_of "$out")"
+}
+run "a gating lane with no verdict is not ready" test_gating_lane_absent_is_not_ready
 
 echo
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"

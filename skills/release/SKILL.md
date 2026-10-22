@@ -97,7 +97,7 @@ skills/release/watch-pr-reviews.sh <owner> <repo> <pr-number>
 
 It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elapsed_seconds": N}`. Branch on `.watch.result`:
 
-- `ready` (exit 0) — mergeable, CI `success`/`none`, both bots posted, the policy reviewer not `CHANGES_REQUESTED`. Read every non-empty `reviews.*.body` (a `COMMENTED` verdict with zero inline comments still carries a body — `rules/reviewer-feedback-reading.md`), then proceed to Step 6.
+- `ready` (exit 0) — mergeable, CI `success`/`none`, both bots posted, the policy reviewer not `CHANGES_REQUESTED`. Verdicts are read per review lane (`skills/release/review-lanes.sh`); `lanes.*` reports every lane, and only a lane with `gating: true` gates. Read every non-empty `reviews.*.body` (a `COMMENTED` verdict with zero inline comments still carries a body — `rules/reviewer-feedback-reading.md`), then proceed to Step 6.
 - `changes_requested` (exit 0) — the policy reviewer found a blocking finding. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
@@ -121,7 +121,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
 
 Only proceed when Step 5 returned `ready`, every non-empty review body has been read, and every inline comment has a reply per Step 6. Then merge automatically per `rules/ship-on-green.md` — do not pause to ask.
 
-**Clear superseded review gates first.** `github-actions[bot]` cannot `APPROVE` (HTTP 422), so a clean re-review lands as `COMMENT` and does not supersede its own earlier `CHANGES_REQUESTED`; the stale request keeps the merge `BLOCKED`. Dismiss it (idempotent, JSON summary, decision predicate in the script header):
+**Clear superseded review gates first.** `github-actions[bot]` cannot `APPROVE` (HTTP 422), so a clean re-review lands as `COMMENT` and does not supersede its own earlier `CHANGES_REQUESTED`; the stale request keeps the merge `BLOCKED`. Dismiss it (idempotent, JSON summary, decision predicate in the script header); only a later all-clear from the same review lane dismisses:
 
 ```bash
 skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>

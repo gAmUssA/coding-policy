@@ -25,10 +25,20 @@
 #                   "commit_id": "<SHA the review is bound to>|null",
 #                   "stale": bool, "requested": bool}
 #     },
+#     "lanes": {   // every review lane (skills/release/review-lanes.sh)
+#       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool},
+#       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool},
+#       "copilot":        {<same fields as reviews.copilot>, "gating": bool}
+#     },
 #     "inline_comments": {"codex": N, "copilot": N},
 #     "merge_state": {"status": "CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...",
 #                     "mergeable": "MERGEABLE|CONFLICTING|UNKNOWN"}
 #   }
+#
+# Each verdict is read per review LANE (login plus body marker, see
+# review-lanes.sh), never per login: `reviews.codex` is the codex-policy lane
+# only, so a Claude-lane review posted under the same login never becomes the
+# Codex verdict. `lanes.*.gating` says which lanes gate the merge.
 #
 # A review's `.state` is resolved AGAINST `head_sha`: a review whose
 # `commit_id` is not the current head has not reviewed the current code, so
@@ -85,8 +95,14 @@ set -euo pipefail
 # merge gate and lets a real Copilot finding merge unanswered. Comment
 # counting therefore matches a SET of logins per reviewer. A comment carries
 # exactly one author, so listing multiple logins cannot double-count.
-CODEX_REVIEW_LOGINS=("github-actions[bot]")
-COPILOT_REVIEW_LOGIN="copilot-pull-request-reviewer[bot]"
+#
+# Review logins come from the lane classifier (review-lanes.sh): one login can
+# carry several lanes, so main() reads each verdict per LANE, never per login.
+# shellcheck source=skills/release/review-lanes.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-lanes.sh" \
+  || { echo "error: cannot source review-lanes.sh beside poll-pr-reviews.sh — reinstall the release skill so both files ship together" >&2; exit 2; }
+CODEX_REVIEW_LOGINS=("${CODEX_POLICY_LOGINS[@]}")
+COPILOT_REVIEW_LOGIN="${COPILOT_LOGINS[0]}"
 CODEX_COMMENT_LOGINS=("github-actions[bot]")
 COPILOT_COMMENT_LOGINS=("Copilot" "copilot-pull-request-reviewer[bot]")
 
@@ -134,14 +150,10 @@ slurp_api_array() {
 # login's reviews in chronological order. A merge gate must not rest on that
 # assumption — a login whose re-review came back out of order would gate on a
 # superseded verdict — so select the max by submitted_at explicitly.
-latest_review_by() {
-  local owner="$1" repo="$2" pr="$3"; shift 3
-  local logins_json
-  logins_json=$(jq -n '$ARGS.positional' --args "$@") \
-    || { echo "error: failed to encode login list for review lookup" >&2; return 1; }
-  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
-    | jq --argjson logins "$logins_json" '
-        [.[] | select(.user.login | IN($logins[]))]
+# Aggregation over an already-filtered review array, shared by
+# latest_review_by and latest_review_in_lane.
+# shellcheck disable=SC2016 # jq program, not shell expansions
+LATEST_REVIEW_JQ='
         | (group_by(.user.login) | map(max_by(.submitted_at))) as $per_login_latest
         | ( ($per_login_latest | map(select(.state == "CHANGES_REQUESTED")) | first)
             // ($per_login_latest | sort_by(.submitted_at) | last) )
@@ -154,6 +166,26 @@ latest_review_by() {
         | if . == null then {state: "none", submitted_at: null, body: null, commit_id: null}
           else {state: (if (.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then .state else "none" end),
                 submitted_at, body, commit_id} end'
+
+latest_review_by() {
+  local owner="$1" repo="$2" pr="$3"; shift 3
+  local logins_json
+  logins_json=$(jq -n '$ARGS.positional' --args "$@") \
+    || { echo "error: failed to encode login list for review lookup" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
+    | jq --argjson logins "$logins_json" "[.[] | select(.user.login | IN(\$logins[]))] ${LATEST_REVIEW_JQ}"
+}
+
+# The same verdict, restricted to one review LANE (review-lanes.sh): a review
+# counts only when the classifier puts it in <lane>, so a Claude-lane comment
+# under the Codex login never stands in for the Codex verdict (ADR 0010).
+latest_review_in_lane() {
+  local owner="$1" repo="$2" pr="$3" lane="$4" cfg
+  cfg=$(review_lanes_config) \
+    || { echo "error: failed to build the review-lane config" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
+    | jq --argjson cfg "$cfg" --arg lane "$lane" \
+        "$(review_lanes_jq) [.[] | select(review_lane(\$cfg) == \$lane)] ${LATEST_REVIEW_JQ}"
 }
 
 # Resolve a latest_review_by result against the PR head SHA. A review's verdict
@@ -320,14 +352,19 @@ main() {
   copilot_requested=$(requested_among "$requested_logins" "$COPILOT_REVIEW_LOGIN") \
     || { echo "error: could not match Copilot against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api --hostname github.com graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
 
-  local codex_review copilot_review codex_comments copilot_comments
-  codex_review=$(latest_review_by   "$owner" "$repo" "$pr_number" "${CODEX_REVIEW_LOGINS[@]}") \
+  local codex_review copilot_review claude_review codex_comments copilot_comments lanes_cfg
+  codex_review=$(latest_review_in_lane   "$owner" "$repo" "$pr_number" "codex-policy") \
     || { echo "error: failed to fetch Codex review state" >&2; exit 1; }
-  copilot_review=$(latest_review_by "$owner" "$repo" "$pr_number" "$COPILOT_REVIEW_LOGIN") \
+  copilot_review=$(latest_review_in_lane "$owner" "$repo" "$pr_number" "copilot") \
     || { echo "error: failed to fetch Copilot review state" >&2; exit 1; }
+  claude_review=$(latest_review_in_lane  "$owner" "$repo" "$pr_number" "claude-quality") \
+    || { echo "error: failed to fetch Claude review state" >&2; exit 1; }
+  lanes_cfg=$(review_lanes_config) \
+    || { echo "error: failed to build the review-lane config" >&2; exit 1; }
   # Resolve each verdict against head — stale reviews collapse to "none".
   codex_review=$(resolve_review_against_head   "$codex_review"   "$head_sha")
   copilot_review=$(resolve_review_against_head "$copilot_review" "$head_sha")
+  claude_review=$(resolve_review_against_head  "$claude_review"  "$head_sha")
   codex_review=$(printf '%s' "$codex_review"     | jq --argjson r "$codex_requested"   '. + {requested: $r}')
   copilot_review=$(printf '%s' "$copilot_review" | jq --argjson r "$copilot_requested" '. + {requested: $r}')
   codex_comments=$(toplevel_comments_by   "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
@@ -345,11 +382,18 @@ main() {
     --argjson codex_comments "$codex_comments" \
     --argjson copilot_comments "$copilot_comments" \
     --argjson merge_state "$merge_state" \
+    --argjson claude "$claude_review" \
+    --argjson cfg "$lanes_cfg" \
     '{
       pr_number: $pr_number,
       head_sha: $head_sha,
       ci: {status: $ci_status, checks: $checks},
       reviews: {codex: $codex, copilot: $copilot},
+      lanes: {
+        "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating}),
+        "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating}),
+        "copilot":        ($copilot + {gating: $cfg["copilot"].gating})
+      },
       inline_comments: {codex: $codex_comments, copilot: $copilot_comments},
       merge_state: ($merge_state | {status, mergeable})
     }'

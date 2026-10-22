@@ -8,9 +8,12 @@
 # fabricated "N minutes in the policy" citations) crept in. This script owns
 # that loop so the cadence and give-up budget are one tuned constant, not an
 # agent choice, and it watches EXACTLY the fields the Step 7 merge gate reads:
-# both bots' LATEST review state (resolved by bot login inside
-# poll-pr-reviews.sh), CI status, and merge state. Only the policy reviewer
-# gates (rules/review-severity.md — Copilot is always advisory); it waits for
+# both bots' LATEST review state (resolved by review lane inside
+# poll-pr-reviews.sh), CI status, and merge state. Verdicts are read per
+# review lane (review-lanes.sh): the codex-policy lane gates, plus any lane
+# whose `lanes.<lane>.gating` is true; the claude-quality lane is advisory
+# until ADR 0010 promotes it. Copilot is always advisory
+# (rules/review-severity.md); the watcher waits for
 # Copilot to post so its body can be read, never gates on its verdict. It does
 # NOT wait for inline comments to appear (a verdict with zero inline comments is
 # a complete review) and does NOT key off any hand-picked run/comment/check id.
@@ -26,7 +29,9 @@
 #                                      CHANGES_REQUESTED. Copilot may be
 #                                      CHANGES_REQUESTED and this still reaches
 #                                      ready (Copilot is always advisory).
-#   rc 0, result "changes_requested" — the policy reviewer's latest verdict is
+#   rc 0, result "changes_requested" — the policy reviewer's latest verdict
+#                                      (or that of any lane the snapshot marks
+#                                      `gating: true`) is
 #                                      CHANGES_REQUESTED (a blocking finding is
 #                                      present — advisory-only reviews post
 #                                      COMMENT, see rules/review-severity.md).
@@ -122,12 +127,18 @@ main() {
       exit 2
     fi
 
-    local mergeable mstatus ci codex copilot copilot_requested
+    local mergeable mstatus ci codex copilot copilot_requested gating_cr gating_absent
     mergeable=$(printf '%s' "$snapshot" | jq -r '.merge_state.mergeable')
     mstatus=$(printf '%s'   "$snapshot" | jq -r '.merge_state.status')
     ci=$(printf '%s'        "$snapshot" | jq -r '.ci.status')
     codex=$(printf '%s'     "$snapshot" | jq -r '.reviews.codex.state')
     copilot=$(printf '%s'   "$snapshot" | jq -r '.reviews.copilot.state')
+    # Per-lane gating (review-lanes.sh): any lane flagged gating that is
+    # CHANGES_REQUESTED blocks, and every gating lane must have posted before
+    # ready. Advisory lanes are reported in the snapshot and never gate. A
+    # snapshot without `lanes` reads as no extra gating lanes.
+    gating_cr=$(printf '%s'     "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "CHANGES_REQUESTED")] | length > 0')
+    gating_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "none")] | length > 0')
     # `// true` would be wrong here: jq's alternative operator takes the right
     # side for `false` as well as for null, which is exactly the value this
     # branch exists to read. Absence alone defaults to waiting.
@@ -147,7 +158,7 @@ main() {
     # severity; advisory-only reviews post COMMENT). Copilot is always advisory
     # (rules/review-severity.md) — its verdict never produces this result; the
     # agent still reads its body per rules/reviewer-feedback-reading.md.
-    if [[ "$codex" == "CHANGES_REQUESTED" ]]; then
+    if [[ "$codex" == "CHANGES_REQUESTED" || "$gating_cr" == "true" ]]; then
       emit_and_exit "changes_requested" "$attempts" "$elapsed" "$snapshot" 0
     fi
 
@@ -158,7 +169,8 @@ main() {
     if [[ "$mergeable" == "MERGEABLE" \
        && ( "$ci" == "success" || "$ci" == "none" ) \
        && "$codex" != "none" \
-       && "$copilot" != "none" ]]; then
+       && "$copilot" != "none" \
+       && "$gating_absent" == "false" ]]; then
       emit_and_exit "ready" "$attempts" "$elapsed" "$snapshot" 0
     fi
 

@@ -3,9 +3,10 @@
 #
 # Reads the structured result Codex produced (the --output-last-message file,
 # shaped by .github/codex-review/schema.json) and submits ONE pull-request
-# review whose body carries the summary and every finding. Findings ride in
-# the review body rather than as inline comments so an off-diff line can never
-# trigger the HTTP 422 that would cascade-fail the whole review.
+# review whose body carries the lane marker, the summary and every finding.
+# Findings ride in the review body rather than as inline comments so an
+# off-diff line can never trigger the HTTP 422 that would cascade-fail the
+# whole review.
 #
 # The review event is DERIVED from per-finding severity, not read from a model
 # verdict (rules/review-severity.md — the gate is a deterministic function of
@@ -24,6 +25,13 @@
 # Exit:  0 on success; non-zero with a stderr diagnostic on failure.
 
 set -euo pipefail
+
+# Review-lane marker: the body's first line, an HTML comment GitHub does not
+# render. The release skill's lane classifier (skills/release/review-lanes.sh,
+# CODEX_POLICY_MARKER) reads it to tell this reviewer's reviews from another
+# reviewer posting under the same login (docs/adr/0010-review-lanes.md).
+# Consumers carry this file without the classifier, so the value is literal.
+REVIEW_LANE_MARKER="<!-- coding-policy:codex-policy-review:v1 -->"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "error: jq is not installed; install with 'brew install jq' (macOS) or 'apt install jq' (Debian/Ubuntu) and re-run" >&2
@@ -92,10 +100,10 @@ main() {
   else                                event="APPROVE"
   fi
 
-  # Build the review body: summary, then blocking and advisory findings in
-  # labeled sections (each omitted when its tier is empty).
+  # Build the review body: lane marker, summary, then blocking and advisory
+  # findings in labeled sections (each omitted when its tier is empty).
   local body blocking_md advisory_md
-  body="$summary"
+  body="${REVIEW_LANE_MARKER}"$'\n'"${summary}"
   if (( blocking_count > 0 )); then
     blocking_md=$(jq -r '.findings[] | select((.severity // "blocking") != "advisory") | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
     body="${body}"$'\n\n'"## Blocking findings (gate the merge)"$'\n'"${blocking_md}"
