@@ -8,9 +8,11 @@
 # `set -euo pipefail` scoped to that guard.
 #
 # version_gt <a> <b>: exit 0 iff a > b, comparing numeric MAJOR.MINOR.PATCH.
-# Deliberately numeric-only — no prerelease/build precedence — because its
-# inputs come from capture-registry-baseline.sh, which emits numeric-only
-# versions (a prerelease value would reach (( )) and error rather than order).
+# Deliberately numeric-only — no prerelease/build precedence. Its inputs stay
+# numeric: registry-version.sh rejects any non-numeric registry version, and
+# verify-publish-landed.sh handles the `unpublished` baseline sentinel before
+# it calls version_gt (a prerelease value would reach (( )) and error rather
+# than order).
 
 version_gt() {
   [[ "$1" != "$2" ]] || return 1

@@ -53,7 +53,7 @@ export PATH="$STUBDIR:$PATH"
 # The `ok` fixture lists versions oldest-first with a double-digit and a
 # triple-digit patch so the script's NUMERIC max selection is genuinely
 # exercised (a lexical sort would pick 0.3.20).
-cat > "$STUBDIR/tessl" <<'STUB'
+cat > "$STUBDIR/tessl" <<'STUB' || { echo "fatal: cannot write the tessl stub to ${STUBDIR}/tessl — check that TMPDIR is writable and not full" >&2; exit 2; }
 #!/usr/bin/env bash
 case "$1" in
   api)
@@ -72,6 +72,51 @@ case "$1" in
         exit 1 ;;
       no_data)
         printf '{}\n' ;;
+      absent)
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
+        exit 1 ;;
+      absent_rc2|absent_rc126|absent_rc137)
+        # The exact not-found body, but a status other than tessl's
+        # documented 1 for it: a crashed or killed CLI, not a registry answer.
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n'
+        exit "${MOCK_MODE#absent_rc}" ;;
+      absent_rc0)
+        printf '{"error":{"title":"Not Found","status":404,"message":"Not Found"}}\n' ;;
+      entry_no_version)
+        printf '%s\n' '{"data":[{"attributes":{}}]}' ;;
+      entry_null_version)
+        printf '%s\n' '{"data":[{"attributes":{"version":null}}]}' ;;
+      ver_empty)
+        printf '%s\n' '{"data":[{"attributes":{"version":""}}]}' ;;
+      ver_short)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}}]}' ;;
+      ver_vprefix)
+        printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}}]}' ;;
+      ver_prerelease)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2.3-rc1"}}]}' ;;
+      ver_mixed_vprefix)
+        printf '%s\n' '{"data":[{"attributes":{"version":"v1.2.3"}},{"attributes":{"version":"2.0.0"}}]}' ;;
+      ver_mixed_empty)
+        printf '%s\n' '{"data":[{"attributes":{"version":""}},{"attributes":{"version":"2.0.0"}}]}' ;;
+      ver_mixed_short)
+        printf '%s\n' '{"data":[{"attributes":{"version":"1.2"}},{"attributes":{"version":"2.0.0"}}]}' ;;
+      entry_numeric_version)
+        printf '%s\n' '{"data":[{"attributes":{"version":123}}]}' ;;
+      entry_no_attributes)
+        printf '%s\n' '{"data":[{}]}' ;;
+      entry_not_object)
+        printf '%s\n' '{"data":[1]}' ;;
+      entry_mixed)
+        printf '%s\n' '{"data":[{"attributes":{"version":"0.1.0"}},{"attributes":{}}]}' ;;
+      absent_404_bare)
+        printf '{"error":{"status":404}}\n'
+        exit 1 ;;
+      absent_404_with_data)
+        printf '{"error":{"title":"Not Found","status":404},"data":[]}\n'
+        exit 1 ;;
+      server_error)
+        printf '{"error":{"title":"Internal Server Error","status":500}}\n'
+        exit 1 ;;
       malformed_version)
         printf '{"data":[{"attributes":{"version":"not-a-version"}}]}\n' ;;
       *) echo "stub tessl: unknown MOCK_MODE='${MOCK_MODE:-}'" >&2; exit 99 ;;
@@ -80,14 +125,14 @@ case "$1" in
   *) echo "stub tessl: unsupported invocation: $*" >&2; exit 2 ;;
 esac
 STUB
-chmod +x "$STUBDIR/tessl"
+chmod +x "$STUBDIR/tessl" || { echo "fatal: cannot make ${STUBDIR}/tessl executable — check the filesystem allows chmod there (TMPDIR mounted noexec?)" >&2; exit 2; }
 
 # Invoke with MOCK_MODE exported so it reaches the fake tessl subprocess.
 invoke() {
   local mode="$1"
   OUT="$(MOCK_MODE="$mode" bash "$SCRIPT" gamussa coding-policy 2>"$STUBDIR/err")"
   CODE=$?
-  ERR="$(cat "$STUBDIR/err")"
+  ERR="$(cat "$STUBDIR/err")" || { echo "fatal: cannot read captured stderr at ${STUBDIR}/err — check that TMPDIR is readable" >&2; exit 2; }
 }
 
 echo "== registry-version.sh tests =="
@@ -107,6 +152,25 @@ if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":null}' ]]; then
 else
   fail "empty data: code=$CODE out='$OUT' err='$ERR'"
 fi
+
+# --- never published: the versions API's structured not-found body, which
+#     tessl answers with exit 1, is a first-publish baseline ---
+invoke absent
+if [[ "$CODE" == 0 ]] && [[ "$OUT" == '{"version":null}' ]]; then
+  pass "structured Not Found/404 (exit 1) -> exit 0, {\"version\":null}"
+else
+  fail "structured 404: code=$CODE out='$OUT' err='$ERR'"
+fi
+
+# --- any other error body stays a failure, never a fabricated baseline ---
+for mode in absent_rc0 ver_empty ver_short ver_vprefix ver_prerelease ver_mixed_vprefix ver_mixed_empty ver_mixed_short entry_no_version entry_null_version entry_numeric_version entry_no_attributes entry_not_object entry_mixed absent_rc2 absent_rc126 absent_rc137 absent_404_bare absent_404_with_data server_error; do
+  invoke "$mode"
+  if [[ "$CODE" == 2 ]] && [[ -z "$OUT" ]] && [[ -n "$ERR" ]]; then
+    pass "$mode -> exit 2, never a first-publish baseline"
+  else
+    fail "$mode: code=$CODE out='$OUT' err='$ERR'"
+  fi
+done
 
 # --- a tessl warning on stderr must not poison the parsed version ---
 invoke warning_on_stderr

@@ -12,15 +12,15 @@
 # listing is eventually-consistent and lags the version API by minutes, so a
 # freshly-landed publish reads back as "not published yet" through it — a
 # false negative exactly when the caller is asking "did my publish land"
-# (#181). The versions API reflects a publish immediately. capture-registry-
-# baseline.sh reads plugin info for the PRE-merge baseline (staleness is fine
-# before the publish); this script reads the versions API for the POST
-# question (staleness is not).
+# (#181). The versions API reflects a publish immediately. Both release-gate
+# reads go through it: capture-registry-baseline.sh for the PRE-merge baseline
+# and verify-publish-landed.sh for the POST question. Both source this file.
 #
 # Sourceable AND runnable, with TWO stdout contracts for the two entry points:
 #   - the registry_version FUNCTION prints the BARE version string (empty when
-#     never published) — verify-publish-landed.sh sources this file and calls
-#     it so an in-process `tessl` shell-mock (its unit suite) reaches the read.
+#     never published) — capture-registry-baseline.sh and
+#     verify-publish-landed.sh source this file and call it, so an in-process
+#     `tessl` shell-mock (verify's unit suite) reaches the read.
 #   - the SCRIPT's main() emits STRUCTURED JSON (rules/script-delegation.md —
 #     deterministic scripts emit JSON, not prose) — scripts/assemble-release.sh
 #     runs it as a subprocess and parses `.version`.
@@ -31,17 +31,25 @@
 # Out:   one JSON object on stdout — {"version": "<major.minor.patch>"} for a
 #        published tile, or {"version": null} when the tile has never published
 #        (an empty registry is a valid first-publish baseline, not an error).
+#        Never published covers two bodies: `{"data":[]}`, and the structured
+#        not-found body the versions API answers for a plugin with no versions,
+#        `{"error":{"status":404,"title":"Not Found"[,"message":...]}}` with no
+#        other key, AND tessl's exit status 1 for it. The same body with any
+#        other exit status is a failure. Any other error body — a 404 of another shape, 401, 5xx — a
+#        transport failure, or an unparseable body stays a failure.
 #        Callers parse `.version`: the gate's capture phase reads null as "no
 #        baseline yet". Diagnostics go to stderr.
 # Exit:  0 on a successful read (published version OR never-published null);
 #        2 on tool/parse failure (tessl or jq absent, tessl unreachable,
-#        non-JSON body). On exit 2 stdout is empty — no JSON is emitted.
+#        non-JSON body, a .data entry whose version is not a numeric
+#        MAJOR.MINOR.PATCH string — prereleases included, which this plugin
+#        family never publishes — or a failed extraction). On exit 2 stdout is empty — no JSON is emitted.
 
 set -euo pipefail
 
 # Script-global, NOT a main() local: the EXIT trap fires after main() returns,
 # when a main-local would be out of scope and `set -u` would turn cleanup into
-# an unbound-variable failure (same reasoning as capture-registry-baseline.sh).
+# an unbound-variable failure.
 # registry_version() also clears it inline on every return path, so the
 # main-level EXIT trap is only a backstop for an unexpected signal.
 RV_ERR_FILE=""
@@ -81,8 +89,26 @@ registry_version() {
   # version — same capture discipline as verify-moderation-cleared.sh. One page
   # suffices: the endpoint returns newest-first and a publish only ever adds a
   # new highest version, so the maximum is always on page 1.
-  local versions_json
-  if ! versions_json=$(tessl api "$endpoint" 2>"$RV_ERR_FILE"); then
+  local versions_json call_rc=0
+  versions_json=$(tessl api "$endpoint" 2>"$RV_ERR_FILE") || call_rc=$?
+
+  # The versions endpoint answers a never-published plugin with a structured
+  # 404 and tessl exits 1 for it. Both are required: the same body with any
+  # other status (0, 2, 126, a 137 kill) is not that registry answer and
+  # falls through to the failure paths below. Strict shape: the top level holds only `error`, which holds only
+  # status/title/message, with the number 404 and the title "Not Found". A
+  # looser match (any 404, any body naming "Not Found") would let a wrong-slug
+  # route or a proxy error page fabricate a first-publish baseline.
+  if (( call_rc == 1 )) && printf '%s' "$versions_json" | jq -e '
+      type == "object" and (keys == ["error"])
+      and (.error | type == "object")
+      and ((.error | keys) - ["message", "status", "title"] | length == 0)
+      and .error.status == 404 and .error.title == "Not Found"' >/dev/null 2>&1; then
+    cleanup_rv_err_file
+    return 0
+  fi
+
+  if (( call_rc != 0 )); then
     local err; err=$(cat "$RV_ERR_FILE")
     cleanup_rv_err_file
     echo "error: 'tessl api ${endpoint}' failed: ${err} — verify (1) tessl CLI is installed and on PATH ('command -v tessl'), (2) the workspace/plugin slug is correct, (3) you have network access to the registry, then re-run 'tessl api ${endpoint}' directly to inspect the failure" >&2
@@ -111,18 +137,36 @@ registry_version() {
     return 2
   fi
 
+  # Every entry must carry a numeric MAJOR.MINOR.PATCH .attributes.version.
+  # A missing, null, non-string, empty or otherwise malformed version ("1.2",
+  # "v1.2.3", a prerelease such as "1.2.3-rc1") is a malformed entry, never
+  # skipped: skipping it would turn a page of malformed entries into an empty
+  # (never-published) result, or hide it behind a valid version that sorts
+  # later. Prereleases are rejected: this plugin family never publishes them,
+  # and version_gt orders numeric versions only.
+  # Only an empty .data array, or the exit-1 not-found body above, may yield
+  # an empty successful read.
+  if ! printf '%s' "$versions_json" | jq -e '
+      all(.data[]; type == "object" and (.attributes | type == "object")
+                   and (.attributes.version | type == "string"
+                        and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")))' >/dev/null 2>&1; then
+    echo "error: 'tessl api ${endpoint}' has a .data entry whose .attributes.version string is not numeric MAJOR.MINOR.PATCH — an endpoint shape change or malformed entry, not an empty registry. Inspect it directly with 'tessl api ${endpoint}' (body was: ${versions_json})" >&2
+    return 2
+  fi
+
   # Max version across the page, ranked numerically. sort_by a per-element
   # parsed [major,minor,patch] key (jq compares arrays element-wise, so
-  # [0,3,119] outranks [0,3,20]) and take the last — depends only on the
-  # `.version` string, not the endpoint's split-out int fields, so a shape
-  # change there can't silently mis-rank. `tonumber? // 0` neutralises a
-  # non-numeric component rather than aborting the whole rank. `// empty`
-  # yields an empty string when the tile has never published.
+  # [0,3,119] outranks [0,3,20]) and take the last. Every component is
+  # numeric (checked above). `// empty` yields an empty string only for an empty .data array. The
+  # extraction's own exit status is checked: a jq failure is exit 2.
   local current
-  current=$(printf '%s' "$versions_json" | jq -r '
-    [.data[]?.attributes.version | select(. != null)]
-    | sort_by(split(".") | map(tonumber? // 0))
-    | last // empty')
+  if ! current=$(printf '%s' "$versions_json" | jq -r '
+      [.data[].attributes.version]
+      | sort_by(split(".") | map(tonumber))
+      | last // empty'); then
+    echo "error: could not extract the latest version from 'tessl api ${endpoint}' — inspect it directly (body was: ${versions_json})" >&2
+    return 2
+  fi
 
   # A non-empty result must be numeric MAJOR.MINOR.PATCH — the shape version_gt
   # and the numeric sort assume. A malformed max (a schema change slipping a

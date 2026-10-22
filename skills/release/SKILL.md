@@ -130,8 +130,13 @@ skills/release/dismiss-stale-reviews.sh <owner> <repo> <pr-number>
 **Tessl publication: capture the registry baseline before merging** so the post-merge check has something to compare against. A GitHub tag/asset publication skips this:
 
 ```bash
-PRE=$(skills/release/capture-registry-baseline.sh <workspace> <plugin> | jq -r .version)
+baseline_json=$(skills/release/capture-registry-baseline.sh <workspace> <plugin>) \
+  || { echo "Baseline not captured — the release stops before merge" >&2; exit 1; }
+PRE=$(jq -er '.version | strings' <<<"$baseline_json") \
+  || { echo "Baseline output has no .version string — the release stops before merge" >&2; exit 1; }
 ```
+
+`PRE` is a numeric version or `unpublished`. Pass it to `verify-publish-landed.sh` unchanged. Either guard firing stops the release before merge. The output contract is the `skills/release/capture-registry-baseline.sh` header.
 
 **(A) From the base checkout:**
 
@@ -161,7 +166,10 @@ git remote prune origin
 
 ```bash
 merge_sha=$(gh pr view <N> --repo github.com/<owner>/<repo> --json mergeCommit --jq '.mergeCommit.oid')
-tessl_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin" | jq -r '.database_id')
+tessl_run_json=$(skills/release/resolve-publish-run.sh <owner> <repo> "$merge_sha" "Publish Plugin") \
+  || { echo "Publish run not resolved — see stderr" >&2; exit 1; }
+tessl_run_id=$(jq -er '.database_id | numbers' <<<"$tessl_run_json") \
+  || { echo "Resolver output has no numeric .database_id" >&2; exit 1; }
 gh run watch "$tessl_run_id" --repo github.com/<owner>/<repo>
 ```
 
@@ -184,14 +192,17 @@ CURRENT=$(jq -r '.current' <<<"$landed")
 skills/release/verify-moderation-cleared.sh <workspace> <plugin> "$CURRENT"
 ```
 
-`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE`; `verify-moderation-cleared.sh` exits 0 only when the published version is installable (exit 1 = blocked or still pending at budget — an unconfirmed release, never reported as success).
+`verify-publish-landed.sh` exits 0 only when the run concluded `success` AND the registry advanced past `PRE`. From `unpublished`, advancing means the registry shows a published version. `verify-moderation-cleared.sh` exits 0 only when the published version is installable. Its exit 1 means blocked or still pending at budget: an unconfirmed release, never reported as success.
 
 **GitHub tag/asset publication** — push the tag from the fast-forwarded `main`; its workflow fires on the tag, whose run carries the tag name as `headBranch`, so the resolver takes the tag as its fifth argument:
 
 ```bash
 git tag v<version> && git push origin v<version>
 tag_sha=$(git rev-list -n 1 "v<version>")
-tag_run_id=$(skills/release/resolve-publish-run.sh <owner> <repo> "$tag_sha" "<tag-publish-workflow>" "v<version>" | jq -r '.database_id')
+tag_run_json=$(skills/release/resolve-publish-run.sh <owner> <repo> "$tag_sha" "<tag-publish-workflow>" "v<version>") \
+  || { echo "Tag publish run not resolved — see stderr" >&2; exit 1; }
+tag_run_id=$(jq -er '.database_id | numbers' <<<"$tag_run_json") \
+  || { echo "Resolver output has no numeric .database_id" >&2; exit 1; }
 gh run watch "$tag_run_id" --repo github.com/<owner>/<repo>
 skills/release/verify-github-release.sh <owner> <repo> "v<version>" "$tag_run_id"
 ```
