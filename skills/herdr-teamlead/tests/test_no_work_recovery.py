@@ -153,8 +153,10 @@ class NoWorkRecoveryTest(unittest.TestCase):
                 "period_end": at, "triggers": ["daily", "transition"], "tasks": [TASK], "participants": [agent],
                 "unavailable": {}, "sources": [], "completed": True, "check": str(path)}, check["coverage"], at)
 
-    def body(self, report):
-        return "Work in {0}.\nRepair the parser and report to `{1}`.\nREPORT: {1}\n".format(self.checkout, report)
+    def body(self, report, worktree=None):
+        """The developer template's worktree field, then the report contract."""
+        return ("Your worktree already exists at `{0}`, on branch `fix/parser`.\n"
+                "Repair the parser and report to `{1}`.\nREPORT: {1}\n").format(worktree or self.checkout, report)
 
     def launch(self, *argv, live=False):
         env = {**os.environ, "PY_BIN": sys.executable, "TEAMLEAD_HERDR_BIN": str(self.herdr)}
@@ -167,8 +169,8 @@ class NoWorkRecoveryTest(unittest.TestCase):
         return self.launch("plan", "--roles", "developer", "--task", TASK, "--snapshot", str(self.snapshot),
                            "--now", RECOVERED_AT, *(["--fix-round", str(fix)] if fix is not None else []))
 
-    def dispatch_initial(self):
-        args = self.args("codex", self.first_report, "first", FIRST_AT, body=self.body(self.first_report))
+    def dispatch_initial(self, body=None):
+        args = self.args("codex", self.first_report, "first", FIRST_AT, body=body or self.body(self.first_report))
         client = self._client({"codex": "idle"}, sessions={"codex": "codex-native"})
         self.prepare_retrospective("codex", args, client, "before-first")
         code, out, err = self.invoke(args, client)
@@ -206,8 +208,8 @@ class NoWorkRecoveryTest(unittest.TestCase):
     def recover(self, record, live=False):
         return self.launch("recover-no-work", "--record", str(record), "--now", RECOVERED_AT, live=live)
 
-    def stalled_and_closed(self):
-        dispatch = self.dispatch_initial()
+    def stalled_and_closed(self, body=None):
+        dispatch = self.dispatch_initial(body)
         wait = self.stall()
         self.close(dispatch, wait)
         return dispatch, wait
@@ -327,6 +329,49 @@ class NoWorkRecoveryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no_work", result.stderr)
         self.assertEqual(self.state.read_bytes(), before)
+
+    def test_the_stalled_checkout_must_equal_the_briefs_worktree_field(self):
+        # Each case builds its brief and COMMON after its own fresh workspace.
+        cases = (("a path the brief's worktree only prefixes",
+                  lambda: (self.body(self.first_report, Path(str(self.checkout) + "-old")), None)),
+                 ("a path only COMMON mentions",
+                  lambda: ("Repair the parser and report to `{0}`.\nREPORT: {0}\n".format(self.first_report),
+                           "Shared checkout for reference: {}\n".format(self.checkout))))
+        for label, build in cases:
+            with self.subTest(refused=label):
+                self.setUp()
+                body, common = build()
+                if common is not None:
+                    self.common.write_text(common)
+                dispatch, wait = self.stalled_and_closed(body)
+                before = self.state.read_bytes()
+                result = self.recover(self.record(dispatch, wait))
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("worktree", result.stderr)
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(self.plan().returncode, 1)
+
+    def test_a_late_original_report_refuses_the_retry_at_apply(self):
+        for label, make in (("a report file", lambda path: path.write_text("Late report\n")),
+                            ("a dangling report link", lambda path: path.symlink_to(self.root / "missing.md"))):
+            with self.subTest(refused=label):
+                self.setUp()
+                dispatch, wait = self.stalled_and_closed()
+                self.assertEqual(self.recover(self.record(dispatch, wait)).returncode, 0)
+                make(Path(self.first_report))
+                before = self.state.read_bytes()
+                args = self.retry_args("claude", str(self.root / "retry.md"), "retry")
+                client = self.retry_client({"claude": "idle"})
+                self.prepare_retrospective("claude", args, client, "before-retry")
+                before = self.state.read_bytes()
+                code, out, err = self.invoke(args, client)
+                self.assertEqual(code, 1, out)
+                self.assertEqual(out, "")
+                self.assertIn("enrolled report", err)
+                self.assertEqual(self.runner.writes(), [])
+                self.assertEqual(self.state.read_bytes(), before)
+                self.assertEqual(load_state(self.state)["recovery"]["no_work_recoveries"][0]["retries"], [])
 
     def test_an_unbound_second_initial_row_is_refused_on_read(self):
         dispatch, wait = self.stalled_and_closed()

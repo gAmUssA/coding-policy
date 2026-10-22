@@ -593,8 +593,10 @@ The record is a JSON object with exactly these fields:
 | `evidence` | Absolute path of the saved wait JSON |
 
 The owner checks the saved stall against the dispatch's enrolled worker,
-report and the task's recorded base. It also checks that the checkout is the
-one the frozen brief names. Then it checks live state: the pane is gone
+report and the task's recorded base. The stalled checkout must resolve to the
+same real path as the single worktree the frozen developer brief names in its
+`Your worktree already exists at` field (`templates/brief-developer.md`); a
+brief without that field cannot be recovered. Then it checks live state: the pane is gone
 (`pane_not_found`), the enrollment is resolved, the report is absent, and the
 checkout is clean at the base. It sends no input and rewrites no history.
 Success prints the schema-1 receipt. An identical record replays the receipt
@@ -604,8 +606,10 @@ Exit 1 is a refused or unverifiable record; exit 2 is CLI usage.
 Then use normal `plan` and `apply` for the same task without `--fix-round`.
 Use a fresh dispatch ID and report path. Keep the COMMON and developer brief
 unchanged apart from that report path, and use a fresh context: no
-`--retain-context`, no `--no-clear`. `apply` re-runs the live checks before
-any pane input and binds the retry to the receipt in the reservation save.
+`--retain-context`, no `--no-clear`. `apply` re-runs every live check (pane
+gone, enrollment resolved, report absent, checkout clean at the base) before
+any pane input and again immediately before the retry's reservation, which
+binds the retry to the receipt in the same save.
 One receipt permits one retry. A retry that was `not_sent` may be replaced.
 The original row keeps its assignment and dispatch history. The correction
 count does not move, and later corrections start at fix 1. Partial, committed,

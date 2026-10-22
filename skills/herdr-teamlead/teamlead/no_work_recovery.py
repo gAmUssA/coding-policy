@@ -12,7 +12,9 @@ the durable relationships on every read.
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 from typing import NoReturn
 
@@ -34,6 +36,8 @@ ZERO_FIELDS = ("staged", "modified", "untracked", "dispatch_commits", "dispatch_
 GIT_MARKERS = ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
                "rebase-merge", "rebase-apply", "sequencer")
 PANE_GONE = "pane_not_found"
+#: The worktree field skills/herdr-teamlead/templates/brief-developer.md renders.
+BRIEF_WORKTREE_RE = re.compile(r"Your worktree already exists at `([^`\n]+)`")
 
 
 def refuse(message) -> NoReturn:
@@ -98,6 +102,28 @@ def _pane_gone(client, pane_id):
     refuse("The original worker pane {} still exists; close it before retrying, so it cannot keep writing.".format(pane_id))
 
 
+def _brief_worktree(brief):
+    """The one checkout the developer brief's worktree field names, as a real path."""
+    named = {os.path.realpath(path) for path in BRIEF_WORKTREE_RE.findall(ledger.receipt(brief)[1])}
+    if len(named) != 1:
+        refuse("The original developer brief must name exactly one worktree in its `Your worktree already exists at` field.")
+    return named.pop()
+
+
+def _report_absent(binding):
+    path = Path(binding["report"])
+    # `is_symlink` also catches a dangling link, which `exists` misses.
+    if path.exists() or path.is_symlink():
+        refuse("The enrolled report {} exists; record or recover that report instead.".format(binding["report"]))
+
+
+def _live(binding, worktree, base, client):
+    """Every live fact the recovery rests on, read now."""
+    _report_absent(binding)
+    _pane_gone(client, binding["pane_id"])
+    _clean_checkout(worktree, base)
+
+
 def _binding(state_path, row):
     member = next((item for item in supervision.load(state_path)["members"] if item["id"] == row["id"]), None)
     if member is None:
@@ -141,16 +167,13 @@ def _verify(state_path, state, data, client):
     if latest is None or latest[0] != row["assignment_index"]:
         refuse("Recover only the task's latest developer assignment.")
     binding = _binding(state_path, row)
-    if Path(binding["report"]).exists() or Path(binding["report"]).is_symlink():
-        refuse("The enrolled report {} exists; record or recover that report instead.".format(binding["report"]))
+    _report_absent(binding)
     evidence, worktree = _stall(data, row, binding, task["base_revision"])
-    named = "".join(ledger.receipt(path)[1] for path in (row["common"], row["brief"]))
-    if worktree not in named:
-        refuse("The stalled checkout {} is not the one the original brief named.".format(worktree))
     if ledger.brief_identity({"common": row["common"], "developer": row["brief"]}, "developer", binding["report"]) != row.get("brief_identity"):
         refuse("The original brief changed since dispatch; restore it so the retry sends the same assignment.")
-    _pane_gone(client, binding["pane_id"])
-    _clean_checkout(worktree, task["base_revision"])
+    if os.path.realpath(worktree) != _brief_worktree(row["brief"]):
+        refuse("The stalled checkout {} is not the worktree the original developer brief names.".format(worktree))
+    _live(binding, worktree, task["base_revision"], client)
     return row, binding, evidence, worktree
 
 
@@ -202,8 +225,18 @@ def prepare(state_path, state, task, fix_round, identity, report, no_clear, reta
     binding = _binding(state_path, row)
     if not isinstance(report, str) or Path(report).resolve() == Path(binding["report"]).resolve():
         refuse("A no-work retry needs a fresh report path; the original one belongs to dispatch {}.".format(row["id"]))
-    _pane_gone(client, binding["pane_id"])
-    _clean_checkout(saved["worktree"], ledger.task_record(state["recovery"], task)["base_revision"])
+    _live(binding, saved["worktree"], ledger.task_record(state["recovery"], task)["base_revision"], client)
+
+
+def recheck(state_path, state, task, fix_round, client):
+    """Repeat the live checks immediately before a retry's reservation."""
+    if fix_round is not None or task is None:
+        return
+    saved = _open_receipt(state["recovery"], state["assignments"], task)
+    if saved is None:
+        return
+    binding = _binding(state_path, _source(state["recovery"], saved["id"]))
+    _live(binding, saved["worktree"], ledger.task_record(state["recovery"], task)["base_revision"], client)
 
 
 def reserve(store, record_row, at):
