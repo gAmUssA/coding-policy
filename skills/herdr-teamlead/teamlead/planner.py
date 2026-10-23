@@ -58,6 +58,7 @@ import math
 
 from .diagnostics import stderr_warn
 from .errors import PlanError
+from .parsers import headroom_pct
 
 #: Plan document version. 2 adds the optional `judge` object carrying the
 #: pinned seat's agent, model and effort. Version 3 adds round-tier data. Additive: a version-1
@@ -188,6 +189,49 @@ def _window_groups(agents):
         if isinstance(group, str) and group:
             groups[name] = group
     return groups
+
+
+def _judge_model_offsets(agents, headrooms, judge_model):
+    """`{agent: adjustment}` re-reading each record under the judge's model.
+
+    `measure` scopes each record's `headroom_pct` to that seat's own model,
+    so a pool-mate running Fable reports the spent `Current week (Fable)`
+    window even though it never binds an Opus judge. Affordability reads the
+    whole pool, so each record's windows are re-read under the pinned judge
+    model. The result is kept as an offset from the record's headroom: the
+    fill loop charges seats against `headrooms`, and the offset carries that
+    spend through unchanged.
+
+    A record with no usable `windows` keeps its recorded headroom: missing,
+    malformed, or non-finite windows get no offset, the conservative reading.
+    With no judge model, nothing is re-read.
+    """
+    offsets = {}
+    if not judge_model:
+        return offsets
+    for name, record in agents.items():
+        recorded = headrooms.get(name)
+        if recorded is None or not isinstance(record, dict):
+            continue
+        windows = record.get("windows")
+        if not isinstance(windows, dict) or not windows:
+            continue
+        if not all(_usable_window(window) for window in windows.values()):
+            continue
+        scoped = headroom_pct(windows, judge_model)
+        if scoped is not None:
+            offsets[name] = float(scoped) - recorded
+    return offsets
+
+
+def _usable_window(window):
+    """Whether a snapshot window carries a finite numeric `remaining_pct`."""
+    if not isinstance(window, dict):
+        return False
+    value = window.get("remaining_pct")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
 
 
 def _costs_for(roles, role_costs):
@@ -368,7 +412,7 @@ def _unfillable_message(role, barred, remaining, later_roles, constrained=False)
     return " ".join(part for part in parts if part)
 
 
-def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
+def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=None):
     """Halt the round when the pinned judge's window cannot afford it.
 
     The judge seat has no substitute: it is pinned, and its worker shares a
@@ -386,6 +430,10 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
     is unmeasured, and the existing unknown-headroom handling already names it
     in the rationale.
 
+    `offsets` re-reads each record under the pinned judge model (see
+    `_judge_model_offsets`), so a pool-mate's per-model window for a model
+    the judge does not run never halts the judge.
+
     Called from inside the fill loop, at the judge's own turn, so `headrooms`
     already reflects what the seats filled before it spent from the same
     window. Checked before the loop instead, a round seating a heavier
@@ -398,8 +446,11 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
     else:
         window = [name for name in headrooms if groups.get(name) == group]
 
+    offsets = offsets or {}
     readings = {
-        name: headrooms[name] for name in window if headrooms.get(name) is not None
+        name: headrooms[name] + offsets.get(name, 0.0)
+        for name in window
+        if headrooms.get(name) is not None
     }
     if not readings:
         return
@@ -594,6 +645,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         name: _headroom_of(name, record, warn) for name, record in agents.items()
     }
     groups = _window_groups(agents)
+    judge_offsets = _judge_model_offsets(agents, headrooms, (judge_tier or {}).get("model"))
     remaining = set(headrooms)
     picks = {}
     rationale = []
@@ -610,7 +662,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         cost = candidate_cost(role, judge_agent) if role == "judge" else costs[role]
         barred = excluded[role]
         if role == "judge" and judge_agent:
-            _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups)
+            _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, judge_offsets)
         later_roles = fill_order[index + 1:]
         ranked = sorted(
             (name for name in remaining if name not in barred),

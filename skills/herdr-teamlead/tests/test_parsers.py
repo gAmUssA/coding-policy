@@ -42,6 +42,20 @@ CLAUDE_SAMPLE = """\
    Resets Sep 5 at 11:59pm (Europe/Oslo)
 """
 
+# A real `/usage` read from 2026-10-23: the Fable-only weekly window is spent
+# while the account-wide windows are not. The bar glyphs are trimmed.
+CLAUDE_FABLE_EXHAUSTED = """\
+   Current session
+   █                                                  2% used
+   Resets 3pm (Europe/Oslo)
+   Current week (all models)
+   ████████████████████████████████████████          79% used
+   Resets Oct 27 at 9am (Europe/Oslo)
+   Current week (Fable)
+   ██████████████████████████████████████████████   100% used
+   Resets Oct 27 at 9am (Europe/Oslo)
+"""
+
 CODEX_SAMPLE = """\
 │  Account:                     jbaruch@sadogursky.com (Pro)                             │
 │  Weekly limit:                [█████████████████░░░] 87% left (resets 17:26 on 7 Sep)  │
@@ -437,6 +451,52 @@ class HeadroomTest(unittest.TestCase):
     def test_no_windows_yields_none(self):
         self.assertIsNone(headroom_pct({}))
         self.assertIsNone(headroom_pct(None))
+
+
+class PerModelWindowHeadroomTest(unittest.TestCase):
+    """A `Current week (<Model>)` window binds only a seat running that model.
+
+    `Current session` and `Current week (all models)` bind every seat on the
+    account. A seat whose model is unknown keeps every window, the
+    conservative minimum.
+    """
+
+    def setUp(self):
+        self.windows = parse_claude_usage(CLAUDE_FABLE_EXHAUSTED)["windows"]
+
+    def test_the_real_snapshot_parses_three_windows(self):
+        self.assertEqual(
+            {label: window["remaining_pct"] for label, window in self.windows.items()},
+            {
+                "Current session": 98.0,
+                "Current week (all models)": 21.0,
+                "Current week (Fable)": 0.0,
+            },
+        )
+
+    def test_an_opus_seat_is_bound_by_the_account_wide_windows_only(self):
+        self.assertEqual(headroom_pct(self.windows, "Opus 5.5"), 21.0)
+
+    def test_a_pinned_model_id_matches_the_same_way(self):
+        self.assertEqual(headroom_pct(self.windows, "claude-opus-5-5"), 21.0)
+
+    def test_a_fable_seat_is_bound_by_the_fable_window(self):
+        self.assertEqual(headroom_pct(self.windows, "Fable 5.1"), 0.0)
+
+    def test_the_family_name_matches_case_insensitively(self):
+        self.assertEqual(headroom_pct(self.windows, "claude-FABLE-5-1"), 0.0)
+
+    def test_a_seat_with_no_model_keeps_every_window(self):
+        self.assertEqual(headroom_pct(self.windows), 0.0)
+        self.assertEqual(headroom_pct(self.windows, ""), 0.0)
+
+    def test_a_word_containing_the_family_is_not_a_match(self):
+        # Matching is by whole word, so "Fabled" never runs as Fable.
+        self.assertEqual(headroom_pct(self.windows, "Fabled 1"), 21.0)
+
+    def test_codex_windows_ignore_the_model(self):
+        windows = parse_codex_usage(CODEX_SAMPLE)["windows"]
+        self.assertEqual(headroom_pct(windows, "gpt-5.5"), 87.0)
 
 
 if __name__ == "__main__":

@@ -283,7 +283,7 @@ Three per-agent config keys drive it:
 | `composer_ignore_dim` | `true` (the default for every kind) reads dim/grey composer text as empty — ghost-text suggestions and placeholders alike |
 | `composer_placeholders` | Hint text a runtime draws in an empty composer, matched exactly after trimming (`["Ask Codex to do anything"]`). Always counts as empty |
 | `recover_keys` | Keys that clear a stuck composer, sent at most once and only under the five conditions above. **Empty for Codex**: its clear key is `ctrl+c`, which exits an idle Codex |
-| `model_label` | Model name shown on the worker's pane after a dispatch (`"gpt-5.6"`). Optional; empty leaves the label carrying the role alone |
+| `model_label` | Model name shown on the worker's pane after a dispatch (`"gpt-5.6"`). `measure` also scopes headroom to it: a per-model usage window such as `Current week (Fable)` binds only a worker whose label names that model. Optional; empty leaves the label carrying the role alone and keeps every window binding |
 | `slash_delivery` | `paste` or `type`, per the table above |
 
 The placeholder list is per runtime and hand-maintained: a Codex release that

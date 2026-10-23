@@ -46,8 +46,10 @@ signatures the stale-state probe reads; an agent with neither is never probed.
 `composer_glyph`, `composer_ignore_dim`, `composer_placeholders`, and
 `recover_keys` drive the consumed-command check, the ghost-text and placeholder
 exemptions, and the guarded one-shot recovery of a stuck composer.
-`model_label` is cosmetic: it names the model on the worker's pane after a
-dispatch. All are documented in
+`model_label` names the model on the worker's pane after a dispatch, and
+`measure` scopes the worker's headroom to it: a per-model usage window such as
+Claude's `Current week (Fable)` binds only a worker whose `model_label` names
+that model. All are documented in
 `skills/herdr-teamlead/references/herdr.md`.
 
 `window_group` names the usage window an agent shares with other agents: two
@@ -497,7 +499,14 @@ Each snapshot is one `measure` document: `schema_version`, `measured_at`, an
 `agents` object keyed by agent name (`kind`, `state`, `herdr_state`,
 `state_source`, `pane_id`, `windows`, `credits`, `plan`, `headroom_pct`,
 `skipped`), and `failed_agents`. `headroom_pct` is the minimum `remaining_pct`
-across that agent's windows. `state_source` is `herdr` or `probe`, naming which
+across the windows that bind that agent's `model_label`. A per-model window
+(`Current week (<Model>)`) binds only an agent whose `model_label` contains
+that model family as a whole word, compared case-insensitively;
+`Current session`, `Current week (all models)`, and every codex and grok window
+bind every agent; an empty `model_label` keeps every window. `windows` keeps
+every parsed window. Judge affordability re-reads each pool-mate's `windows`
+under the pinned `judge.model`, so a window for a model the judge does not run
+never halts it. `state_source` is `herdr` or `probe`, naming which
 signal decided `state`; `herdr_state` carries what herdr claimed. `plan` is an
 informational plan name and never feeds headroom.
 

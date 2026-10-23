@@ -104,6 +104,13 @@ CLAUDE_PANE = (
     "   Current session\n   ████    8% used\n   Resets 12:49am (Europe/Oslo)\n"
     "   Current week (all models)\n   █    2% used\n   Resets Sep 5 at 11:59pm (Europe/Oslo)\n"
 )
+# A real 2026-10-23 read: the Fable-only weekly window is spent, the
+# account-wide ones are not.
+CLAUDE_FABLE_EXHAUSTED_PANE = (
+    "   Current session\n   █    2% used\n   Resets 3pm (Europe/Oslo)\n"
+    "   Current week (all models)\n   ████    79% used\n   Resets Oct 27 at 9am (Europe/Oslo)\n"
+    "   Current week (Fable)\n   █████    100% used\n   Resets Oct 27 at 9am (Europe/Oslo)\n"
+)
 CODEX_PANE = (
     "│  Account: jbaruch@sadogursky.com (Pro)  │\n"
     "│  Weekly limit: [███] 87% left (resets 17:26 on 7 Sep)  │\n"
@@ -866,6 +873,41 @@ class WindowGroupPassthroughTest(unittest.TestCase):
         runner = runner_with({"claude": "idle"}, {"claude": CLAUDE_PANE})
         record = measure_agent(HerdrClient(runner=runner), agent)
         self.assertEqual(record["window_group"], "")
+
+
+class PerModelWindowTest(unittest.TestCase):
+    """A seat's headroom counts only the windows that bind its model.
+
+    The record keeps every parsed window; only `headroom_pct` is scoped.
+    """
+
+    def _claude_with_label(self, label):
+        payload = copy.deepcopy(CONFIG)
+        payload["agents"] = [
+            entry for entry in payload["agents"] if entry["name"] == "claude"
+        ]
+        payload["agents"][0]["model_label"] = label
+        return parse_config(payload)[0]
+
+    def _measure(self, label):
+        runner = runner_with({"claude": "idle"}, {"claude": CLAUDE_FABLE_EXHAUSTED_PANE})
+        return measure_agent(HerdrClient(runner=runner), self._claude_with_label(label))
+
+    def test_an_opus_seat_is_not_zeroed_by_the_fable_window(self):
+        self.assertEqual(self._measure("Opus 5.5")["headroom_pct"], 21.0)
+
+    def test_a_fable_seat_reads_the_spent_fable_window(self):
+        self.assertEqual(self._measure("Fable 5.1")["headroom_pct"], 0.0)
+
+    def test_a_seat_with_no_label_keeps_the_conservative_minimum(self):
+        self.assertEqual(self._measure("")["headroom_pct"], 0.0)
+
+    def test_the_record_keeps_every_parsed_window(self):
+        windows = self._measure("Opus 5.5")["windows"]
+        self.assertEqual(
+            sorted(windows),
+            ["Current session", "Current week (Fable)", "Current week (all models)"],
+        )
 
 
 if __name__ == "__main__":

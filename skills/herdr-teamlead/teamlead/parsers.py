@@ -38,6 +38,11 @@ _CLAUDE_HEADER_RE = re.compile(r"^(Current session|Current week \(.+\))$")
 # "████        8% used" -- the bar glyphs are decoration, only the number counts.
 _CLAUDE_USED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s+used\b")
 _CLAUDE_RESETS_RE = re.compile(r"^Resets\s+(.+)$")
+# A weekly window scoped to one model family: "Current week (Fable)". The
+# account-wide "(all models)" line is excluded by `_window_model`.
+_CLAUDE_MODEL_WINDOW_RE = re.compile(r"^Current week \((?P<model>.+)\)$")
+_CLAUDE_ALL_MODELS = "all models"
+_WORD_RE = re.compile(r"[a-z]+")
 
 # --- codex ------------------------------------------------------------------
 
@@ -329,12 +334,51 @@ def parse_usage(kind, text):
     return parser(text)
 
 
-def headroom_pct(windows):
-    """Smallest remaining_pct across `windows`, or None when there are none.
+def _window_model(label):
+    """The model family a window is scoped to, lowercased, or None.
+
+    `Current week (Fable)` is scoped to `fable`. `Current session`,
+    `Current week (all models)`, and every codex or grok label bind every
+    model on the account and return None.
+    """
+    match = _CLAUDE_MODEL_WINDOW_RE.match(label)
+    if match is None:
+        return None
+    scope = match.group("model").strip().lower()
+    if scope == _CLAUDE_ALL_MODELS:
+        return None
+    words = _WORD_RE.findall(scope)
+    return words[0] if words else None
+
+
+def window_binds(label, model):
+    """Whether the window named `label` limits a seat running `model`.
+
+    `model` is a display label ("Opus 5.5") or a model id ("claude-opus-5-5").
+    A per-model window binds only a model whose words include its family,
+    compared case-insensitively and by whole word. An empty or None `model`
+    is unknown: every window binds it, the conservative reading.
+    """
+    family = _window_model(label)
+    if family is None or not model:
+        return True
+    return family in _WORD_RE.findall(model.lower())
+
+
+def headroom_pct(windows, model=None):
+    """Smallest remaining_pct across the windows that bind `model`.
 
     Headroom is the binding constraint: an agent with 100% of its weekly
-    budget left but 2% of its 5-hour budget left has 2% of headroom.
+    budget left but 2% of its 5-hour budget left has 2% of headroom. A
+    per-model window such as `Current week (Fable)` counts only for a seat
+    running that model (`window_binds`); with no `model` every window counts.
+    None when no window binds.
     """
     if not windows:
         return None
-    return min(window["remaining_pct"] for window in windows.values())
+    binding = [
+        window["remaining_pct"]
+        for label, window in windows.items()
+        if window_binds(label, model)
+    ]
+    return min(binding) if binding else None

@@ -243,7 +243,9 @@ def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, re
         "windows": windows,
         "credits": parsed["credits"],
         "plan": parsed.get("plan"),
-        "headroom_pct": headroom_pct(windows),
+        # Scoped to the seat's declared model: a per-model weekly window
+        # binds only a seat running that model. `windows` keeps every one.
+        "headroom_pct": headroom_pct(windows, agent.model_label),
         # Copied through so `plan` reads one window's membership from the
         # snapshot, the same place it reads the headroom it belongs to.
         "window_group": agent.window_group,

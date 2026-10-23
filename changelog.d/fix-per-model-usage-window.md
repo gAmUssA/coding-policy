@@ -1,0 +1,6 @@
+---
+bump: patch
+---
+### Fixed
+
+- **`herdr-teamlead` scopes a Claude seat's headroom to the model it runs**. Claude's `/usage` now prints a per-model weekly window (`Current week (Fable)`) beside `Current week (all models)` and `Current session`, and `headroom_pct` took the minimum across all of them. Once the Fable-only window was spent, every Claude seat read 0% headroom, an Opus 5.5 judge included, and `plan` halted every judge round with "There is no substitute judge" (#69). `measure` now counts a per-model window only for a seat whose `model_label` names that model; the account-wide windows bind every seat, and a seat with no `model_label` keeps every window. Judge affordability re-reads each pool-mate's stored `windows` under the pinned `judge.model`, so a Fable sibling on the same account no longer re-imposes the Fable window on an Opus judge. Proven by tests in `test_parsers.py`, `test_measure.py` and `test_planner.py` built on the real 2026-10-23 snapshot, each shown failing before the fix.
