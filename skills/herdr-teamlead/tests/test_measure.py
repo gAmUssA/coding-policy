@@ -108,8 +108,8 @@ CLAUDE_PANE = (
 # account-wide ones are not.
 CLAUDE_FABLE_EXHAUSTED_PANE = (
     "   Current session\n   █    2% used\n   Resets 3pm (Europe/Oslo)\n"
-    "   Current week (all models)\n   ████    79% used\n   Resets Oct 27 at 9am (Europe/Oslo)\n"
-    "   Current week (Fable)\n   █████    100% used\n   Resets Oct 27 at 9am (Europe/Oslo)\n"
+    "   Current week (all models)\n   ████    79% used\n   Resets Oct 20 at 9am (Europe/Oslo)\n"
+    "   Current week (Fable)\n   █████    100% used\n   Resets Oct 20 at 9am (Europe/Oslo)\n"
 )
 CODEX_PANE = (
     "│  Account: jbaruch@sadogursky.com (Pro)  │\n"
@@ -780,7 +780,7 @@ class SnapshotTest(unittest.TestCase):
             {"claude": CLAUDE_PANE, "grok": GROK_PANE},
         )
         snapshot = measure(HerdrClient(runner=runner), AGENTS, AT)
-        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertEqual(snapshot["schema_version"], 4)
         self.assertEqual(snapshot["measured_at"], AT)
         self.assertEqual(sorted(snapshot["agents"]), ["claude", "codex", "grok"])
         self.assertEqual(snapshot["failed_agents"], [])
@@ -901,6 +901,20 @@ class PerModelWindowTest(unittest.TestCase):
 
     def test_a_seat_with_no_label_keeps_the_conservative_minimum(self):
         self.assertEqual(self._measure("")["headroom_pct"], 0.0)
+
+    def test_the_record_names_the_model_its_headroom_was_scoped_to(self):
+        self.assertEqual(self._measure("Opus 5.5")["headroom_model"], "Opus 5.5")
+
+    def test_skipped_and_failed_records_name_it_too(self):
+        agent = self._claude_with_label("Opus 5.5")
+        self.assertEqual(skipped_record(agent, "working", "working", "visible")["headroom_model"], "Opus 5.5")
+        runner = runner_with({"claude": "idle"}, {"claude": CLAUDE_FABLE_EXHAUSTED_PANE})
+        runner.set(
+            "agent get claude", stdout="", returncode=1,
+            stderr='{"error":{"code":"agent_not_found","message":"no such agent"}}',
+        )
+        record = measure(HerdrClient(runner=runner), [agent], AT)["agents"]["claude"]
+        self.assertEqual(record["headroom_model"], "Opus 5.5")
 
     def test_the_record_keeps_every_parsed_window(self):
         windows = self._measure("Opus 5.5")["windows"]

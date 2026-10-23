@@ -54,7 +54,7 @@ that model. All are documented in
 
 `window_group` names the usage window an agent shares with other agents: two
 workers authenticating as one subscription declare the same value, `measure`
-copies it onto each record (snapshot `schema_version` 3), and `plan` charges a seat's cost against every
+copies it onto each record (snapshot `schema_version` 2 and later), and `plan` charges a seat's cost against every
 worker in that window. An agent that declares none has a window to itself.
 
 The optional top-level `top_models` key maps a supported kind (`claude`,
@@ -319,7 +319,8 @@ skills/herdr-teamlead/references/retrospectives.md
 | `schema_version` | integer | Currently `7`. Bumped on any shape change |
 | `snapshots` | array | Whole `measure` documents, oldest first; the ring holds the last 20 |
 | `assignments` | array | Append-only ledger of who held which role |
-| `snapshots[].schema_version` | integer | Currently `3`. Version 2 added `window_group`; version 3 adds per-round `tier_billing`. Older snapshots migrate on read, preserving headroom and shared-window membership |
+| `snapshots[].schema_version` | integer | Currently `4`. Version 2 added `window_group`; version 3 added per-round `tier_billing`; version 4 scopes `headroom_pct` to the seat's model and adds `headroom_model`. Older snapshots migrate on read, preserving headroom and shared-window membership |
+| `snapshots[].agents[].headroom_model` | string | The `model_label` that `headroom_pct` was scoped to; empty means every window bound it. Present on every agent record. The `3 → 4` migration stamps it empty and keeps the version-3 headroom, the all-window minimum, which is the version-4 reading for an unknown model |
 | `snapshots[].agents[].window_group` | string | The usage window this agent shares with others; empty means a window of its own. Present on every agent record, including skipped and failed ones — pool membership is config, not a measurement result |
 | `assignments[].schema_version` | integer | The row's own version, stamped on write |
 | `assignments[].at` | string | ISO-8601 timestamp, from `--now` or the CLI's clock |
@@ -498,7 +499,7 @@ proof and marks its result `recovered: true`; it preserves the original row.
 Each snapshot is one `measure` document: `schema_version`, `measured_at`, an
 `agents` object keyed by agent name (`kind`, `state`, `herdr_state`,
 `state_source`, `pane_id`, `windows`, `credits`, `plan`, `headroom_pct`,
-`skipped`), and `failed_agents`. `headroom_pct` is the minimum `remaining_pct`
+`headroom_model`, `skipped`), and `failed_agents`. `headroom_pct` is the minimum `remaining_pct`
 across the windows that bind that agent's `model_label`. A per-model window
 (`Current week (<Model>)`) binds only an agent whose `model_label` contains
 that model family as a whole word, compared case-insensitively;

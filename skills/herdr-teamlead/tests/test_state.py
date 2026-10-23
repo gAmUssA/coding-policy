@@ -181,7 +181,7 @@ class MigrationTest(unittest.TestCase):
                             "schema_version": version, "snapshots": [snapshot], "assignments": [row]})
                 migrated = self.load()
                 self.assertEqual(migrated["schema_version"], STATE_SCHEMA_VERSION)
-                self.assertEqual(migrated["snapshots"], [{"schema_version": 3, "agents": {"grok": {"window_group": "pool", "tier_billing": {}}}}])
+                self.assertEqual(migrated["snapshots"], [{"schema_version": 4, "agents": {"grok": {"window_group": "pool", "tier_billing": {}, "headroom_model": ""}}}])
                 self.assertEqual(migrated["assignments"], [dict(
                     row, schema_version=STATE_SCHEMA_VERSION, cleared=None,
                     clear_reason="unknown", task=None, fix_round=None, context_session=None, tier=None,
@@ -597,7 +597,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path.write_text(json.dumps(self._state_with_v1_snapshot()), encoding="utf-8")
         state = load_state(path, warn=lambda message: None)
         snapshot = state["snapshots"][0]
-        self.assertEqual(snapshot["schema_version"], 3)
+        self.assertEqual(snapshot["schema_version"], 4)
         self.assertEqual(snapshot["agents"]["claude"]["window_group"], "")
 
     def test_the_upgrade_is_written_back(self):
@@ -605,7 +605,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path.write_text(json.dumps(self._state_with_v1_snapshot()), encoding="utf-8")
         load_state(path, warn=lambda message: None)
         on_disk = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(on_disk["snapshots"][0]["schema_version"], 3)
+        self.assertEqual(on_disk["snapshots"][0]["schema_version"], 4)
         self.assertEqual(
             on_disk["snapshots"][0]["agents"]["claude"]["window_group"], ""
         )
@@ -619,6 +619,46 @@ class SnapshotMigrationTest(unittest.TestCase):
         self.assertEqual(
             state["snapshots"][0]["agents"]["claude"]["window_group"], "pool"
         )
+
+    def _state_with_v3_snapshot(self, record):
+        return {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "specialist_assessments": [],
+            "snapshots": [
+                {
+                    "schema_version": 3,
+                    "measured_at": "2026-10-23T10:00:00+00:00",
+                    "agents": {"claude": record},
+                }
+            ],
+            "assignments": [],
+        }
+
+    def test_a_v3_snapshot_keeps_its_headroom_as_an_unscoped_reading(self):
+        # Version 3 took the minimum across every window: the version-4
+        # reading for a seat whose model is unknown. The Fable-only window
+        # still binds, so 0 stays 0 until the next measure scopes it.
+        record = {
+            "headroom_pct": 0.0, "window_group": "claude-max", "tier_billing": {},
+            "windows": {
+                "Current week (all models)": {"used_pct": 79.0, "remaining_pct": 21.0, "resets": None},
+                "Current week (Fable)": {"used_pct": 100.0, "remaining_pct": 0.0, "resets": None},
+            },
+        }
+        path = Path(self.tmp) / "state.json"
+        path.write_text(json.dumps(self._state_with_v3_snapshot(record)), encoding="utf-8")
+        load_state(path, warn=lambda message: None)
+        on_disk = json.loads(path.read_text(encoding="utf-8"))["snapshots"][0]
+        self.assertEqual(on_disk["schema_version"], 4)
+        self.assertEqual(on_disk["agents"]["claude"]["headroom_model"], "")
+        self.assertEqual(on_disk["agents"]["claude"]["headroom_pct"], 0.0)
+
+    def test_a_v3_record_carrying_a_model_keeps_it(self):
+        record = {"headroom_pct": 21.0, "headroom_model": "Opus 5.5", "tier_billing": {}}
+        path = Path(self.tmp) / "state.json"
+        path.write_text(json.dumps(self._state_with_v3_snapshot(record)), encoding="utf-8")
+        state = load_state(path, warn=lambda message: None)
+        self.assertEqual(state["snapshots"][0]["agents"]["claude"]["headroom_model"], "Opus 5.5")
 
     def test_a_snapshot_from_a_newer_build_is_no_usable_prior_state(self):
         payload = self._state_with_v1_snapshot()

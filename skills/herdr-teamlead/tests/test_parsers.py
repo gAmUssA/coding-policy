@@ -50,10 +50,10 @@ CLAUDE_FABLE_EXHAUSTED = """\
    Resets 3pm (Europe/Oslo)
    Current week (all models)
    ████████████████████████████████████████          79% used
-   Resets Oct 27 at 9am (Europe/Oslo)
+   Resets Oct 20 at 9am (Europe/Oslo)
    Current week (Fable)
    ██████████████████████████████████████████████   100% used
-   Resets Oct 27 at 9am (Europe/Oslo)
+   Resets Oct 20 at 9am (Europe/Oslo)
 """
 
 CODEX_SAMPLE = """\

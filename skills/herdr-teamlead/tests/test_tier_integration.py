@@ -226,7 +226,7 @@ class TierIntegrationTest(CliCase):
         migrated, usable = load_state_checked(self.state)
         self.assertTrue(usable)
         self.assertEqual(migrated["assignments"][0], {**row, "schema_version": 7, "tier": None, "requirements": None, "reviewer_scope": None})
-        self.assertEqual(migrated["snapshots"][0]["agents"]["claude"], {"window_group": "shared", "tier_billing": {}})
+        self.assertEqual(migrated["snapshots"][0]["agents"]["claude"], {"window_group": "shared", "tier_billing": {}, "headroom_model": ""})
         self.assertEqual(role_counts(migrated), {"developer": {"claude": 1}})
 
     def verified_tier(self, **extra):
@@ -330,7 +330,7 @@ class TierIntegrationTest(CliCase):
         rc, output, error = self.run_cli(["measure", *self.base(), "--now", AT], client=HerdrClient("herdr", runner))
         self.assertEqual(rc, 0, error)
         result = json.loads(output)
-        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(result["schema_version"], 4)
         self.assertEqual(result["agents"]["claude"]["tier_billing"]["build"]["window"], "unknown")
         self.assertTrue(result["agents"]["claude"]["skipped"])
 
