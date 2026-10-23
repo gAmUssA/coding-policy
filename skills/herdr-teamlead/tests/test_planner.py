@@ -1226,5 +1226,44 @@ class PerModelJudgeWindowTest(unittest.TestCase):
             self._plan(payload, "claude-opus-5-5")
 
 
+class PerModelTierWindowTest(unittest.TestCase):
+    """A seat is ranked on the windows that bind the model its tier runs.
+
+    `measure` scopes `headroom_pct` to the worker's `model_label`, but a
+    round's tier row can seat that worker on another model. The planner
+    re-reads the stored windows under the tier's model.
+    """
+
+    def _payload(self, opus_recorded):
+        payload = snapshot(opus=opus_recorded, plain=15.0)
+        payload["agents"]["opus"]["windows"] = fable_exhausted_windows()
+        return payload
+
+    def test_a_fable_tier_on_an_opus_labelled_worker_reads_the_fable_window(self):
+        payload = self._payload(21.0)
+        tiers = {"developer": {"opus": {"model": "claude-fable-5-1"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "plain")
+
+    def test_an_opus_tier_on_the_same_worker_reads_the_account_wide_window(self):
+        payload = self._payload(21.0)
+        tiers = {"developer": {"opus": {"model": "claude-opus-5-5"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "opus")
+
+    def test_a_fable_labelled_worker_on_an_opus_tier_is_not_held_at_zero(self):
+        payload = snapshot(fable=0.0, plain=15.0)
+        payload["agents"]["fable"]["windows"] = fable_exhausted_windows()
+        tiers = {"developer": {"fable": {"model": "claude-opus-5-5"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "fable")
+
+    def test_no_tier_keeps_the_recorded_reading(self):
+        payload = snapshot(fable=0.0, plain=15.0)
+        payload["agents"]["fable"]["windows"] = fable_exhausted_windows()
+        result = plan(["developer"], payload, warn=lambda message: None)
+        self.assertEqual(result["assignments"]["developer"], "plain")
+
+
 if __name__ == "__main__":
     unittest.main()

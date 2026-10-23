@@ -191,37 +191,32 @@ def _window_groups(agents):
     return groups
 
 
-def _judge_model_offsets(agents, headrooms, judge_model):
-    """`{agent: adjustment}` re-reading each record under the judge's model.
+def _model_offset(record, recorded, model):
+    """The adjustment that re-reads one record's windows under `model`.
 
-    `measure` scopes each record's `headroom_pct` to that seat's own model,
-    so a pool-mate running Fable reports the spent `Current week (Fable)`
-    window even though it never binds an Opus judge. Affordability reads the
-    whole pool, so each record's windows are re-read under the pinned judge
-    model. The result is kept as an offset from the record's headroom: the
-    fill loop charges seats against `headrooms`, and the offset carries that
-    spend through unchanged.
+    `measure` scopes each record's `headroom_pct` to the seat's declared
+    `model_label`, but a seat runs the model its tier row or the judge pin
+    names for this round. A worker labelled Opus that a round seats on a
+    Fable tier is bound by the `Current week (Fable)` window, and a Fable
+    pool-mate's spent Fable window never binds an Opus judge. The re-read is
+    kept as an offset from the recorded headroom: the fill loop charges
+    seats against the recorded values, and the offset carries that spend
+    through unchanged.
 
-    A record with no usable `windows` keeps its recorded headroom: missing,
-    malformed, or non-finite windows get no offset, the conservative reading.
-    With no judge model, nothing is re-read.
+    0.0 -- the recorded reading -- when there is no model to scope to, no
+    recorded headroom, or no usable `windows` (missing, empty, malformed, or
+    non-finite). The stored windows mean the same at every snapshot version,
+    so a migrated record is re-read like a fresh one.
     """
-    offsets = {}
-    if not judge_model:
-        return offsets
-    for name, record in agents.items():
-        recorded = headrooms.get(name)
-        if recorded is None or not isinstance(record, dict):
-            continue
-        windows = record.get("windows")
-        if not isinstance(windows, dict) or not windows:
-            continue
-        if not all(_usable_window(window) for window in windows.values()):
-            continue
-        scoped = headroom_pct(windows, judge_model)
-        if scoped is not None:
-            offsets[name] = float(scoped) - recorded
-    return offsets
+    if not model or recorded is None or not isinstance(record, dict):
+        return 0.0
+    windows = record.get("windows")
+    if not isinstance(windows, dict) or not windows:
+        return 0.0
+    if not all(_usable_window(window) for window in windows.values()):
+        return 0.0
+    scoped = headroom_pct(windows, model)
+    return 0.0 if scoped is None else float(scoped) - recorded
 
 
 def _usable_window(window):
@@ -431,7 +426,7 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=Non
     in the rationale.
 
     `offsets` re-reads each record under the pinned judge model (see
-    `_judge_model_offsets`), so a pool-mate's per-model window for a model
+    `_model_offset`), so a pool-mate's per-model window for a model
     the judge does not run never halts the judge.
 
     Called from inside the fill loop, at the judge's own turn, so `headrooms`
@@ -645,7 +640,29 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         name: _headroom_of(name, record, warn) for name, record in agents.items()
     }
     groups = _window_groups(agents)
-    judge_offsets = _judge_model_offsets(agents, headrooms, (judge_tier or {}).get("model"))
+    recorded = dict(headrooms)
+    offsets = {}
+
+    def seat_model(role, name):
+        """The model `name` runs in `role`: the judge pin, else its tier row."""
+        if role == "judge" and name == judge_agent:
+            return (judge_tier or {}).get("model")
+        return ((tier_candidates or {}).get(role, {}).get(name) or {}).get("model")
+
+    def offset(name, model):
+        if (name, model) not in offsets:
+            offsets[(name, model)] = _model_offset(agents.get(name), recorded[name], model)
+        return offsets[(name, model)]
+
+    def seat_headrooms(role):
+        """Every agent's current headroom under the model it runs in `role`."""
+        return {
+            name: None if value is None else value + offset(name, seat_model(role, name))
+            for name, value in headrooms.items()
+        }
+
+    judge_model = (judge_tier or {}).get("model")
+    judge_offsets = {name: offset(name, judge_model) for name in headrooms}
     remaining = set(headrooms)
     picks = {}
     rationale = []
@@ -664,9 +681,10 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         if role == "judge" and judge_agent:
             _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, judge_offsets)
         later_roles = fill_order[index + 1:]
+        scoped = seat_headrooms(role)
         ranked = sorted(
             (name for name in remaining if name not in barred),
-            key=lambda name: _sort_key(name, headrooms[name], candidate_cost(role, name), role, counts, floor,
+            key=lambda name: _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
                                       familiarity if role in (requirements or {}) else None, same_family),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
@@ -695,11 +713,11 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         picks[role] = chosen
         cost = candidate_cost(role, chosen)
         rationale.append(
-            _explain(role, chosen, ranked, headrooms, counts, cost, floor, barred)
+            _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
         )
         if role in (requirements or {}) and (familiarity or {}).get(role, {}).get(chosen):
             rationale.append("{} -> {} has a prior confirmed dispatch for the same task and engagement; familiarity ranks before headroom only when this projected seat is affordable.".format(role, chosen))
-        headroom = headrooms[chosen]
+        headroom = scoped[chosen]
         if headroom is not None:
             projected = headroom - cost
             floor = projected if floor is None else min(floor, projected)

@@ -505,11 +505,13 @@ across the windows that bind that agent's `model_label`. A per-model window
 that model family as a whole word, compared case-insensitively;
 `Current session`, `Current week (all models)`, and every codex and grok window
 bind every agent; an empty `model_label` keeps every window. `windows` keeps
-every parsed window, with the same meaning at every snapshot version. Judge
-affordability re-reads each pool-mate's `windows` under the pinned
-`judge.model`, whatever that record's `headroom_model` or version, so a window
-for a model the judge does not run never halts it; a record with no usable
-`windows` keeps its recorded `headroom_pct`. `state_source` is `herdr` or `probe`, naming which
+every parsed window, with the same meaning at every snapshot version. `plan`
+re-reads each record's `windows` under the model the seat runs in that role:
+the pinned `judge.model` for the judge, including across its pool, and the tier
+row's `model` otherwise. The re-read applies whatever the record's
+`headroom_model` or version, so a window for a model a seat does not run never
+binds it. A record with no usable `windows`, or a seat with no known model,
+keeps its recorded `headroom_pct`. See `docs/adr/0013-model-scoped-usage-headroom.md`. `state_source` is `herdr` or `probe`, naming which
 signal decided `state`; `herdr_state` carries what herdr claimed. `plan` is an
 informational plan name and never feeds headroom.
 
