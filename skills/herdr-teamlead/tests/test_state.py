@@ -653,12 +653,50 @@ class SnapshotMigrationTest(unittest.TestCase):
         self.assertEqual(on_disk["agents"]["claude"]["headroom_model"], "")
         self.assertEqual(on_disk["agents"]["claude"]["headroom_pct"], 0.0)
 
-    def test_a_v3_record_carrying_a_model_keeps_it(self):
+    def test_a_model_on_a_v3_record_is_not_a_measured_scope(self):
+        # Version 3 never wrote `headroom_model`, so a value found there is
+        # not trusted; the record migrates as unscoped.
         record = {"headroom_pct": 21.0, "headroom_model": "Opus 5.5", "tier_billing": {}}
         path = Path(self.tmp) / "state.json"
         path.write_text(json.dumps(self._state_with_v3_snapshot(record)), encoding="utf-8")
         state = load_state(path, warn=lambda message: None)
-        self.assertEqual(state["snapshots"][0]["agents"]["claude"]["headroom_model"], "Opus 5.5")
+        self.assertEqual(state["snapshots"][0]["agents"]["claude"]["headroom_model"], "")
+        self.assertEqual(state["snapshots"][0]["agents"]["claude"]["headroom_pct"], 21.0)
+
+    def _plan_judge_on_migrated(self, windows):
+        from teamlead.planner import plan
+
+        records = {
+            name: {"headroom_pct": min(w["remaining_pct"] for w in windows.values()),
+                   "window_group": "claude-max", "tier_billing": {}, "windows": windows}
+            for name in ("judge", "claude")
+        }
+        payload = self._state_with_v3_snapshot(records["claude"])
+        payload["snapshots"][0]["agents"]["judge"] = records["judge"]
+        path = Path(self.tmp) / "state.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        snapshot = load_state(path, warn=lambda message: None)["snapshots"][0]
+        self.assertEqual(snapshot["schema_version"], 4)
+        return plan(["judge"], snapshot, warn=lambda message: None, judge_agent="judge",
+                    judge_tier={"model": "claude-opus-5-5", "effort": "high"})
+
+    def test_a_migrated_pool_spent_only_on_fable_still_seats_an_opus_judge(self):
+        # Affordability reads the stored windows, whose meaning version 4 did
+        # not change; the Fable-only window never binds the pinned Opus judge.
+        result = self._plan_judge_on_migrated({
+            "Current week (all models)": {"used_pct": 79.0, "remaining_pct": 21.0, "resets": None},
+            "Current week (Fable)": {"used_pct": 100.0, "remaining_pct": 0.0, "resets": None},
+        })
+        self.assertEqual(result["assignments"]["judge"], "judge")
+
+    def test_a_migrated_pool_spent_account_wide_still_halts_the_judge(self):
+        from teamlead.errors import PlanError
+
+        with self.assertRaises(PlanError):
+            self._plan_judge_on_migrated({
+                "Current week (all models)": {"used_pct": 95.0, "remaining_pct": 5.0, "resets": None},
+                "Current week (Fable)": {"used_pct": 10.0, "remaining_pct": 90.0, "resets": None},
+            })
 
     def test_a_snapshot_from_a_newer_build_is_no_usable_prior_state(self):
         payload = self._state_with_v1_snapshot()

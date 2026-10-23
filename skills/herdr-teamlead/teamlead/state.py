@@ -278,14 +278,16 @@ def _migrate_snapshot_3_to_4(snapshot):
     which is exactly the version-4 reading for a seat whose model is unknown.
     The migration records that as `headroom_model: ""` and keeps the value;
     guessing a model here would loosen a reading the measurement never scoped.
-    The next `measure` writes the seat's own model.
+    The stamp is unconditional: version 3 never wrote the field, so a value
+    already on a version-3 record is not a measured scope. The next `measure`
+    writes the seat's own model.
     """
     snapshot["schema_version"] = 4
     agents = snapshot.get("agents")
     if isinstance(agents, dict):
         for record in agents.values():
             if isinstance(record, dict):
-                record.setdefault("headroom_model", "")
+                record["headroom_model"] = ""
     return snapshot
 
 

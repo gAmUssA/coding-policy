@@ -320,7 +320,7 @@ skills/herdr-teamlead/references/retrospectives.md
 | `snapshots` | array | Whole `measure` documents, oldest first; the ring holds the last 20 |
 | `assignments` | array | Append-only ledger of who held which role |
 | `snapshots[].schema_version` | integer | Currently `4`. Version 2 added `window_group`; version 3 added per-round `tier_billing`; version 4 scopes `headroom_pct` to the seat's model and adds `headroom_model`. Older snapshots migrate on read, preserving headroom and shared-window membership |
-| `snapshots[].agents[].headroom_model` | string | The `model_label` that `headroom_pct` was scoped to; empty means every window bound it. Present on every agent record. The `3 → 4` migration stamps it empty and keeps the version-3 headroom, the all-window minimum, which is the version-4 reading for an unknown model |
+| `snapshots[].agents[].headroom_model` | string | The `model_label` that `headroom_pct` was scoped to; empty means every window bound it. Present on every agent record. The `3 → 4` migration stamps it empty, unconditionally, and keeps the version-3 headroom, the all-window minimum, which is the version-4 reading for an unknown model |
 | `snapshots[].agents[].window_group` | string | The usage window this agent shares with others; empty means a window of its own. Present on every agent record, including skipped and failed ones — pool membership is config, not a measurement result |
 | `assignments[].schema_version` | integer | The row's own version, stamped on write |
 | `assignments[].at` | string | ISO-8601 timestamp, from `--now` or the CLI's clock |
@@ -505,9 +505,11 @@ across the windows that bind that agent's `model_label`. A per-model window
 that model family as a whole word, compared case-insensitively;
 `Current session`, `Current week (all models)`, and every codex and grok window
 bind every agent; an empty `model_label` keeps every window. `windows` keeps
-every parsed window. Judge affordability re-reads each pool-mate's `windows`
-under the pinned `judge.model`, so a window for a model the judge does not run
-never halts it. `state_source` is `herdr` or `probe`, naming which
+every parsed window, with the same meaning at every snapshot version. Judge
+affordability re-reads each pool-mate's `windows` under the pinned
+`judge.model`, whatever that record's `headroom_model` or version, so a window
+for a model the judge does not run never halts it; a record with no usable
+`windows` keeps its recorded `headroom_pct`. `state_source` is `herdr` or `probe`, naming which
 signal decided `state`; `herdr_state` carries what herdr claimed. `plan` is an
 informational plan name and never feeds headroom.
 
