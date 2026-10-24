@@ -630,7 +630,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         and agents[name].get("state") in {"idle", "done"} and isinstance(agents[name].get("host_eligibility"), dict) and agents[name]["host_eligibility"].get("eligible") is True}
     for role in roles:
         excluded[role] = sorted(set(excluded[role]) | {name for name, record in agents.items()
-            if isinstance(record, dict) and (record.get("kind") == "pi" or record.get("budget_mode") == "local_unmetered") and (name not in local_agents or role not in {"investigator", "tester"})})
+            if isinstance(record, dict) and (record.get("kind") == "pi" or record.get("budget_mode") == "local_unmetered") and (name not in local_agents or role != "developer")})
     costs = _costs_for(roles, role_costs)
     if tier_candidates is not None:
         for role in roles:

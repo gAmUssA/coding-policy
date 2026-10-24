@@ -69,7 +69,7 @@ class Agent:
 
     def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=(), top_models=None, host_requirements=None, allowed_roles=None):
         self.host_requirements = host_requirements
-        self.allowed_roles = tuple(allowed_roles) if allowed_roles is not None else (("investigator", "tester") if kind == "pi" else None)
+        self.allowed_roles = tuple(allowed_roles) if allowed_roles is not None else (("developer",) if kind == "pi" else None)
         self.state_dir = None
         self.name = name
         self.kind = kind
@@ -281,8 +281,8 @@ def parse_config(payload, source="<memory>"):
         known_roles = {"developer", "tester", "reviewer", "judge", "release", "architect", "critic", "lead", "advisor", "investigator"}
         if allowed_roles is not None and (not isinstance(allowed_roles, list) or any(not isinstance(role, str) or role not in known_roles for role in allowed_roles) or len(set(allowed_roles)) != len(allowed_roles)):
             raise ConfigError("Config at {}: agents[{}].allowed_roles must be an array of distinct known roles; omit it for the kind's defaults.".format(source, index), {})
-        if entry["kind"] == "pi" and (not entry.get("tiers") or entry.get("window_group") or entry["clear_prompt"] != "/new" or set(allowed_roles or []) - {"investigator", "tester"}):
-            raise ConfigError("Pi needs a tier table, /new reset and no shared window; allowed_roles may contain only investigator and tester (parallel, lead-verified; never tester of record).", {})
+        if entry["kind"] == "pi" and (not entry.get("tiers") or entry.get("window_group") or entry["clear_prompt"] != "/new" or set(allowed_roles or []) - {"developer"}):
+            raise ConfigError("Pi needs a tier table, /new reset and no shared window; allowed_roles accepts only ['developer'] or [] to disable pi; use metered workers for reviewing, testing and consultation.", {})
         capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(

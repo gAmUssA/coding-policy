@@ -8,6 +8,11 @@ and `wait-reject.json` from investigator captures. JSON command envelopes
 preserve command, exit code, stdout and stderr. The native transcript already
 omits system context and contains only the harmless evidence turn.
 
+The developer profile adds `edit` to the original captured `read,bash,write`
+launch: pi 1.4.0's captured help lists it as a built-in find/replace tool.
+Tests synthesize the new requested launch argv while preserving the historical
+capture bytes; no live developer launch or model-quality result is claimed.
+
 The old positive wait receipt has exit 4; it demonstrates the original wrapped
 marker refusal, not a historical successful delivery. Tests replay the native
 source through the new source-bound path, substituting temporary report paths.

@@ -747,9 +747,14 @@ booleans. The example sets generation 5 and memory 32 GiB; both fields remain
 explicit configuration. Pi requires this object, generation at least 5, a tier table and
 `clear_prompt: /new`. Usage fields may be omitted for pi; no usage command runs.
 `allowed_roles` is a distinct array of known roles; empty disables routing.
-Absent means unrestricted for old kinds and investigator/tester for pi.
-Pi tester dispatch requires an explicit `tester=test_plan` round; an ordinary
-tester assignment remains metered. Pi cannot gain other roles, judgment pins or a shared `window_group` through
+Absent means unrestricted for old kinds and developer-only for pi. Pi accepts
+only `["developer"]` or `[]`, and its tier table permits `build` and `fix` rows.
+Initial implementation and fix rounds 1–3 launch fresh with a full handoff
+brief; no retained/no-clear mode is permitted. Fixes 4 and later, risk flags,
+prior high misses, large inputs and correction-plan rounds skip pi while
+preserving metered candidates. Reviewer and tester of record remain metered.
+Pi developer assignments count as contributions for independence exclusions.
+Pi cannot gain other roles, judgment pins or a shared `window_group` through
 configuration. Its capability declaration must include repo-read and command-run.
 
 Snapshot 5 adds `budget_mode`, `host_eligibility`, and `skip_reason` to every
@@ -781,7 +786,8 @@ Unknown receipt versions are refused and preserved. Assignment schema remains
 7; a pi tier's existing `verified` object carries this kind-specific proof.
 
 Commissioning writer: `start-local --agent NAME --pane PANE --task TASK`;
-optional `--role tester` selects its parallel evidence tier. It shares the
+optional `--role developer` is the only supported role. Its fixed tools are
+`read,bash,edit,write`, with extensions and MCP disabled. It shares the
 normal retrospective, attention and state locks. Apply always launches pi
 fresh, never resumes or adopts an unrecorded process. Dry-run launch commands
 show `NEXT-LAUNCH` for the directory allocated only during a real start.

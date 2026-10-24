@@ -257,7 +257,7 @@ retirement may also carry a `qualification` summary, which readers ignore. See
 `state-schema.md` for migration and reader behavior.
 
 
-## Optional local pi evidence seats
+## Optional local pi developer seats
 
 Config 5 supports pi 1.4.0 with the explicitly selected static Ollama loopback
 profile. Commission with `teamlead.sh start-local --config FILE --state FILE
@@ -269,12 +269,20 @@ The adapter supplies the disabled-extension/MCP profile and the session
 directory. It invents no YOLO switch: `--approve` concerns project trust,
 not tool permissions. Extra profile overrides and resume are refused.
 
-Pi allows investigator and parallel tester roles, using consultation and
-test_plan rows. Select parallel tester evidence explicitly with
-`--round tester=test_plan`; ordinary tester planning retains metered judgment. Its explicit capabilities include repo-read and command-run.
-The tester row collects command evidence for lead verification; it does not
-replace the independent tester of record. No pi reviewer, judge, development,
-release adjudication or risk-escalation tier is accepted. `allowed_roles` and
+Pi permits only the developer role, with `build` and `fix` tier rows. Its
+capabilities include repo-read and command-run; the fixed tool profile is
+`read,bash,edit,write`. Use it for initial implementation and fixes 1–3 only,
+each as a fresh launch with a full handoff brief containing prior changes,
+remaining findings and validation. Never pair pi with `--retain-context`,
+`--retain-specialist` or `--no-clear`. The planner skips pi for fixes 4 and
+later, risk flags, a prior high miss, large inputs and correction-plan rounds,
+leaving metered developers eligible. See `teamlead/tiers.py` for thresholds.
+
+Pi is a contributor: its work cannot qualify it for independent verification.
+Reviewer and tester of record remain metered. Tester rounds (including
+`test_plan`), investigator, advisor, architect, reviewer, judge, release and
+other non-developer roles are refused. `allowed_roles` accepts only
+`["developer"]` or `[]` to disable routing; omission defaults to developer.
 `top_models` cannot waive these limits. Existing metered configurations remain
 readable; adding pi to an untiered fleet keeps those legacy candidates.
 

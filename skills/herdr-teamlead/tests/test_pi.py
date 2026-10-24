@@ -13,7 +13,7 @@ from collections.abc import Callable
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from teamlead import cli, pi_native
+from teamlead import cli, pi_native, composition
 from teamlead.assign import apply, dry_run
 from teamlead.composer import inspect_composer
 from teamlead.config import parse_config
@@ -25,7 +25,7 @@ from teamlead.parsers import parse_usage
 from teamlead.planner import plan
 from teamlead.errors import PlanError
 from teamlead.state import add_assignment, empty_state, load_state_checked, save_state
-from teamlead.tiers import EFFORTS, parse_tiers, require_role, select_tier
+from teamlead.tiers import LocalRoleIneligible, EFFORTS, parse_tiers, require_role, select_tier
 from tests.test_host import agent, pi_entry, sysctl
 from tests.test_cli import CONFIG
 
@@ -90,7 +90,7 @@ class PiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.agent = agent()
         self.agent.state_dir = self.root
-        self.tier = select_tier(self.agent, "tester", "test_plan")
+        self.tier = select_tier(self.agent, "developer", "build")
         self.transport = PiTransport()
         self.client = HerdrClient("herdr", self.transport)
         self.config = self.root / "config.json"
@@ -133,29 +133,133 @@ class PiTests(unittest.TestCase):
         config["agents"] = [row for row in config["agents"] if row["kind"] != "pi"] + [pi_entry()]
         for row in config["agents"]:
             if row["kind"] != "pi":
-                row["capabilities"] = ["repo-read", "command-run"]
                 snapshot["agents"][row["name"]] = {"kind": row["kind"], "state": "idle", "headroom_pct": 80}
         self.config.write_text(json.dumps(config))
-        path = self.root / "snapshot.json"
-        path.write_text(json.dumps(snapshot))
-        requirements = self.root / "requirements.json"
-        requirements.write_text(json.dumps({"schema_version": 1, "assignments": {"investigator": {
-            "specialty": "diagnosis", "required_capabilities": ["repo-read"],
-            "independent": False, "engagement": "pi-review-fix"}}}))
-        context = self.root / "context.json"
-        context.write_text(json.dumps({"tester": {"risk_flags": ["security"]}}))
-        for role, extra in (("investigator", ["--task", "issue-71", "--fix-round", "5", "--requirements", str(requirements)]),
-                            ("tester", ["--round", "tester=test_plan", "--round-context", str(context)])):
-            rc, result, error = self.call_json("plan", "--roles", role, "--snapshot", str(path), "--now", AT, *extra)
+        (self.root / "snapshot.json").write_text(json.dumps(snapshot))
+        history = empty_state()
+        add_assignment(history, AT, "developer", "local", task="issue-71")
+        for fix in range(1, 5):
+            add_assignment(history, f"2026-10-24T15:29:{25 + fix:02d}+00:00", "developer", "local", task="issue-71", fix_round=fix)
+            save_state(self.root / "state.json", history)
+            if fix < 3:
+                continue
+            rc, result, error = self.call_json("plan", "--roles", "developer", "--snapshot", str(self.root / "snapshot.json"),
+                "--task", "issue-71", "--fix-round", str(fix + 1))
             self.assertEqual(rc, 0, error)
-            self.assertNotEqual(result["assignments"][role], "local")
-            candidates = cli._candidate_tiers([role], parse_config(config),
-                {"tester": {"type": "test_plan", "context": {"risk_flags": ["security"]}}} if role == "tester" else {},
-                fix_round=5 if role == "investigator" else None)
-            assert candidates is not None, "Tiered roster must produce candidate tiers"
-            self.assertEqual(set(candidates[role]), {"claude", "codex", "grok"})
-        with self.assertRaises(UsageError):
-            cli._candidate_tiers(["investigator"], [self.agent], {"investigator": {"type": "invalid"}})
+            self.assertNotEqual(result["assignments"]["developer"], "local")
+        cases = [(fix, {}, None) for fix in (4, 5)] + [(None, context, None) for context in (
+            {"risk_flags": ["security"]}, {"prior_high_miss": True}, {"input_bytes": 250001})] + [(None, {}, "correction-1")]
+        for fix, context, correction in cases:
+            with self.subTest(fix=fix, context=context, correction=correction), self.assertRaises(LocalRoleIneligible):
+                select_tier(self.agent, "developer", context=context, fix_round=fix, correction_plan=correction)
+            with self.subTest(fix=fix, context=context, correction=correction):
+                candidates = cli._candidate_tiers(["developer"], parse_config(config),
+                    {"developer": {"context": context}}, fix_round=fix, correction_plan=correction)
+                assert candidates is not None
+                self.assertEqual(set(candidates["developer"]), {"claude", "codex", "grok"})
+        for context in ({"risk_flags": ["security"]}, {"prior_high_miss": True}, {"input_bytes": 250001}):
+            (self.root / "context.json").write_text(json.dumps({"developer": context}))
+            rc, result, error = self.call_json("plan", "--roles", "developer", "--snapshot", str(self.root / "snapshot.json"),
+                "--round-context", str(self.root / "context.json"))
+            self.assertEqual(rc, 0, error)
+            self.assertNotEqual(result["assignments"]["developer"], "local")
+        candidates = cli._candidate_tiers(["developer"], [self.agent], {"developer": {"type": "invalid"}})
+        self.assertEqual(candidates, {"developer": {}})
+
+    def test_pi_config_allows_only_developer_or_disabled(self):
+        for roles in (["developer"], []):
+            config = {"schema_version": 5, "agents": [{**pi_entry(), "allowed_roles": roles}]}
+            self.config.write_text(json.dumps(config))
+            self.assertEqual(parse_config(config)[0].allowed_roles, tuple(roles))
+            rc, _, error = self.call("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--now", AT)
+            self.assertEqual(rc, 0 if roles else 1, error)
+            self.transport.started = False
+        for role in ("reviewer", "tester", "judge", "release", "architect", "advisor", "investigator", "critic", "lead"):
+            config = {"schema_version": 5, "agents": [{**pi_entry(), "allowed_roles": [role]}]}
+            with self.subTest(role=role), self.assertRaisesRegex(ConfigError, "allowed_roles"):
+                parse_config(config)
+        # A forged in-memory declaration cannot grant pi another role.
+        self.agent.allowed_roles = None
+        for role in ("reviewer", "tester", "judge", "release", "architect", "advisor", "investigator", "critic", "lead"):
+            with self.subTest(role=role), self.assertRaisesRegex(UsageError, "Use pi only as developer"):
+                require_role(self.agent, role)
+
+    def test_initial_and_early_developer_fixes_launch_fresh_with_full_brief(self):
+        self.launch()
+        common, brief = self.root / "COMMON.md", self.root / "brief.md"
+        common.write_text("Common")
+        brief.write_text("Full handoff: previous changes, remaining findings and gates")
+        history = []
+        sessions = set()
+        for fix in (None, 1, 2, 3):
+            at = f"2026-10-24T15:29:{25 + (fix or 0):02d}+00:00"
+            with self.subTest(fix=fix):
+                self.transport.composer = fixture("composer.json")["stdout"]
+                tier = select_tier(self.agent, "developer", fix_round=fix)
+                self.assertEqual(tier["round"], "build" if fix is None else "fix")
+                result = apply(self.client, {"developer": "local"}, {"local": self.agent},
+                    {"common": str(common), "developer": str(brief)}, at, task="issue-71", fix_round=fix,
+                    history=history, tiers={"developer": tier}, sleep=lambda _: None, settle_sec=0)
+                row = result["applied"][0]
+                self.assertEqual(row["status"], "applied")
+                self.assertTrue(row["cleared"])
+                self.assertEqual(row["clear_reason"], "automatic")
+                self.assertIsNone(row["context_session"])
+                receipt = pi_native.read_launch(self.agent)
+                self.assertNotIn(receipt["proof"]["session_dir"], sessions)
+                sessions.add(receipt["proof"]["session_dir"])
+                self.assertIn(str(common), receipt["dispatch_prompt"])
+                self.assertIn(str(brief), receipt["dispatch_prompt"])
+                history.append(row)
+                # The real CLI accepts a fresh early fix too, preserving the ledger.
+                if fix is not None:
+                    state = empty_state()
+                    for prior in history[:-1]:
+                        add_assignment(state, prior["at"], "developer", "local", task="issue-71",
+                            fix_round=prior["fix_round"], tier=prior["tier"], cleared=True, clear_reason="automatic")
+                    save_state(self.root / "state.json", state)
+                    rc, output, error = self.call_json("apply", "--assignments", '{"developer":"local"}',
+                        "--common", str(common), "--brief", "developer=" + str(brief), "--task", "issue-71",
+                        "--fix-round", str(fix), "--dry-run", "--now", AT)
+                    self.assertEqual(rc, 0, error)
+                    self.assertEqual(output["steps"][0]["tier"]["round"], "fix")
+        self.assertEqual(len(sessions), 4)
+        self.assertEqual(sum(call[1:3] == ["agent", "start"] for call in self.transport.calls), 5)
+
+    def test_pi_retained_dispatch_is_refused_before_worker_contact(self):
+        common, brief = self.root / "COMMON.md", self.root / "brief.md"
+        common.write_text("Common")
+        brief.write_text("Full handoff")
+        for option in ("retain_context", "no_clear", "retain_specialist"):
+            for runner in (apply, dry_run):
+                with self.subTest(option=option, runner=runner.__name__), self.assertRaisesRegex(UsageError, "fresh launch"):
+                    if runner is apply:
+                        apply(self.client, {"developer": "local"}, {"local": self.agent},
+                            {"common": str(common), "developer": str(brief)}, AT, task="issue-71", fix_round=1,
+                            tiers={"developer": self.tier}, no_clear=option == "no_clear",
+                            retain_context=option == "retain_context", retain_specialist=option == "retain_specialist")
+                    else:
+                        dry_run(self.client, {"developer": "local"}, {"local": self.agent},
+                            {"common": str(common), "developer": str(brief)}, task="issue-71", fix_round=1,
+                            tiers={"developer": self.tier}, no_clear=option == "no_clear",
+                            retain_context=option == "retain_context", retain_specialist=option == "retain_specialist")
+            rc, _, error = self.call("apply", "--assignments", '{"developer":"local"}', "--common", str(common),
+                "--brief", "developer=" + str(brief), "--task", "issue-71", "--fix-round", "1", "--dry-run",
+                "--" + option.replace("_", "-"))
+            self.assertEqual(rc, 1, error)
+            self.assertIn("fresh launch", error)
+        self.assertEqual(self.transport.calls, [])
+
+    def test_pi_developer_is_excluded_from_independent_verification(self):
+        seats = parse_config({"schema_version": 5, "agents": [*CONFIG["agents"], pi_entry()]})
+        history = [{"agent": "local", "role": "developer", "task": "issue-71", "status": "applied",
+                    "tier": {"kind": "pi", "round": "build"}}]
+        constraints = composition.selection_constraints(["reviewer", "tester"], seats, {}, history, "issue-71")
+        self.assertEqual(constraints["exclude"], {"reviewer": ["local"], "tester": ["local"]})
+        candidates = cli._candidate_tiers(["reviewer", "tester"], seats, {}, excludes=constraints["exclude"])
+        assert candidates is not None
+        self.assertEqual(set(candidates["reviewer"]), {"claude", "codex", "grok"})
+        self.assertEqual(set(candidates["tester"]), {"claude", "codex", "grok"})
 
     def test_symlinked_state_root_and_default_root_share_receipt(self):
         alias = self.root / "state-alias"
@@ -191,8 +295,8 @@ class PiTests(unittest.TestCase):
 
     def test_restart_changes_tier_without_adopting_another_process(self):
         original = self.launch()
-        self.agent.tiers["test_plan"]["effort"] = "high"
-        tier_b = select_tier(self.agent, "tester", "test_plan")
+        self.agent.tiers["build"]["effort"] = "high"
+        tier_b = select_tier(self.agent, "developer", "build")
         fresh = restart_worker(self.client, self.agent, "wA:p8", tier_b, sleep=lambda _: None)
         self.assertEqual(fresh["effort"], "high")
         self.assertNotEqual(fresh["session_dir"], original["session_dir"])
@@ -226,7 +330,7 @@ class PiTests(unittest.TestCase):
 
     def test_start_local_cli_and_unmetered_measure(self):
         self.chip, self.memory = "Apple M5", "34359738368"
-        rc, output, error = self.call_json("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "tester", "--now", AT)
+        rc, output, error = self.call_json("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "developer", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(output["verified"]["pid"], 58701)
         rc, snapshot, error = self.call_json("measure", "--now", AT)
@@ -245,18 +349,18 @@ class PiTests(unittest.TestCase):
         rc, snapshot, error = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["budget_mode"], "local_unmetered")
-        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--now", AT)
+        rc, result, error = self.call_json("plan", "--roles", "developer", "--round", "developer=build", "--now", AT)
         self.assertEqual(rc, 0, error)
-        self.assertEqual(result["assignments"], {"tester": "local"})
+        self.assertEqual(result["assignments"], {"developer": "local"})
         common, brief = self.root / "COMMON.md", self.root / "brief.md"
         common.write_text("Common")
         brief.write_text("Brief")
-        rc, applied, error = self.call_json("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "tester=" + str(brief), "--dry-run", "--now", AT)
+        rc, applied, error = self.call_json("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "developer=" + str(brief), "--dry-run", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(applied["steps"][0]["tier"]["billing_window"], "local_unmetered")
         self.chip = "Apple M1"
         before = list(self.transport.calls)
-        rc, _, error = self.call("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "tester=" + str(brief), "--dry-run", "--now", AT)
+        rc, _, error = self.call("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "developer=" + str(brief), "--dry-run", "--now", AT)
         self.assertEqual(rc, 1)
         self.assertIn("host_ineligible", error)
         self.assertEqual(self.transport.calls, before)
@@ -267,7 +371,7 @@ class PiTests(unittest.TestCase):
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["skip_reason"], "host_ineligible")
         self.assertEqual(self.transport.calls, [])
-        rc, _, error = self.call("plan", "--roles", "tester")
+        rc, _, error = self.call("plan", "--roles", "developer")
         self.assertEqual(rc, 1)
         self.assertIn("'local' is host_ineligible and no other worker", error)
         self.chip = "unrecognized"
@@ -289,6 +393,8 @@ class PiTests(unittest.TestCase):
         self.launch()
         proof = verify_running(self.client, self.agent, "wA:p8", self.tier)
         self.assertEqual(proof["pid"], 58701)
+        self.assertEqual(proof["argv"][proof["argv"].index("--tools") + 1], "read,bash,edit,write")
+        self.assertIn("edit       - Edit files with find/replace", fixture("help.json")["stdout"])
         for field, changed in (("pid", 999), ("terminal_id", "new-terminal"), ("pane_id", "wA:p9")):
             target = self.transport.process["foreground_processes"][0] if field == "pid" else self.transport.info
             old = target[field]
@@ -320,11 +426,11 @@ class PiTests(unittest.TestCase):
         measured["agents"]["claude"] = {"kind": "claude", "state": "idle", "headroom_pct": 80}
         self.config.write_text(json.dumps({"schema_version": 5, "agents": [pi_entry(), CONFIG["agents"][0]]}))
         path.write_text(json.dumps(measured))
-        rc, result, error = self.call_json("plan", "--roles", "tester", "--snapshot", str(path))
+        rc, result, error = self.call_json("plan", "--roles", "developer", "--snapshot", str(path))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["ineligible_agents"]["local"]["reason"], "local_measurement_unproven")
         with self.assertRaises(PlanError):
-            plan(["tester"], measured, local_agents=["local"], exclude={"tester": ["claude"]})
+            plan(["developer"], measured, local_agents=["local"], exclude={"developer": ["claude"]})
         receipt = pi_native.read_launch(self.agent)
         receipt["schema_version"] = True
         (pi_native.seat_dir(self.agent) / "launch.json").write_text(json.dumps(receipt))
@@ -364,27 +470,32 @@ class PiTests(unittest.TestCase):
             parse_usage("pi", "")
 
     def test_tiers_restrict_roles_models_thinking_and_risk(self):
-        with self.assertRaisesRegex(UsageError, "metered tester of record"):
-            select_tier(self.agent, "tester")
-        self.assertEqual(select_tier(self.agent, "investigator")["model"], "ollama/flint:40b-a2b-ctx64k")
+        self.assertEqual(select_tier(self.agent, "developer")["model"], "ollama/flint:40b-a2b-ctx64k")
         for effort in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
-            self.assertEqual(parse_tiers({"consultation": {"model": "ollama/flint:tag", "effort": effort}}, "pi")["consultation"]["effort"], effort)
-        for role in ("reviewer", "judge", "developer", "release"):
-            with self.subTest(role=role), self.assertRaises(UsageError):
+            self.assertEqual(parse_tiers({"build": {"model": "ollama/flint:tag", "effort": effort}}, "pi")["build"]["effort"], effort)
+        for role in ("reviewer", "tester", "judge", "release", "architect", "advisor", "investigator", "critic", "lead"):
+            with self.subTest(role=role), self.assertRaisesRegex(UsageError, "Use pi only as developer"):
                 require_role(self.agent, role)
+            rc, _, error = self.call("apply", "--assignments", json.dumps({role: "local"}), "--common", str(self.config), "--dry-run")
+            self.assertEqual(rc, 1, error)
+            self.assertIn("Use pi only as developer", error)
             with self.subTest(role=role), self.assertRaises(UsageError):
                 select_tier(self.agent, role)
         for model in ("ollama/flint:*", "remote/flint:tag", "ollama/flint:tag:high", "ollama/flint:tag;bash"):
             with self.subTest(model=model), self.assertRaises(ConfigError):
-                parse_tiers({"consultation": {"model": model, "effort": "off"}}, "pi")
-        for context in ({"risk_flags": ["security"]}, {"prior_high_miss": True}):
+                parse_tiers({"build": {"model": model, "effort": "off"}}, "pi")
+        for row in ("consultation", "test_plan", "review", "mechanical", "hostile_verify", "recheck"):
+            with self.subTest(row=row), self.assertRaises(LocalRoleIneligible):
+                select_tier(self.agent, "developer", round_type=row)
+            with self.subTest(row=row), self.assertRaises(ConfigError):
+                parse_tiers({row: {"model": "ollama/flint:tag", "effort": "off"}}, "pi")
+        for context in ({"risk_flags": ["security"]}, {"prior_high_miss": True}, {"input_bytes": 250001}):
             with self.assertRaises(UsageError):
-                select_tier(self.agent, "investigator", context=context)
-        with self.assertRaises(UsageError):
-            select_tier(self.agent, "tester", "mechanical")
+                select_tier(self.agent, "developer", context=context)
+        self.assertEqual(select_tier(self.agent, "developer", context={"input_bytes": 250000})["round"], "build")
         self.agent.capabilities = ("repo-read",)
         with self.assertRaises(UsageError):
-            select_tier(self.agent, "investigator")
+            select_tier(self.agent, "developer")
 
     def test_recorded_composer_and_occupied_composer(self):
         self.assertEqual(inspect_composer(self.transport.composer, self.agent).content, "")
@@ -471,20 +582,20 @@ class PiTests(unittest.TestCase):
         common, brief = self.root / "COMMON.md", self.root / "brief.md"
         common.write_text("Common")
         brief.write_text("Brief")
-        paths = {"common": str(common), "tester": str(brief)}
-        result = apply(self.client, {"tester": "local"}, {"local": self.agent}, paths, AT,
-                       tiers={"tester": self.tier}, sleep=lambda _: None, settle_sec=0)
+        paths = {"common": str(common), "developer": str(brief)}
+        result = apply(self.client, {"developer": "local"}, {"local": self.agent}, paths, AT,
+                       tiers={"developer": self.tier}, sleep=lambda _: None, settle_sec=0)
         self.assertEqual(result["applied"][0]["status"], "applied")
         with self.assertRaisesRegex(UsageError, "fresh launch"):
-            dry_run(self.client, {"tester": "local"}, {"local": self.agent}, paths, no_clear=True, tiers={"tester": self.tier})
+            dry_run(self.client, {"developer": "local"}, {"local": self.agent}, paths, no_clear=True, tiers={"developer": self.tier})
         receipt = pi_native.read_launch(self.agent)
         self.assertIn("New assignment from the team lead", receipt["dispatch_prompt"])
         self.assertEqual(sum(call[1:3] == ["agent", "start"] for call in self.transport.calls), 2)
         self.transport.composer = "─" * 55 + "\npending input\n" + "─" * 55
         before = len(self.transport.calls)
         with self.assertRaises(HerdrError):
-            apply(self.client, {"tester": "local"}, {"local": self.agent}, paths, AT,
-                  tiers={"tester": self.tier}, sleep=lambda _: None, settle_sec=0)
+            apply(self.client, {"developer": "local"}, {"local": self.agent}, paths, AT,
+                  tiers={"developer": self.tier}, sleep=lambda _: None, settle_sec=0)
         self.assertFalse(any(call[0] == "kill" or call[1:3] == ["agent", "prompt"] for call in self.transport.calls[before:]))
 
     def test_planner_preserves_legacy_candidates_and_local_rotation(self):
@@ -493,33 +604,37 @@ class PiTests(unittest.TestCase):
         snapshot["agents"]["metered"] = {"kind": "claude", "state": "idle", "headroom_pct": 90}
         local = snapshot["agents"]["local"]
         snapshot["agents"]["spare-local"] = copy.deepcopy(local)
-        result = plan(["tester"], snapshot, local_agents=["local", "spare-local"], counts={"tester": {"local": 2}})
-        self.assertEqual(result["assignments"], {"tester": "spare-local"})
+        result = plan(["developer"], snapshot, local_agents=["local", "spare-local"], counts={"developer": {"local": 2}})
+        self.assertEqual(result["assignments"], {"developer": "spare-local"})
         self.assertIn("local_unmetered", result["rationale"][0])
+        for role in ("reviewer", "tester", "release", "architect", "advisor", "investigator", "critic", "lead"):
+            with self.subTest(role=role):
+                independent = plan([role], snapshot, local_agents=["local", "spare-local"])
+                self.assertEqual(independent["assignments"], {role: "metered"})
         for mutation in ({"skipped": True}, {"state": "working"}, {"budget_mode": "metered"}, {"error": {"code": "failure"}}):
             modified = copy.deepcopy(snapshot)
             for name in ("local", "spare-local"):
                 modified["agents"][name].update(mutation)
-            result = plan(["tester"], modified, local_agents=["local", "spare-local"])
-            self.assertEqual(result["assignments"], {"tester": "metered"})
+            result = plan(["developer"], modified, local_agents=["local", "spare-local"])
+            self.assertEqual(result["assignments"], {"developer": "metered"})
         forged = {"agents": {"claude": {"kind": "claude", "state": "idle", "budget_mode": "local_unmetered", "host_eligibility": {"eligible": True}}}}
         with self.assertRaises(PlanError):
-            plan(["tester"], forged, local_agents=["claude"], roster=["claude"])
+            plan(["developer"], forged, local_agents=["claude"], roster=["claude"])
         self.config.write_text(json.dumps({"schema_version": 5, "agents": [*CONFIG["agents"], pi_entry()]}))
         snapshot["agents"].pop("spare-local")
         snapshot["agents"].pop("metered")
         snapshot["agents"].update({name: {"kind": name, "state": "idle", "headroom_pct": 80} for name in ("claude", "codex", "grok")})
         (self.root / "snapshot.json").write_text(json.dumps(snapshot))
-        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call_json("plan", "--roles", "developer", "--round", "developer=build", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
-        self.assertEqual(result["assignments"], {"tester": "local"})
+        self.assertEqual(result["assignments"], {"developer": "local"})
         rc, ordinary, error = self.call_json("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(ordinary["assignments"], {"tester": "claude"})
         self.chip = "Apple M1"
-        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call_json("plan", "--roles", "developer", "--round", "developer=build", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
-        self.assertEqual(result["assignments"], {"tester": "claude"})
+        self.assertEqual(result["assignments"], {"developer": "claude"})
         self.assertEqual(result["ineligible_agents"]["local"]["reason"], "host_ineligible")
 
     def test_wait_report_source_only_and_bare_echo_rejection(self):
@@ -562,7 +677,7 @@ class PiTests(unittest.TestCase):
     def test_launch_evidence_roundtrips_and_invalid_pid_fails_reload(self):
         proof = self.launch()
         data = empty_state()
-        add_assignment(data, "tester", "local", AT, tier={**self.tier, "launch_args": ["--no-extensions", "--no-mcp", "--tools", "read,bash,write"], "verified": proof})
+        add_assignment(data, AT, "developer", "local", tier={**self.tier, "launch_args": ["--no-extensions", "--no-mcp", "--tools", "read,bash,edit,write"], "verified": proof})
         path = self.root / "state.json"
         save_state(path, data)
         self.assertTrue(load_state_checked(path)[1])

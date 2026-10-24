@@ -17,7 +17,7 @@ def pi_entry():
     return {"name": "local", "kind": "pi", "clear_prompt": "/new",
             "capabilities": ["repo-read", "command-run"],
             "host_requirements": {"min_apple_m_generation": 5, "min_memory_gib": 32},
-            "tiers": {name: {"model": "ollama/flint:40b-a2b-ctx64k", "effort": "off"} for name in ("consultation", "test_plan")}}
+            "tiers": {name: {"model": "ollama/flint:40b-a2b-ctx64k", "effort": "off"} for name in ("build", "fix")}}
 
 
 def agent():
@@ -71,7 +71,7 @@ class HostTests(unittest.TestCase):
         for version in (1, 2, 3, 4):
             with self.assertRaisesRegex(ConfigError, "schema_version 5"):
                 parse_config({"schema_version": version, "agents": [pi_entry()]})
-        self.assertEqual(agent().allowed_roles, ("investigator", "tester"))
+        self.assertEqual(agent().allowed_roles, ("developer",))
         for change in ({"host_requirements": None}, {"tiers": None}, {"allowed_roles": ["reviewer"]},
                        {"allowed_roles": ["tester", "tester"]}, {"window_group": "paid"}, {"clear_prompt": "/clear"}):
             with self.subTest(change=change), self.assertRaises(ConfigError):

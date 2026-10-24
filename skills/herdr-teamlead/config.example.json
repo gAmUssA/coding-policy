@@ -362,16 +362,15 @@
         "min_memory_gib": 32
       },
       "allowed_roles": [
-        "investigator",
-        "tester"
+        "developer"
       ],
       "tiers": {
-        "consultation": {
+        "build": {
           "model": "ollama/flint:40b-a2b-ctx64k",
           "effort": "off",
           "multiplier": 1.0
         },
-        "test_plan": {
+        "fix": {
           "model": "ollama/flint:40b-a2b-ctx64k",
           "effort": "off",
           "multiplier": 1.0

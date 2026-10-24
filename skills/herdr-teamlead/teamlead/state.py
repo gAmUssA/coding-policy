@@ -471,8 +471,7 @@ def _validate(payload, path):
                     or not isinstance(proof.get("pane_id"), str) or not proof["pane_id"]):
                 raise _NoUsableState("an assignment row has invalid tier evidence")
             try:
-                row = "consultation" if tier["kind"] == "pi" else "build"
-                parse_tiers({row: {"model": tier["model"], "effort": tier.get("effort")}}, tier["kind"])
+                parse_tiers({"build": {"model": tier["model"], "effort": tier.get("effort")}}, tier["kind"])
                 launch_args = parse_launch_args(tier.get("launch_args", []), tier["kind"])
                 if tier["kind"] == "pi":
                     from .pi_native import validate_proof

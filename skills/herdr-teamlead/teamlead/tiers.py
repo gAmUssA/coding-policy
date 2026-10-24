@@ -29,7 +29,7 @@ TOP_MODELS = {
 #: for its top models (`supported_reasoning_levels` in ~/.codex/models_cache.json).
 WORKER_KINDS = frozenset({"claude", "codex", "grok", "pi"})
 PI_MODEL = re.compile(r"ollama/[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-PI_PROFILE = ["--no-extensions", "--no-mcp", "--tools", "read,bash,write"]
+PI_PROFILE = ["--no-extensions", "--no-mcp", "--tools", "read,bash,edit,write"]
 
 EFFORTS = {
     "pi": frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"}),
@@ -148,7 +148,7 @@ def without_retired_fields(tier):
 
 
 class LocalRoleIneligible(UsageError):
-    """A local evidence seat cannot take this round; other candidates may."""
+    """A local developer cannot take this round; other candidates may."""
 
 
 class MissingTierError(UsageError):
@@ -393,8 +393,8 @@ def parse_tiers(raw, kind, top_models=None, agent=None):
                 _error("Haiku accepts no effort flag; omit effort for its Claude tier.")
         elif not isinstance(effort, str) or effort not in EFFORTS[kind]:
             _error("Tier {!r} needs an explicit effort from {}.".format(round_type, sorted(EFFORTS[kind])))
-        if kind == "pi" and (round_type not in {"consultation", "test_plan"} or "billing_evidence" in entry):
-            _error("Pi supports only consultation and test_plan evidence, never judgment or metered billing declarations.")
+        if kind == "pi" and (round_type not in {"build", "fix"} or "billing_evidence" in entry):
+            _error("Pi supports only build and fix developer rows; use metered workers for other rounds and billing declarations.")
         pins = TOP_MODELS.get(kind, frozenset()) if top_models is None else top_models
         if round_type in JUDGMENT_ROUNDS and (
             model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR)
@@ -439,15 +439,9 @@ def mechanical_allowed(context):
     )
 
 
-def select_tier(agent, role, round_type=None, context=None, fix_round=None):
+def select_tier(agent, role, round_type=None, context=None, fix_round=None, correction_plan=None):
     """Resolve one candidate from configuration; no per-call model override."""
     require_role(agent, role)
-    if agent.kind == "pi":
-        if role == "tester" and round_type != "test_plan":
-            raise MissingTierError("Pi tester evidence requires an explicit test_plan round; retain a metered tester of record.", {})
-        if fix_round or (context or {}).get("risk_flags") or (context or {}).get("prior_high_miss") or (context or {}).get("input_bytes", 0) > XHIGH_CONTEXT_BYTES:
-            raise LocalRoleIneligible("local_role_ineligible: pi cannot take fixes or risk escalation; use a judgment worker.", {})
-        round_type = round_type or ("test_plan" if role == "tester" else "consultation")
     if not agent.tiers:
         if round_type is not None:
             raise UsageError("Agent {} has no tier table; configure it before selecting a round.".format(agent.name), {})
@@ -470,6 +464,13 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     # Selection preserves the true cumulative number for authorized recovery.
     if fix_round is not None and (type(fix_round) is not int or fix_round < 1):
         raise UsageError("Fix round must be a positive integer; preserve the task counter.", {})
+    if agent.kind == "pi":
+        if correction_plan is not None or (fix_round is not None and fix_round >= 4):
+            raise LocalRoleIneligible("local_role_ineligible: pi takes only the initial developer round and fresh fixes 1–3; select a metered developer for later fixes or correction plans.", {})
+        if context.get("risk_flags") or context.get("prior_high_miss") or _nonnegative_int(context, "input_bytes") > XHIGH_CONTEXT_BYTES:
+            raise LocalRoleIneligible("local_role_ineligible: select a metered developer for risk escalation or large input.", {})
+        if round_type is not None and round_type not in {"build", "fix"}:
+            raise LocalRoleIneligible("local_role_ineligible: pi uses build or fix developer rounds only; select a metered developer for other rounds.", {})
     legacy = LEGACY_DEFAULT_ROUNDS.get(role)
     if round_type is None and legacy in agent.tiers and DEFAULT_ROUNDS[role] not in agent.tiers:
         round_type = legacy
@@ -551,6 +552,6 @@ def require_role(agent, role):
     """Declarations restrict routing; they never grant local judgment authority."""
     allowed = getattr(agent, "allowed_roles", None)
     if agent.kind == "pi" and not {"repo-read", "command-run"}.issubset(agent.capabilities):
-        raise UsageError("local_role_ineligible: declare repo-read and command-run capabilities before using pi evidence.", {})
-    if (allowed is not None and role not in allowed) or (agent.kind == "pi" and role not in {"investigator", "tester"}):
-        raise UsageError("Worker {!r} cannot perform {!r} (local_role_ineligible). Use this pi seat for evidence-gathering consultation and select an eligible independent reviewer. Changing allowed_roles does not waive judgment-model requirements. Pi cannot hold the pinned judge seat; retain the configured judgment worker.".format(agent.name, role), {})
+        raise UsageError("local_role_ineligible: declare repo-read and command-run capabilities before using pi development.", {})
+    if (allowed is not None and role not in allowed) or (agent.kind == "pi" and role != "developer"):
+        raise UsageError("Worker {!r} cannot perform {!r} (local_role_ineligible). Use pi only as developer with a fresh full handoff brief; select metered workers for reviewing, testing, judgment, release and consultation. Changing allowed_roles cannot enable other pi roles.".format(agent.name, role), {})

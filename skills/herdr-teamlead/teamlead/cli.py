@@ -165,7 +165,7 @@ def build_parser():
     local_parser = sub.add_parser("start-local", parents=[common], help="Commission a fresh pi seat in an idle shell pane with a durable launch receipt.")
     local_parser.add_argument("--agent", required=True)
     local_parser.add_argument("--pane", required=True)
-    local_parser.add_argument("--role", choices=("investigator", "tester"), default="investigator")
+    local_parser.add_argument("--role", choices=("developer",), default="developer")
     local_parser.add_argument("--task", required=True)
     local_parser.add_argument("--now")
 
@@ -561,7 +561,7 @@ def _round_inputs(args, roles):
     return rounds
 
 
-def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes=None):
+def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes=None, correction_plan=None):
     tiered = any(agent.tiers for agent in agents)
     metered_tiered = any(agent.tiers for agent in agents if agent.kind != "pi")
     if not tiered and not (judge and "judge" in roles):
@@ -591,7 +591,7 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes
                     candidates[role][agent.name] = None
                 continue
             try:
-                tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round)
+                tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round, correction_plan=correction_plan)
             except (MissingTierError, LocalRoleIneligible):
                 # An ineligible local round or missing row excludes only this candidate.
                 continue
@@ -656,7 +656,7 @@ def cmd_start_local(args, client=None, warn=None, trace=None):
     agent = next((item for item in agents if item.name == args.agent), None)
     if agent is None or agent.kind != "pi":
         raise UsageError("start-local needs a configured pi agent; edit schema-5 config and retry.", {})
-    tier = select_tier(agent, args.role, "test_plan" if args.role == "tester" else None)
+    tier = select_tier(agent, args.role)
     host.require_host_eligible(agent)
     state_path, at = _state_path(args), args.now or now_iso()
     attention.require_dispatch_clear(state_path, args.task, at)
@@ -808,7 +808,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
                 excludes[role] = sorted(set(excludes.get(role, [])) | {agent.name})
         elif agent.kind == "pi":
             local.append(agent.name)
-    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge, excludes=excludes)
+    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge, excludes=excludes, correction_plan=args.correction_plan)
 
     result = build_plan(
             roles,
@@ -980,7 +980,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     for role, name in assignments.items():
         if name in constraints["exclude"].get(role, []):
             raise UsageError("Assigned worker {} is ineligible for {} under current capabilities or contribution history; replan an independent capable worker.".format(name, role), {})
-    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge, excludes=constraints["exclude"])
+    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge, excludes=constraints["exclude"], correction_plan=args.correction_plan)
     tiers = {}
     if candidates is not None:
         for role, name in assignments.items():
