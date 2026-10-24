@@ -219,6 +219,8 @@ def validate_config_schema(payload, source="<memory>"):
             raise ConfigError("Config at {}: agents[{}].kind pi needs schema_version 5. Set \"schema_version\": 5; existing agent entries need no other changes.".format(source, index), {})
         for field, gate in AGENT_FIELD_GATES:
             if isinstance(entry, dict) and field in entry and version < gate:
+                if gate == 5:
+                    raise ConfigError("Config at {}: agents[{}].{} needs schema_version 5. Set \"schema_version\": 5; existing agent entries need no other changes.".format(source, index, field), {"source": source, "index": index, "found": version, "expected": 5, "field": field})
                 raise ConfigError(
                     "Config at {}: agents[{}] declares `{}`, which needs config schema_version {}; "
                     "set \"schema_version\" to {} or later in that file.".format(source, index, field, gate, gate),

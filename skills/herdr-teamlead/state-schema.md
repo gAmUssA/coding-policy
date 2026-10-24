@@ -747,7 +747,8 @@ booleans. Pi requires this object, generation at least 5, a tier table and
 `clear_prompt: /new`. Usage fields may be omitted for pi; no usage command runs.
 `allowed_roles` is a distinct array of known roles; empty disables routing.
 Absent means unrestricted for old kinds and investigator/tester for pi.
-Pi cannot gain other roles, judgment pins or a shared `window_group` through
+Pi tester dispatch requires an explicit `tester=test_plan` round; an ordinary
+tester assignment remains metered. Pi cannot gain other roles, judgment pins or a shared `window_group` through
 configuration. Its capability declaration must include repo-read and command-run.
 
 Snapshot 5 adds `budget_mode`, `host_eligibility`, and `skip_reason` to every

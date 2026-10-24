@@ -656,7 +656,7 @@ def cmd_start_local(args, client=None, warn=None, trace=None):
     agent = next((item for item in agents if item.name == args.agent), None)
     if agent is None or agent.kind != "pi":
         raise UsageError("start-local needs a configured pi agent; edit schema-5 config and retry.", {})
-    tier = select_tier(agent, args.role)
+    tier = select_tier(agent, args.role, "test_plan" if args.role == "tester" else None)
     host.require_host_eligible(agent)
     state_path, at = _state_path(args), args.now or now_iso()
     attention.require_dispatch_clear(state_path, args.task, at)

@@ -439,6 +439,8 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     """Resolve one candidate from configuration; no per-call model override."""
     require_role(agent, role)
     if agent.kind == "pi":
+        if role == "tester" and round_type != "test_plan":
+            raise MissingTierError("Pi tester evidence requires an explicit test_plan round; retain a metered tester of record.", {})
         if fix_round or (context or {}).get("risk_flags") or (context or {}).get("prior_high_miss") or (context or {}).get("input_bytes", 0) > XHIGH_CONTEXT_BYTES:
             raise UsageError("local_role_ineligible: pi cannot take fixes or risk escalation; use a judgment worker.", {})
         round_type = round_type or ("test_plan" if role == "tester" else "consultation")

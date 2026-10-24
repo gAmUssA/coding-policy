@@ -606,6 +606,9 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 excluded[role] = sorted(set(excluded[role]) | {judge_agent})
     for role in roles:
         if all(name in excluded[role] for name in agents):
+            if ineligible_agents:
+                reasons = ", ".join("{!r} is {}".format(name, value["reason"]) for name, value in sorted(ineligible_agents.items()))
+                raise PlanError("Cannot fill role {!r}: {} and no other worker meets the declared requirements. Measure another eligible worker or assign fewer simultaneous roles; preserve capability and independence requirements.".format(role, reasons), {"role": role, "ineligible_agents": ineligible_agents})
             if selection_rationale:
                 raise PlanError(
                     "No agent is eligible for role {!r}. Measure another eligible worker or correct verified capability declarations; preserve independence requirements. {}".format(

@@ -17,7 +17,7 @@ def parse_requirements(value, source, *, pi=False):
         raise ConfigError("{} must contain exactly min_apple_m_generation and min_memory_gib; use 5 and 64 for the Flint seat.".format(source), {})
     for key in HOST_KEYS:
         if type(value[key]) is not int or value[key] <= 0:
-            raise ConfigError("{}.{} must be a positive integer{}; use 64 for the Flint memory floor. Booleans and unit strings are not accepted.".format(source, key, " in GiB" if key == "min_memory_gib" else ""), {})
+            raise ConfigError("{}.{} must be a positive integer{}. Use 64 for the Flint seat; booleans and unit strings are not accepted.".format(source, key, " in GiB" if key == "min_memory_gib" else ""), {})
     if pi and value["min_apple_m_generation"] < 5:
         raise ConfigError("{} needs min_apple_m_generation at least 5 for pi; retain the host activation floor.".format(source), {})
     return dict(value)
@@ -67,5 +67,7 @@ def check_hosts(agents):
 def require_host_eligible(agent):
     observation = check_hosts([agent])[agent.name]
     if observation is not None and observation["eligible"] is not True:
-        raise HerdrError("Refusing {!r} ({}): this plan selected a gated seat on another host or its host probe failed. Re-run teamlead measure and teamlead plan on this machine. No worker was stopped, started, cleared or briefed. {}".format(agent.name, observation["reason"], observation["message"]), observation)
+        message = ("Refusing {!r} (host_ineligible): this plan selected pi on another host. Re-run teamlead measure and teamlead plan on this machine. No worker was stopped, started, cleared or briefed.".format(agent.name)
+                   if agent.kind == "pi" and observation["reason"] == "host_ineligible" else observation["message"])
+        raise HerdrError(message, observation)
     return observation

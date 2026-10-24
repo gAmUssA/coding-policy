@@ -285,7 +285,7 @@ class SelectionTest(unittest.TestCase):
             probe = SimpleNamespace(name=worker["kind"], kind=worker["kind"], tiers=tiers,
                                     allowed_roles=worker.get("allowed_roles"), capabilities=worker.get("capabilities", []))
             if worker["kind"] == "pi":
-                self.assertEqual(select_tier(probe, "tester")["effort"], "off")
+                self.assertEqual(select_tier(probe, "tester", "test_plan")["effort"], "off")
                 self.assertEqual(select_tier(probe, "investigator")["round"], "consultation")
                 self.assertEqual(set(tiers), {"consultation", "test_plan"})
                 continue

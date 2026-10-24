@@ -86,7 +86,7 @@ class PiTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.agent = agent()
         self.agent.state_dir = self.root
-        self.tier = select_tier(self.agent, "tester")
+        self.tier = select_tier(self.agent, "tester", "test_plan")
         self.transport = PiTransport()
         self.client = HerdrClient("herdr", self.transport)
         self.config = self.root / "config.json"
@@ -126,7 +126,7 @@ class PiTests(unittest.TestCase):
         self.assertEqual((snapshot["schema_version"], row["budget_mode"], row["windows"], row["headroom_pct"]), (5, "local_unmetered", {}, None))
         self.assertFalse(any(call[1:3] in (["agent", "prompt"], ["agent", "send-keys"]) for call in self.transport.calls))
         self.assertFalse(any(call[0] == "ps" for call in self.transport.calls))
-        rc, result, error = self.call("plan", "--roles", "tester", "--now", AT)
+        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "local"})
         common, brief = self.root / "COMMON.md", self.root / "brief.md"
@@ -148,6 +148,9 @@ class PiTests(unittest.TestCase):
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["skip_reason"], "host_ineligible")
         self.assertEqual(self.transport.calls, [])
+        rc, _, error = self.call("plan", "--roles", "tester")
+        self.assertEqual(rc, 1)
+        self.assertIn("'local' is host_ineligible and no other worker", error)
         self.chip = "unrecognized"
         rc, snapshot, _ = self.call("measure", "--now", AT)
         self.assertEqual(rc, 1)
@@ -221,6 +224,8 @@ class PiTests(unittest.TestCase):
             parse_usage("pi", "")
 
     def test_tiers_restrict_roles_models_thinking_and_risk(self):
+        with self.assertRaisesRegex(UsageError, "metered tester of record"):
+            select_tier(self.agent, "tester")
         self.assertEqual(select_tier(self.agent, "investigator")["model"], "ollama/flint:40b-a2b-ctx64k")
         for effort in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
             self.assertEqual(parse_tiers({"consultation": {"model": "ollama/flint:tag", "effort": effort}}, "pi")["consultation"]["effort"], effort)
@@ -338,11 +343,14 @@ class PiTests(unittest.TestCase):
         snapshot["agents"].pop("metered")
         snapshot["agents"].update({name: {"kind": name, "state": "idle", "headroom_pct": 80} for name in ("claude", "codex", "grok")})
         (self.root / "snapshot.json").write_text(json.dumps(snapshot))
-        rc, result, error = self.call("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "local"})
+        rc, ordinary, error = self.call("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
+        self.assertEqual(rc, 0, error)
+        self.assertEqual(ordinary["assignments"], {"tester": "claude"})
         self.chip = "Apple M1"
-        rc, result, error = self.call("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "claude"})
         self.assertEqual(result["ineligible_agents"]["local"]["reason"], "host_ineligible")

@@ -267,8 +267,9 @@ The adapter supplies the disabled-extension/MCP profile and the session
 directory. It invents no YOLO switch: `--approve` concerns project trust,
 not tool permissions. Extra profile overrides and resume are refused.
 
-Pi defaults to investigator and parallel tester roles, using consultation and
-test_plan rows. Its explicit capabilities include repo-read and command-run.
+Pi allows investigator and parallel tester roles, using consultation and
+test_plan rows. Select parallel tester evidence explicitly with
+`--round tester=test_plan`; ordinary tester planning retains metered judgment. Its explicit capabilities include repo-read and command-run.
 The tester row collects command evidence for lead verification; it does not
 replace the independent tester of record. No pi reviewer, judge, development,
 release adjudication or risk-escalation tier is accepted. `allowed_roles` and

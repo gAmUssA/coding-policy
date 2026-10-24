@@ -201,7 +201,7 @@ def conversation(body, prompt, tier=None):
 
 def probe(client, agent, pane, report):
     """R3 source-only acceptance, with receipt/process/source stability checks."""
-    failure = {"found": False, "reason": "pi_marker_unconfirmed"}
+    failure = {"found": False, "reason": "pi_marker_unconfirmed", "message": "Pi report marker is unconfirmed (pi_marker_unconfirmed). Preserve the report and pane evidence; inspect the exact final marker and native session before recording delivery. Do not rerun the task solely because delivery is unconfirmed."}
     try:
         receipt = read_launch(agent)
         proof, prompt = receipt.get("proof"), receipt.get("dispatch_prompt")
