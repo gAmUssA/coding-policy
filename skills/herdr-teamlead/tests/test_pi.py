@@ -47,9 +47,12 @@ class PiTransport:
         self.process = json.loads(fixture("process-info.json")["stdout"])["result"]["process_info"]
         self.composer = fixture("composer.json")["stdout"]
         self.bad_argv = None
+        self.on_call = None
 
     def __call__(self, argv):
         self.calls.append(argv)
+        if self.on_call is not None:
+            self.on_call(argv)
         if argv[1:3] == ["agent", "start"]:
             self.started = True
             result = {"agent": self.info, "argv": self.bad_argv or ["pi"] + argv[argv.index("--") + 1:]}
@@ -99,10 +102,11 @@ class PiTests(unittest.TestCase):
         patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(self.provider), "HERDR_ENV": "1"}).start()
         self.boundary = patch("subprocess.run", side_effect=self.system).start()
         self.chip, self.memory = "Apple M5 Max", "68719476736"
+        self.version = fixture("version.json")["stdout"]
 
     def system(self, argv, **kwargs):
         if argv == ["pi", "--version"]:
-            return subprocess.CompletedProcess(argv, 0, fixture("version.json")["stdout"], "")
+            return subprocess.CompletedProcess(argv, 0, self.version, "")
         return sysctl(self.chip, self.memory)(argv, **kwargs)
 
     def write_models(self):
@@ -214,6 +218,9 @@ class PiTests(unittest.TestCase):
 
     def test_endpoint_and_permission_profile_fail_closed(self):
         self.launch()
+        self.version = "0.99.2\n"
+        self.assertEqual(measure(self.client, [self.agent], AT)["failed_agents"], ["local"])
+        self.version = fixture("version.json")["stdout"]
         self.models["providers"]["ollama"]["models"][0]["baseUrl"] = "https://remote.example/v1"
         self.write_models()
         result = measure(self.client, [self.agent], AT)
@@ -279,6 +286,33 @@ class PiTests(unittest.TestCase):
         source.write_text(body)
         report.unlink()
         self.assertFalse(self.call(*args)[1]["found"])
+
+    def test_source_and_receipt_changes_during_probe_are_unconfirmed(self):
+        proof = self.launch()
+        body, prompt, report = self.native()
+        pi_native.bind_prompt(self.agent, prompt)
+        source = Path(proof["session_dir"]) / "capture.jsonl"
+        receipt = (pi_native.seat_dir(self.agent) / "launch.json").read_text()
+        for change in ("source", "receipt"):
+            source.write_text(body)
+            (pi_native.seat_dir(self.agent) / "launch.json").write_text(receipt)
+            gets = 0
+            def boundary(argv):
+                nonlocal gets
+                if argv[1:3] == ["agent", "get"]:
+                    gets += 1
+                    if gets == 3:
+                        if change == "source":
+                            source.write_text(body + "\n")
+                        else:
+                            path = pi_native.seat_dir(self.agent) / "launch.json"
+                            value = json.loads(receipt)
+                            value["dispatch_prompt"] = "different dispatch"
+                            path.write_text(json.dumps(value))
+            self.transport.on_call = boundary
+            with self.subTest(change=change):
+                self.assertFalse(pi_native.probe(self.client, self.agent, "wA:p8", str(report))["found"])
+        self.transport.on_call = None
 
     def test_native_rejects_echo_stale_branch_failed_turn_and_ambiguous_source(self):
         proof = self.launch()
