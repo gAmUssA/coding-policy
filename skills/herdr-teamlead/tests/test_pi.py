@@ -152,6 +152,7 @@ class PiTests(unittest.TestCase):
             candidates = cli._candidate_tiers([role], parse_config(config),
                 {"tester": {"type": "test_plan", "context": {"risk_flags": ["security"]}}} if role == "tester" else {},
                 fix_round=5 if role == "investigator" else None)
+            assert candidates is not None, "Tiered roster must produce candidate tiers"
             self.assertEqual(set(candidates[role]), {"claude", "codex", "grok"})
         with self.assertRaises(UsageError):
             cli._candidate_tiers(["investigator"], [self.agent], {"investigator": {"type": "invalid"}})
