@@ -171,6 +171,7 @@ def skipped_record(agent, status, herdr_status, state_source):
         "credits": None,
         "plan": None,
         "headroom_pct": None,
+        "headroom_model": agent.model_label,
         "window_group": agent.window_group,
         "skipped": True,
     }
@@ -243,7 +244,10 @@ def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, re
         "windows": windows,
         "credits": parsed["credits"],
         "plan": parsed.get("plan"),
-        "headroom_pct": headroom_pct(windows),
+        # Scoped to the seat's declared model: a per-model weekly window
+        # binds only a seat running that model. `windows` keeps every one.
+        "headroom_pct": headroom_pct(windows, agent.model_label),
+        "headroom_model": agent.model_label,
         # Copied through so `plan` reads one window's membership from the
         # snapshot, the same place it reads the headroom it belongs to.
         "window_group": agent.window_group,
@@ -289,6 +293,7 @@ def measure(client, agents, measured_at, marker_timeout_ms=DEFAULT_MARKER_TIMEOU
                 "credits": None,
                 "plan": None,
                 "headroom_pct": None,
+                "headroom_model": agent.model_label,
                 # Pool membership survives a failed measurement. Dropping it
                 # would unlink this worker from its window, and affordability
                 # reads the minimum across that window -- a judge whose own

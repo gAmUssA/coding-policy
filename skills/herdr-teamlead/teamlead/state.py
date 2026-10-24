@@ -269,6 +269,28 @@ def _migrate_snapshot_2_to_3(snapshot):
     return snapshot
 
 
+def _migrate_snapshot_3_to_4(snapshot):
+    """Snapshot version 3 -> 4: stamp every agent record's `headroom_model`.
+
+    Version 4 scopes `headroom_pct` to the model a seat runs: a per-model
+    window such as `Current week (Fable)` binds only a seat running that
+    model. A version-3 record's headroom is the minimum across every window,
+    which is exactly the version-4 reading for a seat whose model is unknown.
+    The migration records that as `headroom_model: ""` and keeps the value;
+    guessing a model here would loosen a reading the measurement never scoped.
+    The stamp is unconditional: version 3 never wrote the field, so a value
+    already on a version-3 record is not a measured scope. The next `measure`
+    writes the seat's own model.
+    """
+    snapshot["schema_version"] = 4
+    agents = snapshot.get("agents")
+    if isinstance(agents, dict):
+        for record in agents.values():
+            if isinstance(record, dict):
+                record["headroom_model"] = ""
+    return snapshot
+
+
 #: Document migrations, keyed by the version being upgraded FROM. Each value is
 #: (version_produced, upgrade_callable). `_apply_migrations` walks the chain
 #: until it reaches STATE_SCHEMA_VERSION, so a future 1->2 is one entry.
@@ -297,11 +319,12 @@ def _migrate_snapshot_1_to_2(snapshot):
 SNAPSHOT_MIGRATIONS = {
     1: (2, _migrate_snapshot_1_to_2),
     2: (3, _migrate_snapshot_2_to_3),
+    3: (4, _migrate_snapshot_3_to_4),
 }
 
 #: The snapshot version this build owns. Kept beside the migration table so
 #: the two move together; `measure.MEASURE_SCHEMA_VERSION` writes it.
-SNAPSHOT_SCHEMA_VERSION = 3
+SNAPSHOT_SCHEMA_VERSION = 4
 
 
 MIGRATIONS = {

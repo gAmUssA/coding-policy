@@ -1156,5 +1156,114 @@ class ModelFamilyTieBreakTest(unittest.TestCase):
         self.assertEqual(result["assignments"], {"developer": "claude"})
 
 
+def fable_exhausted_windows():
+    """The real 2026-10-23 windows of one Claude account, Fable-only spent."""
+    def window(used):
+        return {"used_pct": used, "remaining_pct": 100.0 - used, "resets": None}
+
+    return {
+        "Current session": window(2.0),
+        "Current week (all models)": window(79.0),
+        "Current week (Fable)": window(100.0),
+    }
+
+
+class PerModelJudgeWindowTest(unittest.TestCase):
+    """The judge is weighed against the windows that bind its pinned model.
+
+    `judge` (pinned to Opus) and `claude` (running Fable) share one account.
+    `measure` scopes each record's headroom to that seat's model, so the
+    Fable sibling reads 0% and the judge 21%. Affordability takes the minimum
+    across the pool, and must read the sibling's windows under the judge's
+    model rather than the sibling's own: the Fable window never binds Opus.
+    """
+
+    def _payload(self, judge_headroom, claude_headroom):
+        payload = pooled_snapshot(
+            {"judge": "claude-max", "claude": "claude-max"},
+            judge=judge_headroom, claude=claude_headroom, codex=90,
+        )
+        for name in ("judge", "claude"):
+            payload["agents"][name]["windows"] = fable_exhausted_windows()
+        return payload
+
+    def _plan(self, payload, model, roles=("judge",), **kwargs):
+        return plan(
+            list(roles), payload, warn=lambda message: None, judge_agent="judge",
+            judge_tier={"model": model, "effort": "high"}, **kwargs,
+        )
+
+    def test_a_fable_sibling_does_not_halt_an_opus_judge(self):
+        result = self._plan(self._payload(21.0, 0.0), "claude-opus-5-5")
+        self.assertEqual(result["assignments"]["judge"], "judge")
+
+    def test_a_fable_judge_still_halts_on_the_spent_fable_window(self):
+        with self.assertRaises(PlanError) as caught:
+            self._plan(self._payload(0.0, 0.0), "claude-fable-5-1")
+        self.assertEqual(caught.exception.details["headroom_pct"], 0.0)
+
+    def test_the_account_wide_window_still_binds_an_opus_judge(self):
+        # 21% covers one 15% ruling, but not after a heavier 16% seat on the
+        # same pool was filled first.
+        with self.assertRaises(PlanError) as caught:
+            self._plan(
+                self._payload(21.0, 0.0), "claude-opus-5-5", roles=("judge", "developer"),
+                role_costs={"developer": 16}, exclude={"developer": ["codex"]},
+            )
+        self.assertAlmostEqual(caught.exception.details["headroom_pct"], 5.0)
+
+    def test_a_sibling_without_windows_keeps_its_recorded_reading(self):
+        payload = self._payload(21.0, 0.0)
+        del payload["agents"]["claude"]["windows"]
+        with self.assertRaises(PlanError) as caught:
+            self._plan(payload, "claude-opus-5-5")
+        self.assertEqual(caught.exception.details["measured_through"], "claude")
+
+    def test_malformed_windows_fall_back_to_the_recorded_reading(self):
+        payload = self._payload(21.0, 0.0)
+        payload["agents"]["claude"]["windows"] = {"Current session": "full"}
+        with self.assertRaises(PlanError):
+            self._plan(payload, "claude-opus-5-5")
+
+
+class PerModelTierWindowTest(unittest.TestCase):
+    """A seat is ranked on the windows that bind the model its tier runs.
+
+    `measure` scopes `headroom_pct` to the worker's `model_label`, but a
+    round's tier row can seat that worker on another model. The planner
+    re-reads the stored windows under the tier's model.
+    """
+
+    def _payload(self, opus_recorded):
+        payload = snapshot(opus=opus_recorded, plain=15.0)
+        payload["agents"]["opus"]["windows"] = fable_exhausted_windows()
+        return payload
+
+    def test_a_fable_tier_on_an_opus_labelled_worker_reads_the_fable_window(self):
+        payload = self._payload(21.0)
+        tiers = {"developer": {"opus": {"model": "claude-fable-5-1"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "plain")
+
+    def test_an_opus_tier_on_the_same_worker_reads_the_account_wide_window(self):
+        payload = self._payload(21.0)
+        tiers = {"developer": {"opus": {"model": "claude-opus-5-5"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "opus")
+
+    def test_a_fable_labelled_worker_on_an_opus_tier_is_not_held_at_zero(self):
+        payload = snapshot(fable=0.0, plain=15.0)
+        payload["agents"]["fable"]["windows"] = fable_exhausted_windows()
+        tiers = {"developer": {"fable": {"model": "claude-opus-5-5"}, "plain": {"model": "gpt-5.5"}}}
+        result = plan(["developer"], payload, warn=lambda message: None, tier_candidates=tiers)
+        self.assertEqual(result["assignments"]["developer"], "fable")
+
+    def test_no_tier_keeps_the_recorded_reading(self):
+        payload = snapshot(fable=0.0, plain=15.0)
+        payload["agents"]["fable"]["windows"] = fable_exhausted_windows()
+        result = plan(["developer"], payload, warn=lambda message: None)
+        self.assertEqual(result["assignments"]["developer"], "plain")
+
+
 if __name__ == "__main__":
     unittest.main()

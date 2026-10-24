@@ -46,13 +46,15 @@ signatures the stale-state probe reads; an agent with neither is never probed.
 `composer_glyph`, `composer_ignore_dim`, `composer_placeholders`, and
 `recover_keys` drive the consumed-command check, the ghost-text and placeholder
 exemptions, and the guarded one-shot recovery of a stuck composer.
-`model_label` is cosmetic: it names the model on the worker's pane after a
-dispatch. All are documented in
+`model_label` names the model on the worker's pane after a dispatch, and
+`measure` scopes the worker's headroom to it: a per-model usage window such as
+Claude's `Current week (Fable)` binds only a worker whose `model_label` names
+that model. All are documented in
 `skills/herdr-teamlead/references/herdr.md`.
 
 `window_group` names the usage window an agent shares with other agents: two
 workers authenticating as one subscription declare the same value, `measure`
-copies it onto each record (snapshot `schema_version` 3), and `plan` charges a seat's cost against every
+copies it onto each record (snapshot `schema_version` 2 and later), and `plan` charges a seat's cost against every
 worker in that window. An agent that declares none has a window to itself.
 
 The optional top-level `top_models` key maps a supported kind (`claude`,
@@ -317,7 +319,8 @@ skills/herdr-teamlead/references/retrospectives.md
 | `schema_version` | integer | Currently `7`. Bumped on any shape change |
 | `snapshots` | array | Whole `measure` documents, oldest first; the ring holds the last 20 |
 | `assignments` | array | Append-only ledger of who held which role |
-| `snapshots[].schema_version` | integer | Currently `3`. Version 2 added `window_group`; version 3 adds per-round `tier_billing`. Older snapshots migrate on read, preserving headroom and shared-window membership |
+| `snapshots[].schema_version` | integer | Currently `4`. Version 2 added `window_group`; version 3 added per-round `tier_billing`; version 4 scopes `headroom_pct` to the seat's model and adds `headroom_model`. Older snapshots migrate on read, preserving headroom and shared-window membership |
+| `snapshots[].agents[].headroom_model` | string | The `model_label` that `headroom_pct` was scoped to; empty means every window bound it. Present on every agent record. The `3 → 4` migration stamps it empty, unconditionally, and keeps the version-3 headroom, the all-window minimum, which is the version-4 reading for an unknown model |
 | `snapshots[].agents[].window_group` | string | The usage window this agent shares with others; empty means a window of its own. Present on every agent record, including skipped and failed ones — pool membership is config, not a measurement result |
 | `assignments[].schema_version` | integer | The row's own version, stamped on write |
 | `assignments[].at` | string | ISO-8601 timestamp, from `--now` or the CLI's clock |
@@ -496,8 +499,19 @@ proof and marks its result `recovered: true`; it preserves the original row.
 Each snapshot is one `measure` document: `schema_version`, `measured_at`, an
 `agents` object keyed by agent name (`kind`, `state`, `herdr_state`,
 `state_source`, `pane_id`, `windows`, `credits`, `plan`, `headroom_pct`,
-`skipped`), and `failed_agents`. `headroom_pct` is the minimum `remaining_pct`
-across that agent's windows. `state_source` is `herdr` or `probe`, naming which
+`headroom_model`, `skipped`), and `failed_agents`. `headroom_pct` is the minimum `remaining_pct`
+across the windows that bind that agent's `model_label`. A per-model window
+(`Current week (<Model>)`) binds only an agent whose `model_label` contains
+that model family as a whole word, compared case-insensitively;
+`Current session`, `Current week (all models)`, and every codex and grok window
+bind every agent; an empty `model_label` keeps every window. `windows` keeps
+every parsed window, with the same meaning at every snapshot version. `plan`
+re-reads each record's `windows` under the model the seat runs in that role:
+the pinned `judge.model` for the judge, including across its pool, and the tier
+row's `model` otherwise. The re-read applies whatever the record's
+`headroom_model` or version, so a window for a model a seat does not run never
+binds it. A record with no usable `windows`, or a seat with no known model,
+keeps its recorded `headroom_pct`. See `docs/adr/0013-model-scoped-usage-headroom.md`. `state_source` is `herdr` or `probe`, naming which
 signal decided `state`; `herdr_state` carries what herdr claimed. `plan` is an
 informational plan name and never feeds headroom.
 

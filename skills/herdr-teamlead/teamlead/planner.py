@@ -58,6 +58,7 @@ import math
 
 from .diagnostics import stderr_warn
 from .errors import PlanError
+from .parsers import headroom_pct
 
 #: Plan document version. 2 adds the optional `judge` object carrying the
 #: pinned seat's agent, model and effort. Version 3 adds round-tier data. Additive: a version-1
@@ -188,6 +189,44 @@ def _window_groups(agents):
         if isinstance(group, str) and group:
             groups[name] = group
     return groups
+
+
+def _model_offset(record, recorded, model):
+    """The adjustment that re-reads one record's windows under `model`.
+
+    `measure` scopes each record's `headroom_pct` to the seat's declared
+    `model_label`, but a seat runs the model its tier row or the judge pin
+    names for this round. A worker labelled Opus that a round seats on a
+    Fable tier is bound by the `Current week (Fable)` window, and a Fable
+    pool-mate's spent Fable window never binds an Opus judge. The re-read is
+    kept as an offset from the recorded headroom: the fill loop charges
+    seats against the recorded values, and the offset carries that spend
+    through unchanged.
+
+    0.0 -- the recorded reading -- when there is no model to scope to, no
+    recorded headroom, or no usable `windows` (missing, empty, malformed, or
+    non-finite). The stored windows mean the same at every snapshot version,
+    so a migrated record is re-read like a fresh one.
+    """
+    if not model or recorded is None or not isinstance(record, dict):
+        return 0.0
+    windows = record.get("windows")
+    if not isinstance(windows, dict) or not windows:
+        return 0.0
+    if not all(_usable_window(window) for window in windows.values()):
+        return 0.0
+    scoped = headroom_pct(windows, model)
+    return 0.0 if scoped is None else float(scoped) - recorded
+
+
+def _usable_window(window):
+    """Whether a snapshot window carries a finite numeric `remaining_pct`."""
+    if not isinstance(window, dict):
+        return False
+    value = window.get("remaining_pct")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value)
 
 
 def _costs_for(roles, role_costs):
@@ -368,7 +407,7 @@ def _unfillable_message(role, barred, remaining, later_roles, constrained=False)
     return " ".join(part for part in parts if part)
 
 
-def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
+def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=None):
     """Halt the round when the pinned judge's window cannot afford it.
 
     The judge seat has no substitute: it is pinned, and its worker shares a
@@ -386,6 +425,10 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
     is unmeasured, and the existing unknown-headroom handling already names it
     in the rationale.
 
+    `offsets` re-reads each record under the pinned judge model (see
+    `_model_offset`), so a pool-mate's per-model window for a model
+    the judge does not run never halts the judge.
+
     Called from inside the fill loop, at the judge's own turn, so `headrooms`
     already reflects what the seats filled before it spent from the same
     window. Checked before the loop instead, a round seating a heavier
@@ -398,8 +441,11 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups):
     else:
         window = [name for name in headrooms if groups.get(name) == group]
 
+    offsets = offsets or {}
     readings = {
-        name: headrooms[name] for name in window if headrooms.get(name) is not None
+        name: headrooms[name] + offsets.get(name, 0.0)
+        for name in window
+        if headrooms.get(name) is not None
     }
     if not readings:
         return
@@ -594,6 +640,29 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         name: _headroom_of(name, record, warn) for name, record in agents.items()
     }
     groups = _window_groups(agents)
+    recorded = dict(headrooms)
+    offsets = {}
+
+    def seat_model(role, name):
+        """The model `name` runs in `role`: the judge pin, else its tier row."""
+        if role == "judge" and name == judge_agent:
+            return (judge_tier or {}).get("model")
+        return ((tier_candidates or {}).get(role, {}).get(name) or {}).get("model")
+
+    def offset(name, model):
+        if (name, model) not in offsets:
+            offsets[(name, model)] = _model_offset(agents.get(name), recorded[name], model)
+        return offsets[(name, model)]
+
+    def seat_headrooms(role):
+        """Every agent's current headroom under the model it runs in `role`."""
+        return {
+            name: None if value is None else value + offset(name, seat_model(role, name))
+            for name, value in headrooms.items()
+        }
+
+    judge_model = (judge_tier or {}).get("model")
+    judge_offsets = {name: offset(name, judge_model) for name in headrooms}
     remaining = set(headrooms)
     picks = {}
     rationale = []
@@ -610,11 +679,12 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         cost = candidate_cost(role, judge_agent) if role == "judge" else costs[role]
         barred = excluded[role]
         if role == "judge" and judge_agent:
-            _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups)
+            _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, judge_offsets)
         later_roles = fill_order[index + 1:]
+        scoped = seat_headrooms(role)
         ranked = sorted(
             (name for name in remaining if name not in barred),
-            key=lambda name: _sort_key(name, headrooms[name], candidate_cost(role, name), role, counts, floor,
+            key=lambda name: _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
                                       familiarity if role in (requirements or {}) else None, same_family),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
@@ -643,11 +713,11 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         picks[role] = chosen
         cost = candidate_cost(role, chosen)
         rationale.append(
-            _explain(role, chosen, ranked, headrooms, counts, cost, floor, barred)
+            _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
         )
         if role in (requirements or {}) and (familiarity or {}).get(role, {}).get(chosen):
             rationale.append("{} -> {} has a prior confirmed dispatch for the same task and engagement; familiarity ranks before headroom only when this projected seat is affordable.".format(role, chosen))
-        headroom = headrooms[chosen]
+        headroom = scoped[chosen]
         if headroom is not None:
             projected = headroom - cost
             floor = projected if floor is None else min(floor, projected)
