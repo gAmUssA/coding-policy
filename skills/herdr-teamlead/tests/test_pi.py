@@ -190,6 +190,25 @@ class PiTests(unittest.TestCase):
                 function(self.client, self.agent, "wA:p8", self.tier)
         self.assertEqual(self.transport.calls, [])
 
+    def test_receipt_version_and_old_local_snapshot_fail_closed(self):
+        self.launch()
+        measured = measure(self.client, [self.agent], AT)
+        path = self.root / "snapshot.json"
+        measured["schema_version"] = 4
+        measured["agents"]["claude"] = {"kind": "claude", "state": "idle", "headroom_pct": 80}
+        self.config.write_text(json.dumps({"schema_version": 5, "agents": [pi_entry(), CONFIG["agents"][0]]}))
+        path.write_text(json.dumps(measured))
+        rc, result, error = self.call("plan", "--roles", "tester", "--snapshot", str(path))
+        self.assertEqual(rc, 0, error)
+        self.assertEqual(result["ineligible_agents"]["local"]["reason"], "local_measurement_unproven")
+        with self.assertRaises(PlanError):
+            plan(["tester"], measured, local_agents=["local"], exclude={"tester": ["claude"]})
+        receipt = pi_native.read_launch(self.agent)
+        receipt["schema_version"] = True
+        (pi_native.seat_dir(self.agent) / "launch.json").write_text(json.dumps(receipt))
+        with self.assertRaises(HerdrError):
+            pi_native.read_launch(self.agent)
+
     def test_endpoint_and_permission_profile_fail_closed(self):
         self.launch()
         self.models["providers"]["ollama"]["models"][0]["baseUrl"] = "https://remote.example/v1"

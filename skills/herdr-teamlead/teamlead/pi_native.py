@@ -123,7 +123,7 @@ def read_launch(agent):
         value = json.loads((seat_dir(agent) / "launch.json").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise HerdrError("pi_permission_unproven: no readable fresh-launch receipt for {!r}. Start it with teamlead start-local before dispatch.".format(agent.name), {"reason": str(exc)}) from None
-    if not isinstance(value, dict) or value.get("schema_version") != 1 or value.get("agent") != agent.name:
+    if not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 1 or value.get("agent") != agent.name:
         raise HerdrError("pi_permission_unproven: restore the owner-written launch receipt or start a fresh seat.", {})
     return value
 

@@ -621,10 +621,10 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 ),
                 {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents)},
             )
-    local_agents = {name for name in (local_agents or []) if isinstance(agents.get(name), dict)
+    local_agents = {name for name in (local_agents or []) if snapshot.get("schema_version") == 5 and isinstance(agents.get(name), dict)
         and agents[name].get("kind") == "pi" and agents[name].get("budget_mode") == "local_unmetered"
         and not agents[name].get("skipped") and not agents[name].get("error")
-        and agents[name].get("state") in {"idle", "done"} and (agents[name].get("host_eligibility") or {}).get("eligible") is True}
+        and agents[name].get("state") in {"idle", "done"} and isinstance(agents[name].get("host_eligibility"), dict) and agents[name]["host_eligibility"].get("eligible") is True}
     for role in roles:
         excluded[role] = sorted(set(excluded[role]) | {name for name, record in agents.items()
             if isinstance(record, dict) and (record.get("kind") == "pi" or record.get("budget_mode") == "local_unmetered") and (name not in local_agents or role not in {"investigator", "tester"})})

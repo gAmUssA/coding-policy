@@ -796,9 +796,11 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     ineligible, local = {}, []
     for agent in agents:
         observation = observations[agent.name]
-        record = snapshot.get("agents", {}).get(agent.name, {})
+        records = snapshot.get("agents")
+        record = records.get(agent.name, {}) if isinstance(records, dict) else {}
+        record = record if isinstance(record, dict) else {}
         reason = observation["reason"] if observation is not None and observation["eligible"] is not True else None
-        if agent.kind == "pi" and (record.get("kind") != "pi" or record.get("budget_mode") != "local_unmetered" or record.get("skipped") or record.get("error") or record.get("state") not in {"idle", "done"} or (record.get("host_eligibility") or {}).get("eligible") is not True):
+        if agent.kind == "pi" and (snapshot.get("schema_version") != 5 or record.get("kind") != "pi" or record.get("budget_mode") != "local_unmetered" or record.get("skipped") or record.get("error") or record.get("state") not in {"idle", "done"} or not isinstance(record.get("host_eligibility"), dict) or record["host_eligibility"].get("eligible") is not True):
             reason = reason or record.get("skip_reason") or "local_measurement_unproven"
         if reason:
             ineligible[agent.name] = {"reason": reason, "message": observation["message"] if observation is not None and observation["eligible"] is not True else "Re-run teamlead measure on a commissioned idle pi seat."}

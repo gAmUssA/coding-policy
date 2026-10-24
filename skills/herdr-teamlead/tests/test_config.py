@@ -143,27 +143,27 @@ class ParseConfigTest(unittest.TestCase):
         payload = json.loads((REPO_ROOT / "config.example.json").read_text(encoding="utf-8"))
         agents = parse_config(payload, source="config.example.json")
         self.assertEqual(
-            [agent.name for agent in agents], ["claude", "codex", "grok", "judge"]
+            [agent.name for agent in agents], ["claude", "codex", "grok", "judge", "local_pi"]
         )
         self.assertEqual(
-            [agent.kind for agent in agents], ["claude", "codex", "grok", "claude"]
+            [agent.kind for agent in agents], ["claude", "codex", "grok", "claude", "pi"]
         )
         by_name = {agent.name: agent for agent in agents}
         # Grok renders /usage as a modal after a restart, so it reads the
         # viewport and dismisses the dialog just like claude does.
         self.assertEqual(by_name["grok"].usage_read_source, "visible")
         self.assertEqual(by_name["grok"].close_keys, ("esc",))
-        # Every shipped agent carries an idle signature for the probe.
-        self.assertTrue(all(agent.idle_markers for agent in agents))
+        # Metered workers retain their existing probe signatures; pi uses Herdr readiness.
+        self.assertTrue(all(agent.idle_markers for agent in agents if agent.kind != "pi"))
         # Delivery is per-agent because the TUIs disagree: grok reads a pasted
         # slash command as a chat message, codex swallows a typed one in its
         # autocomplete popup.
         self.assertEqual(
             {agent.name: agent.slash_delivery for agent in agents},
-            {"claude": "paste", "codex": "type", "grok": "type", "judge": "paste"},
+            {"claude": "paste", "codex": "type", "grok": "type", "judge": "paste", "local_pi": "paste"},
         )
-        # Every agent can be checked for a stuck composer.
-        self.assertTrue(all(agent.composer_glyph for agent in agents))
+        # Metered composer glyphs remain intact; pi uses the captured border shape.
+        self.assertTrue(all(agent.composer_glyph for agent in agents if agent.kind != "pi"))
         self.assertEqual(by_name["codex"].composer_glyph, "\u203a ")
         # Codex ships with NO recovery keys: the key that clears its composer
         # is ctrl+c, and ctrl+c on an idle Codex exits the process. That is
@@ -536,7 +536,7 @@ class TopModelsConfigTest(unittest.TestCase):
 
     def test_the_shipped_example_extends_the_pins(self):
         example = _example_config()
-        self.assertEqual(example["schema_version"], 4)
+        self.assertEqual(example["schema_version"], 5)
         self.assertIn("top_models", example)
         agents = parse_config(example)
         self.assertTrue(all(agent.top_models for agent in agents if agent.kind in ("claude", "codex", "grok")))
