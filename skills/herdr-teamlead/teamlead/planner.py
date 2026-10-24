@@ -71,7 +71,7 @@ from .parsers import headroom_pct
 #: refuse the start rather than defaulting one.
 #: A plan is a round's instruction, not stored state -- it is produced and
 #: consumed inside one round and never migrated (rules/stateful-artifacts.md).
-PLAN_SCHEMA_VERSION = 6
+PLAN_SCHEMA_VERSION = 7
 
 #: What one round in each seat is expected to burn, in points of the agent's
 #: remaining headroom percentage. The ORDER is what the planner acts on:
@@ -474,7 +474,7 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=Non
         )
 
 
-def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None):
+def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None, local_agents=None, ineligible_agents=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
     `counts` is `{role: {agent: times_held}}` from the state ledger; omit it
@@ -621,6 +621,13 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 ),
                 {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents)},
             )
+    local_agents = {name for name in (local_agents or []) if isinstance(agents.get(name), dict)
+        and agents[name].get("kind") == "pi" and agents[name].get("budget_mode") == "local_unmetered"
+        and not agents[name].get("skipped") and not agents[name].get("error")
+        and agents[name].get("state") in {"idle", "done"} and (agents[name].get("host_eligibility") or {}).get("eligible") is True}
+    for role in roles:
+        excluded[role] = sorted(set(excluded[role]) | {name for name, record in agents.items()
+            if isinstance(record, dict) and (record.get("kind") == "pi" or record.get("budget_mode") == "local_unmetered") and (name not in local_agents or role not in {"investigator", "tester"})})
     costs = _costs_for(roles, role_costs)
     if tier_candidates is not None:
         for role in roles:
@@ -633,11 +640,13 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
 
     def candidate_cost(role, name):
+        if name in local_agents:
+            return 0.0
         tier = (tier_candidates or {}).get(role, {}).get(name) or {}
         return costs[role] * tier.get("effective_multiplier", 1.0)
 
     headrooms = {
-        name: _headroom_of(name, record, warn) for name, record in agents.items()
+        name: None if name in local_agents else _headroom_of(name, record, warn) for name, record in agents.items()
     }
     groups = _window_groups(agents)
     recorded = dict(headrooms)
@@ -675,6 +684,14 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         roles.index(role),
     ))
 
+    def rank(role, name, scoped):
+        affinity = familiarity.get(role, {}).get(name, 0) if role in (requirements or {}) and familiarity else 0
+        if name in local_agents:
+            return (0, -affinity, 0, counts.get(role, {}).get(name, 0), name)
+        affordable = scoped[name] is not None and scoped[name] - candidate_cost(role, name) >= 0
+        return (0 if affordable else 1, -affinity if affordable else 0, 1,
+                *_sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor, same_family=same_family))
+
     for index, role in enumerate(fill_order):
         cost = candidate_cost(role, judge_agent) if role == "judge" else costs[role]
         barred = excluded[role]
@@ -684,7 +701,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         scoped = seat_headrooms(role)
         ranked = sorted(
             (name for name in remaining if name not in barred),
-            key=lambda name: _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
+            key=lambda name: rank(role, name, scoped) if local_agents else _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
                                       familiarity if role in (requirements or {}) else None, same_family),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
@@ -713,12 +730,12 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         picks[role] = chosen
         cost = candidate_cost(role, chosen)
         rationale.append(
-            _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
+            "{} -> {} (local_unmetered; no subscription-window charge; lead verification required)".format(role, chosen) if chosen in local_agents else _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
         )
         if role in (requirements or {}) and (familiarity or {}).get(role, {}).get(chosen):
             rationale.append("{} -> {} has a prior confirmed dispatch for the same task and engagement; familiarity ranks before headroom only when this projected seat is affordable.".format(role, chosen))
         headroom = scoped[chosen]
-        if headroom is not None:
+        if headroom is not None and chosen not in local_agents:
             projected = headroom - cost
             floor = projected if floor is None else min(floor, projected)
 
@@ -753,6 +770,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
 
     document = {
         "schema_version": PLAN_SCHEMA_VERSION,
+        "ineligible_agents": ineligible_agents or {},
         # Keyed in the caller's order, not the fill order: --roles still shapes
         # the document even though it no longer decides which seat is heaviest.
         "assignments": {role: picks[role] for role in roles},
@@ -814,7 +832,7 @@ def _notes(excluded, agents, warn):
     skipped = sorted(
         name
         for name, record in agents.items()
-        if isinstance(record, dict) and record.get("skipped")
+        if isinstance(record, dict) and record.get("skipped") and record.get("kind") != "pi"
     )
     if skipped:
         notes.append(

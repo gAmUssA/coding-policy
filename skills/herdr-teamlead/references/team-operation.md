@@ -345,9 +345,14 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
 
 ## Worker Launch Mode
 
-- Start every team worker in YOLO mode, including reviewer, tester, release, and judge
+- Start metered team workers in YOLO mode, including reviewer, tester, release, and judge
+- Commission optional local pi with its evidenced intrinsic-execution profile under `skills/herdr-teamlead/references/model-tiers.md`
+- Keep pi investigator and parallel tester results lead-verified
+- Keep a metered independent tester of record
+- Never seat pi as reviewer or judge
 - Apply the same mode on every relaunch
-- Verify the worker's permission flags from launch or live foreground-process argv before dispatch
+- Verify metered permission flags from launch or live foreground-process argv before dispatch
+- Verify pi through its fresh-launch receipt and live PID/pane/terminal continuity
 - Preserve the assignment classifier and the brief's authority, role, and path limits
 - YOLO mode grants no additional task authority
 - Permission flags and their validation live in `skills/herdr-teamlead/teamlead/tiers.py`

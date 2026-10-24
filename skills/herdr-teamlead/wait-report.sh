@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Wait for one worker's round report to land, then report what was observed.
 #
-# Completion is TWO signals, never one: the report FILE exists on disk AND the
+# Pi uses its source-bound contract in pi_native.py, with the matching --state.
+# Other workers require TWO signals, never one: the report FILE exists on disk AND the
 # worker's pane shows the `REPORT: ` marker line its brief ends with, carrying
 # THIS report's exact absolute path on one unquoted, unfenced row. Known native
 # decoration requires completed source-message proof; the source and display
@@ -14,7 +15,7 @@
 #
 # Contract:
 #   argv  : [--once] [--worktree <path>] [--base <revision>] [--since <iso8601>]
-#           <agent-name> <report-path>
+#           [--state <teamlead-state>] <agent-name> <report-path>
 #           --worktree names the worker's own checkout. With it, a budget
 #                  exhaustion classifies what the worker left behind and the
 #                  JSON carries a "stall" object; without it the exhaustion
@@ -182,6 +183,7 @@ ERRFILE=""
 # an unset read aborts the script mid-flight, after output has already gone out
 # (rules/error-handling.md: fail visibly, never half-way).
 AGENT=""
+STATE_ARGS=()
 REPORT_PATH=""
 #: The worker's own checkout, when the caller named one. A stall classifies
 #: what it holds; without it the exhaustion reports the wait alone (#418).
@@ -228,7 +230,7 @@ agent_info() { # <agent-name>
     if (.result.agent | type) != "object" then
       error("herdr agent get payload has no .result.agent object")
     else
-      "\(.result.agent.agent_status // "unknown") \(.result.agent.pane_id // "unknown")"
+      "\(.result.agent.agent_status // "unknown") \(.result.agent.agent // "unknown") \(.result.agent.pane_id // "unknown")"
     end' 2>"$ERRFILE")" || rc=$?
   if (( rc != 0 )); then
     warn "could not read the herdr agent get payload (jq exit ${rc}): $(tr '\n' ' ' < "$ERRFILE")"
@@ -250,6 +252,10 @@ agent_info() { # <agent-name>
 # (rules/error-handling.md — distinguish an expected non-result from a fault).
 marker_seen() { # <pane-id> <absolute-report-path>
   local rc=0 code text
+  if [[ "${3:-}" == pi ]]; then
+    native_marker_seen "$1" "$2" ""
+    return $?
+  fi
   # Argument order follows herdr's own usage line -- `pane wait-output
   # [OPTIONS] <--match|--regex> <PANE_ID>` -- and the builder in
   # skills/herdr-teamlead/teamlead/herdr.py, so the two surfaces cannot drift.
@@ -282,10 +288,14 @@ marker_seen() { # <pane-id> <absolute-report-path>
   if report_marker_on_screen "$text" "$2"; then return 0; fi
   # UI decoration is accepted only when the completed native source proves
   # the authored final row was bare. The helper owns source/UI allowlists.
-  local result skill_dir
+  native_marker_seen "$1" "$2" "$text"
+}
+
+native_marker_seen() { # <pane> <report> <visible rows>
+  local rc=0 result skill_dir text="$3"
   skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   rc=0
-  result="$(printf '%s' "$text" | bash "$skill_dir/teamlead.sh" probe-report \
+  result="$(printf '%s' "$text" | bash "$skill_dir/teamlead.sh" probe-report "${STATE_ARGS[@]}" \
     --herdr-bin "$HERDR_BIN" --agent "$AGENT" --pane "$1" --report "$2" \
     --lines "$TEAMLEAD_PROBE_LINES")" || rc=$?
   if (( rc != 0 )); then
@@ -685,6 +695,9 @@ main() {
   while (( $# )); do
     case "${1:-}" in
       --once) once=1; shift ;;
+      --state)
+        if (( $# < 2 )) || [[ -z "$2" ]]; then warn "--state needs the teamlead state file"; return 2; fi
+        STATE_ARGS=(--state "$2"); shift 2 ;;
       --worktree)
         if (( $# < 2 )) || [[ -z "$2" ]]; then
           warn "--worktree needs the worker's checkout path"
@@ -817,7 +830,9 @@ main() {
     fi
 
     rc=0
-    marker_seen "$pane" "$REPORT_PATH" || rc=$?
+    local kind="${info#* }"
+    kind="${kind%% *}"
+    marker_seen "$pane" "$REPORT_PATH" "$kind" || rc=$?
     if (( rc == 2 )); then return 2; fi
     marker=$(( rc == 0 ? 1 : 0 ))
 

@@ -27,7 +27,12 @@ TOP_MODELS = {
 }
 #: Codex `max` and `ultra` are the reasoning levels codex-cli 0.160.0 lists
 #: for its top models (`supported_reasoning_levels` in ~/.codex/models_cache.json).
+WORKER_KINDS = frozenset({"claude", "codex", "grok", "pi"})
+PI_MODEL = re.compile(r"ollama/[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+PI_PROFILE = ["--no-extensions", "--no-mcp", "--tools", "read,bash,write"]
+
 EFFORTS = {
+    "pi": frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"}),
     "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
     "codex": frozenset({"low", "medium", "high", "xhigh", "max", "ultra"}),
     "grok": frozenset({"low", "medium", "high"}),
@@ -222,6 +227,10 @@ def parse_launch_args(args, kind):
     """Preserve explicit operator permission/UI choices, never tier overrides."""
     if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
         _error("launch_args must be an array of supported permission/UI flags.")
+    if kind == "pi":
+        if args not in ([], PI_PROFILE):
+            _error("pi_permission_unproven: use the fixed intrinsic-execution profile without extra flags.")
+        return list(args)
     offset = 0
     seen = set()
     while offset < len(args):
@@ -249,6 +258,10 @@ def worker_launch_args(kind, args=()):
     aliases normalize to one flag, preventing contradictory CLI precedence.
     Archive readers keep parse_launch_args/verify_argv's historical contract.
     """
+    if kind == "pi":
+        if list(args) not in ([], PI_PROFILE):
+            raise ConfigError("pi_permission_unproven: pi launch_args must be empty; the adapter supplies the evidenced intrinsic-execution profile. No approval bypass flag is invented.", {})
+        return list(PI_PROFILE)
     if kind not in YOLO_FLAGS:
         raise ConfigError("No YOLO launch adapter for {!r}; configure a supported worker kind before starting it.".format(kind), {})
     parsed = parse_launch_args(list(args), kind)
@@ -356,8 +369,8 @@ def parse_tiers(raw, kind, top_models=None, agent=None):
     """
     if raw is None:
         return {}
-    if kind not in TOP_MODELS:
-        _error("Tier launches are supported for claude, codex, and grok; {!r} has no adapter.".format(kind))
+    if kind not in WORKER_KINDS:
+        _error("Tier launches need a supported worker adapter; {!r} has none.".format(kind))
     if not isinstance(raw, dict) or not raw:
         _error("tiers must be a non-empty object keyed by round type.")
     result = {}
@@ -368,7 +381,7 @@ def parse_tiers(raw, kind, top_models=None, agent=None):
             _error("Tier {!r} must contain only {}.".format(round_type, ", ".join(sorted(TIER_FIELDS))))
         entry = {key: value for key, value in entry.items() if key not in RETIRED_TIER_FIELDS}
         model = entry.get("model")
-        if not isinstance(model, str) or not MODEL_ID.fullmatch(model):
+        if not isinstance(model, str) or not (PI_MODEL if kind == "pi" else MODEL_ID).fullmatch(model):
             _error("Tier {!r} needs a model identifier, not a flag or command.".format(round_type))
         effort = entry.get("effort")
         if model in NO_EFFORT_MODELS:
@@ -376,7 +389,9 @@ def parse_tiers(raw, kind, top_models=None, agent=None):
                 _error("Haiku accepts no effort flag; omit effort for its Claude tier.")
         elif not isinstance(effort, str) or effort not in EFFORTS[kind]:
             _error("Tier {!r} needs an explicit effort from {}.".format(round_type, sorted(EFFORTS[kind])))
-        pins = TOP_MODELS[kind] if top_models is None else top_models
+        if kind == "pi" and (round_type not in {"consultation", "test_plan"} or "billing_evidence" in entry):
+            _error("Pi supports only consultation and test_plan evidence, never judgment or metered billing declarations.")
+        pins = TOP_MODELS.get(kind, frozenset()) if top_models is None else top_models
         if round_type in JUDGMENT_ROUNDS and (
             model not in pins or not effort_at_or_above(effort, JUDGMENT_EFFORT_FLOOR)
         ):
@@ -422,6 +437,11 @@ def mechanical_allowed(context):
 
 def select_tier(agent, role, round_type=None, context=None, fix_round=None):
     """Resolve one candidate from configuration; no per-call model override."""
+    require_role(agent, role)
+    if agent.kind == "pi":
+        if fix_round or (context or {}).get("risk_flags") or (context or {}).get("prior_high_miss") or (context or {}).get("input_bytes", 0) > XHIGH_CONTEXT_BYTES:
+            raise UsageError("local_role_ineligible: pi cannot take fixes or risk escalation; use a judgment worker.", {})
+        round_type = round_type or ("test_plan" if role == "tester" else "consultation")
     if not agent.tiers:
         if round_type is not None:
             raise UsageError("Agent {} has no tier table; configure it before selecting a round.".format(agent.name), {})
@@ -485,13 +505,17 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
             tier["effort"] = "high"
     return {
         **tier, "round": round_type, "tier_row": chosen_round, "kind": agent.kind,
-        "billing_window": billing_window(tier), "effective_multiplier": effective_multiplier(tier),
+        "billing_window": "local_unmetered" if agent.kind == "pi" else billing_window(tier), "effective_multiplier": 0.0 if agent.kind == "pi" else effective_multiplier(tier),
     }
 
 
 def launch_flags(kind, tier):
     """The documented flags, shared by dry-run and real execution."""
     model, effort = tier["model"], tier.get("effort")
+    if kind == "pi":
+        if not isinstance(model, str) or not PI_MODEL.fullmatch(model) or effort not in EFFORTS["pi"]:
+            raise UsageError("pi_permission_unproven: use an exact ollama/model:tag and explicit thinking level.", {})
+        return ["--provider", "ollama", "--model", model[len("ollama/"):], "--thinking", effort]
     if kind == "claude":
         return ["--model", model] + (["--effort", effort] if effort else [])
     if kind == "codex":
@@ -515,3 +539,12 @@ effort tokens do not establish proof.
     if PurePath(argv[0]).name != kind or argv[1:] != list(launch_args) + launch_flags(kind, tier):
         raise HerdrError("Worker launch argv did not match the requested model, effort and launch options; start a fresh worker with the required arguments before dispatch. No brief may be sent.", {"kind": kind})
     return {"model": tier["model"], "effort": tier.get("effort"), "argv": list(argv), "source": "launch_argv"}
+
+
+def require_role(agent, role):
+    """Declarations restrict routing; they never grant local judgment authority."""
+    allowed = getattr(agent, "allowed_roles", None)
+    if agent.kind == "pi" and not {"repo-read", "command-run"}.issubset(agent.capabilities):
+        raise UsageError("local_role_ineligible: declare repo-read and command-run capabilities before using pi evidence.", {})
+    if (allowed is not None and role not in allowed) or (agent.kind == "pi" and role not in {"investigator", "tester"}):
+        raise UsageError("Worker {!r} cannot perform {!r} (local_role_ineligible). Use this pi seat for evidence-gathering consultation and select an eligible independent reviewer. Changing allowed_roles does not waive judgment-model requirements. Pi cannot hold the pinned judge seat; retain the configured judgment worker.".format(agent.name, role), {})

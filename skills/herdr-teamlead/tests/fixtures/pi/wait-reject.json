@@ -1,0 +1,12 @@
+{
+  "command": [
+    "bash",
+    "/Users/vikgamov/projects/ai/tempus/.tessl/plugins/gamussa/coding-policy/skills/herdr-teamlead/wait-report.sh",
+    "--once",
+    "tempus_pi",
+    "/Users/vikgamov/projects/ai/tempus/.herd/out/pi-seat/evidence/investigator-absent.md"
+  ],
+  "exit_code": 1,
+  "stdout": "{\n  \"agent\": \"tempus_pi\",\n  \"state\": \"done\",\n  \"report_path\": \"/Users/vikgamov/projects/ai/tempus/.herd/out/pi-seat/evidence/investigator-absent.md\",\n  \"found\": false,\n  \"elapsed_seconds\": 1,\n  \"reason\": \"checkpoint_pending\"\n}\n",
+  "stderr": ""
+}

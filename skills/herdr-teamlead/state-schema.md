@@ -25,7 +25,7 @@ unchanged. Its canonical state path is the expanded, resolved path selected by
 `skills/herdr-teamlead/config.example.json` is an example to adapt and commission before live tier use.
 `config.json` is operator-owned under `rules/stateful-artifacts.md` Migration
 Policy's operator-authored configuration exception. Readable versions are 1 to
-4; every reader runs `validate_config_schema` in `skills/herdr-teamlead/teamlead/config.py` first.
+5; every reader runs `validate_config_schema` in `skills/herdr-teamlead/teamlead/config.py` first.
 Version gates:
 
 | Field | Needs `schema_version` |
@@ -33,11 +33,12 @@ Version gates:
 | per-agent `tiers` | 2 |
 | per-agent `capabilities` | 3 |
 | top-level `top_models` | 4 |
+| kind `pi`, per-agent `host_requirements`, `allowed_roles` | 5 |
 
 Every other field, including per-agent `launch_args`, parses at every version. Missing capabilities mean an empty list, never inferred
 expertise. Capability entries are unique lowercase identifiers validated by
 `skills/herdr-teamlead/teamlead/config.py` (`parse_capabilities`). Declare them from available skills,
-tools and inspected evidence. The example leaves every capability list empty.
+tools and inspected evidence. The example leaves metered capability lists empty.
 See `skills/herdr-teamlead/references/model-tiers.md` for billing evidence. A missing config is refused with the exact `cp` command to run. The
 optional `idle_markers` / `working_markers` per-agent keys carry the footer
 signatures the stale-state probe reads; an agent with neither is never probed.
@@ -319,7 +320,7 @@ skills/herdr-teamlead/references/retrospectives.md
 | `schema_version` | integer | Currently `7`. Bumped on any shape change |
 | `snapshots` | array | Whole `measure` documents, oldest first; the ring holds the last 20 |
 | `assignments` | array | Append-only ledger of who held which role |
-| `snapshots[].schema_version` | integer | Currently `4`. Version 2 added `window_group`; version 3 added per-round `tier_billing`; version 4 scopes `headroom_pct` to the seat's model and adds `headroom_model`. Older snapshots migrate on read, preserving headroom and shared-window membership |
+| `snapshots[].schema_version` | integer | Currently `5`; local budget and host fields are specified below. Version 2 added `window_group`; version 3 added per-round `tier_billing`; version 4 scopes `headroom_pct` to the seat's model and adds `headroom_model`. Older snapshots migrate on read, preserving headroom and shared-window membership |
 | `snapshots[].agents[].headroom_model` | string | The `model_label` that `headroom_pct` was scoped to; empty means every window bound it. Present on every agent record. The `3 → 4` migration stamps it empty, unconditionally, and keeps the version-3 headroom, the all-window minimum, which is the version-4 reading for an unknown model |
 | `snapshots[].agents[].window_group` | string | The usage window this agent shares with others; empty means a window of its own. Present on every agent record, including skipped and failed ones — pool membership is config, not a measurement result |
 | `assignments[].schema_version` | integer | The row's own version, stamped on write |
@@ -736,3 +737,59 @@ assignment, attempt count, plan, evidence or authorization is removed or
 invented. Receipts grant no corrections, review approvals or new dispatch
 authority. There is no owner command that appends, deletes or downgrades these
 records.
+
+
+## Local pi artifacts (config 5, snapshot 5, plan 7)
+
+The operator may add `host_requirements` with exactly
+`min_apple_m_generation` and `min_memory_gib`, positive integers excluding
+booleans. Pi requires this object, generation at least 5, a tier table and
+`clear_prompt: /new`. Usage fields may be omitted for pi; no usage command runs.
+`allowed_roles` is a distinct array of known roles; empty disables routing.
+Absent means unrestricted for old kinds and investigator/tester for pi.
+Pi cannot gain other roles, judgment pins or a shared `window_group` through
+configuration. Its capability declaration must include repo-read and command-run.
+
+Snapshot 5 adds `budget_mode`, `host_eligibility`, and `skip_reason` to every
+agent record. The owner migrates 4→5, stamping `metered`, null, null without
+changing windows, numerical readings, groups or `headroom_model`. Earlier
+versions chain through the existing migrations. Newer snapshots remain
+unusable and preserved. Old pi-looking records require fresh measurement.
+
+An eligible commissioned idle pi record has `budget_mode: local_unmetered`,
+empty `windows`, null `headroom_pct`, and an observed schema-1
+`host_eligibility` object. That object carries tri-state `eligible`, `reason`,
+`message`, `observed` chip/generation/memory bytes, `requirements`, and
+`details` with probe error/unmet requirements. Host-ineligible and absent pi
+records are skipped without `failed_agents`; host-probe failures are visible
+failures. Busy, failed, absent or uncommissioned local seats never rank.
+Plan 7 adds `ineligible_agents`, a name→reason/message map; older plans stay
+readable. Plan and apply recheck this machine's host requirements.
+
+`teamlead/pi_native.py` owns schema-1 `<state-dir>/pi/<seat-hash>/launch.json`.
+The seat hash is derived from the configured name. The owner writes only after
+a verified fresh start and before dispatch; measure, retrospective guards and
+report probes read without migration. Fields: `schema_version`, `agent`,
+`proof`, `dispatch_prompt` (null before dispatch). Proof contains exact start
+`argv`, `model`, `effort`, `source: launch_argv`, positive `pid`, `pane_id`,
+`terminal_id`, and absolute `session_dir`. Each start allocates a new numbered
+`<seat-dir>/sessions/<number>/`; old sessions are preserved. Native pi alone
+writes its JSONL v3 files there. Missing or malformed receipts prove nothing.
+Unknown receipt versions are refused and preserved. Assignment schema remains
+7; a pi tier's existing `verified` object carries this kind-specific proof.
+
+Commissioning writer: `start-local --agent NAME --pane PANE --task TASK`;
+optional `--role tester` selects its parallel evidence tier. It shares the
+normal retrospective, attention and state locks. Apply always launches pi
+fresh, never resumes or adopts an unrecorded process. Dry-run launch commands
+show `NEXT-LAUNCH` for the directory allocated only during a real start.
+Retrospective observations retain the exposed title-only argv0; that title
+never authorizes input. The launch receipt and live PID/pane/terminal checks
+supply permission/model proof.
+
+Report probes use the selected state directory. Pass `wait-report.sh --state
+FILE` when commissioning used a non-default state file. Pi delivery requires
+one bound session with its sole user message equal to `dispatch_prompt`, a
+linear parent chain, and a completed final assistant text equal to the exact
+REPORT marker, plus the file. It grants delivery only. Generic pane-row proof
+and other kinds' recovery contracts remain unchanged.

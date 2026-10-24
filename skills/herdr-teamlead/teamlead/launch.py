@@ -20,6 +20,8 @@ retried a bounded number of times, each time re-proving the pane and the name.
 import time
 from pathlib import PurePath
 
+from . import pi_native
+from .host import require_host_eligible
 from .composer import ensure_ready
 from .errors import AgentBusyError, HerdrError
 from .herdr import READY_STATES, error_code
@@ -65,6 +67,10 @@ def foreground_agent(client, pane, kind):
 
 
 def verify_running(client, agent, pane, tier):
+    require_host_eligible(agent)
+    if agent.kind == "pi":
+        pi_native.local_provider(agent, tier)
+        return pi_native.verify_running(client, agent, pane, tier)
     launch_args = worker_launch_args(agent.kind, agent.launch_args)
     process = foreground_agent(client, pane, agent.kind)
     proof = verify_argv(agent.kind, tier, process["argv"], launch_args)
@@ -78,8 +84,13 @@ def verify_running_permissions(client, agent, pane):
 
 
 def start_worker(client, agent, pane, tier, before_start=None, sleep=time.sleep):
+    require_host_eligible(agent)
+    if agent.kind == "pi":
+        pi_native.local_provider(agent, tier)
+        if not holds_only_shell(client, pane):
+            raise HerdrError("Pi starts only in an idle shell pane; inspect the pane before commissioning it.", {})
     launch_args = worker_launch_args(agent.kind, agent.launch_args)
-    flags = launch_args + launch_flags(agent.kind, tier)
+    flags = pi_native.profile_args(agent, tier, pi_native.new_session_dir(agent)) if agent.kind == "pi" else launch_args + launch_flags(agent.kind, tier)
     if before_start is not None:
         before_start()
     result = client.agent_start(agent.name, agent.kind, pane, flags)
@@ -89,6 +100,8 @@ def start_worker(client, agent, pane, tier, before_start=None, sleep=time.sleep)
         or info.get("agent") != agent.kind or info.get("agent_status") not in READY_STATES
     ):
         raise HerdrError("Started worker identity or readiness differs from the requested pane and kind; no brief was sent.", {})
+    if agent.kind == "pi":
+        return pi_native.save_launch(client, agent, pane, tier, result)
     proof = verify_argv(agent.kind, tier, result.get("argv"), launch_args)
     return {**proof, "pane_id": pane}
 
@@ -147,8 +160,11 @@ def start_after_release(client, agent, pane, tier, sleep=time.sleep, before_star
 
 
 def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transition=None, before_start=None):
+    require_host_eligible(agent)
+    if agent.kind == "pi":
+        verify_running(client, agent, pane, tier)
     worker_launch_args(agent.kind, agent.launch_args)
-    if not isinstance(pane, str) or not pane or not agent.composer_glyph:
+    if not isinstance(pane, str) or not pane or (agent.kind != "pi" and not agent.composer_glyph):
         raise HerdrError("Tier relaunch needs a live pane and configured composer glyph; fix the agent config.", {})
     info = client.agent_get(agent.name)
     if (info.get("agent_status") not in READY_STATES or info.get("pane_id") != pane
@@ -156,14 +172,15 @@ def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transitio
             or not isinstance(info.get("terminal_id"), str) or not info["terminal_id"]):
         raise AgentBusyError("Worker is no longer idle in the planned pane; wait before relaunch.", {})
     ensure_ready(client, agent, pane_id=pane, sleep=sleep)
-    process = foreground_agent(client, pane, agent.kind)
+    process = pi_native.foreground(client, pane) if agent.kind == "pi" else foreground_agent(client, pane, agent.kind)
     # Recheck native occupant and readiness immediately before termination.
     fresh = client.agent_get(agent.name)
     if (fresh.get("agent_status") not in READY_STATES or fresh.get("pane_id") != pane
             or fresh.get("terminal_id") != info.get("terminal_id")
             or fresh.get("agent_session") != info.get("agent_session")):
         raise AgentBusyError("Worker changed during relaunch checks; no process was terminated.", {})
-    if foreground_agent(client, pane, agent.kind).get("pid") != process.get("pid"):
+    current = pi_native.foreground(client, pane) if agent.kind == "pi" else foreground_agent(client, pane, agent.kind)
+    if current.get("pid") != process.get("pid"):
         raise HerdrError("Foreground PID changed during relaunch checks; inspect the pane.", {})
     if before_transition is not None:
         before_transition()

@@ -57,6 +57,8 @@ from .probe import PROBE_READ_LINES, PROBE_READ_SOURCE, resolve_status, stderr_w
 from .chronology import latest_assignment
 from .state import MAX_FIX_ROUNDS
 from .recovery import developer_attempts, empty_recovery, fresh_transition, task_record, validate_work
+from . import host, pi_native
+from .tiers import require_role
 from .launch import restart_worker, verify_running, verify_running_permissions
 from .tiers import effort_rank, launch_flags, worker_launch_args
 from .composition import normalize_requirement, parse_requirements
@@ -236,6 +238,9 @@ def validate_agents(assignments, agents_by_name):
                 ),
                 {"role": role, "agent": name},
             )
+
+        require_role(agents_by_name[name], role)
+        host.require_host_eligible(agents_by_name[name])
 
 
 def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None, refusal_moves=None):
@@ -462,6 +467,8 @@ def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear
     steps = []
     for role, name in assignments.items():
         agent = agents_by_name[name]
+        if agent.kind == "pi" and no_clear:
+            raise UsageError("pi_permission_unproven: pi dispatch requires a fresh launch; remove no-clear or retained options.", {})
         launch_args = worker_launch_args(agent.kind, agent.launch_args)
         pane_id = panes.get(name) or PANE_ID_PLACEHOLDER
         text = assignment_text(role, paths["common"], paths[role])
@@ -497,7 +504,7 @@ def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear
                 commands.append(["kill", "-TERM", "VERIFIED-IDLE-FOREGROUND-PID"])
                 commands.append(client.argv_pane_process_info(pane_id))
                 commands.append(client.argv_agent_start(name, agent.kind, pane_id,
-                    launch_args + launch_flags(agent.kind, tier)))
+                    pi_native.profile_args(agent, tier, pi_native.seat_dir(agent) / "sessions" / "NEXT-LAUNCH") if agent.kind == "pi" else launch_args + launch_flags(agent.kind, tier)))
         else:
             # Initial all-target preflight, then this role's own boundary.
             commands.append(client.argv_pane_process_info(pane_id))
@@ -611,6 +618,9 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     and must not count as experience of the role.
     """
     validate_agents(assignments, agents_by_name)
+    for name in assignments.values():
+        if agents_by_name[name].kind == "pi" and (no_clear or retain_context or retain_specialist):
+            raise UsageError("pi_permission_unproven: pi uses fresh launches only; remove retained/no-clear options.", {})
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
                                        recovery=recovery, history=history, plan_id=plan_id, work=work,
                                        retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves)
@@ -768,6 +778,8 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             on_before_send(step, {"cleared": cleared, "clear_reason": clear_reason,
                                   "context_session": context_session, "tier": tier_record,
                                   "transition": transition if step["role"] == "developer" else None})
+        if agent.kind == "pi":
+            pi_native.bind_prompt(agent, step["prompt"])
         landing = send_message(
             client,
             agent,

@@ -179,7 +179,7 @@ class ParseConfigTest(unittest.TestCase):
         self.assertEqual(by_name["grok"].dialog_next_tab_keys, ("tab",))
 
     def test_wrong_schema_version_is_rejected(self):
-        payload = dict(VALID, schema_version=5)
+        payload = dict(VALID, schema_version=6)
         with self.assertRaises(ConfigError) as caught:
             parse_config(payload)
         self.assertIn("schema_version", str(caught.exception))
@@ -582,8 +582,8 @@ class ReaderVersionTest(unittest.TestCase):
         for name, reader in readers:
             with self.subTest(reader=name):
                 with self.assertRaises(ConfigError) as caught:
-                    reader(self._payload(5))
-                self.assertIn("schema_version 5", str(caught.exception))
+                    reader(self._payload(6))
+                self.assertIn("schema_version 6", str(caught.exception))
                 self.assertTrue(reader(self._payload(4)))
 
     def test_each_loader_refuses_a_newer_version_and_reads_the_current_one(self):
@@ -592,7 +592,7 @@ class ReaderVersionTest(unittest.TestCase):
             for name, loader in (("load_config", load_config), ("load_judge", load_judge),
                                  ("load_role_costs", load_role_costs)):
                 with self.subTest(loader=name):
-                    path.write_text(json.dumps(self._payload(5)), encoding="utf-8")
+                    path.write_text(json.dumps(self._payload(6)), encoding="utf-8")
                     with self.assertRaises(ConfigError):
                         loader(path)
                     path.write_text(json.dumps(self._payload(4)), encoding="utf-8")

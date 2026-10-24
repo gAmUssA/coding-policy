@@ -88,8 +88,8 @@ class TopModelsPlanTest(unittest.TestCase):
                 self.assertIn("agents[0].kind", self.refusal(result))
 
     def test_a_newer_config_version_is_refused(self):
-        message = self.refusal(self.plan(_config(5, {"codex": ["gpt-7-nova"]})))
-        self.assertIn("schema_version 5", message)
+        message = self.refusal(self.plan(_config(6, {"codex": ["gpt-7-nova"]})))
+        self.assertIn("schema_version 6", message)
 
 
 if __name__ == "__main__":

@@ -66,8 +66,8 @@ governs scoped rechecks too. This resolves the research table's conflicting
 lower-tier recheck examples. The separate pinned judge remains outside the
 rotating workers' tier tables and shares its configured usage window.
 
-Every team worker starts in YOLO mode, including the pinned judge and release
-worker. The lead's assignment classifier checks each brief against the task's
+Metered team workers start in YOLO mode, including the pinned judge and release
+worker. Local pi uses the intrinsic-execution profile documented below. The lead's assignment classifier checks each brief against the task's
 authorization and permitted actions before dispatch. Worker permission prompts
 are not a second assignment gate; the brief's role, path, and authority limits
 still apply in YOLO mode.
@@ -255,3 +255,35 @@ or migrate that file. Billing evidence records use schema 1. The state owner
 records launch proof in assignment rows; rows written before the battery's
 retirement may also carry a `qualification` summary, which readers ignore. See
 `state-schema.md` for migration and reader behavior.
+
+
+## Optional local pi evidence seats
+
+Config 5 supports pi 1.4.0 with the explicitly selected static Ollama loopback
+profile. Commission with `teamlead.sh start-local --config FILE --state FILE
+--agent local_pi --pane PANE --task TASK`. The pane must hold an idle shell.
+The host gate runs before pi contact; see `teamlead/host.py` for its predicate.
+The adapter supplies the disabled-extension/MCP profile and the session
+directory. It invents no YOLO switch: `--approve` concerns project trust,
+not tool permissions. Extra profile overrides and resume are refused.
+
+Pi defaults to investigator and parallel tester roles, using consultation and
+test_plan rows. Its explicit capabilities include repo-read and command-run.
+The tester row collects command evidence for lead verification; it does not
+replace the independent tester of record. No pi reviewer, judge, development,
+release adjudication or risk-escalation tier is accepted. `allowed_roles` and
+`top_models` cannot waive these limits. Existing metered configurations remain
+readable; adding pi to an untiered fleet keeps those legacy candidates.
+
+The commissioned model resolves its model-level URL before its provider URL.
+Only the captured static loopback profile is supported; auth overrides and
+other versions require new runtime evidence. No endpoint, config, model or
+installation is created on the operator's behalf.
+
+Measure records local_unmetered capacity with null percentage and no usage
+commands. Host-ineligible or absent local seats are expected skips. Probe or
+identity failures remain visible failures. The planner prioritizes eligible
+local seats within an equally familiar affordable field and never charges a
+subscription pool for them. Apply rechecks eligibility before transitions and
+starts a fresh recorded process; retained/no-clear dispatches are unavailable.
+Delivery uses the dedicated native source contract in state-schema.md.

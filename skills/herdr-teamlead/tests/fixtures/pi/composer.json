@@ -1,0 +1,13 @@
+{
+  "command": [
+    "herdr",
+    "pane",
+    "read",
+    "wA:p8",
+    "--source",
+    "visible"
+  ],
+  "exit_code": 0,
+  "stdout": "  \"herdr-standup\" collision:\n    \u2713 auto (project)\n~/projects/ai/tempus/.agents/skills/tessl__herdr-standu\np/SKILL.md\n    \u2717 ~/.agents/skills/tessl__herdr-standup/SKILL.md\n(skipped)\n  \"herdr-teamlead\" collision:\n    \u2713 auto (project)\n~/projects/ai/tempus/.agents/skills/tessl__herdr-teamle\nad/SKILL.md\n    \u2717 ~/.agents/skills/tessl__herdr-teamlead/SKILL.md\n(skipped)\n  \"onboard-repo\" collision:\n    \u2713 auto (project)\n~/projects/ai/tempus/.agents/skills/tessl__onboard-repo\n/SKILL.md\n    \u2717 ~/.agents/skills/tessl__onboard-repo/SKILL.md\n(skipped)\n  \"release\" collision:\n    \u2713 auto (project)\n~/projects/ai/tempus/.agents/skills/tessl__release/SKIL\nL.md\n    \u2717 ~/.agents/skills/tessl__release/SKILL.md\n(skipped)\n  \"use-railway\" collision:\n    \u2713 auto (user)\n~/.pi/agent/skills/use-railway/SKILL.md\n    \u2717 ~/.agents/skills/use-railway/SKILL.md (skipped)\n\n\n\n \u2713 New session started\n\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n~/projects/ai/tempus (main)\n0.0%/66k (auto)           (ollama) flint:40b-a2b-ctx64k\n",
+  "stderr": ""
+}

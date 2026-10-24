@@ -425,3 +425,24 @@ corresponding parser. The utility fails loudly on an unreadable pane
 (`ParseError`, the agent listed in `failed_agents`, exit 1) rather than
 reporting a silently wrong number — treat a parse failure as "measure that one
 by hand", never as "it has no headroom".
+
+
+## Pi runtime boundary
+
+The optional pi profile uses `start-local` and the role/tier contract in
+`skills/herdr-teamlead/references/model-tiers.md`. The captured Herdr 0.9.4
+process-info reports Node with argv0 `pi`; pi's process title hides the
+original flags. Identity comes from the recorded start receipt plus live
+PID/pane/terminal continuity, never that title. Commissioning is mandatory.
+
+Pi's empty composer lies between the final pair of horizontal editor borders;
+`teamlead/composer.py` reads that evidenced shape and refuses occupied or
+unobservable editors. `/new` is the documented manual reset. Apply launches a
+fresh process for each assignment. Composer recovery is not enabled by default.
+
+Herdr supplies no pi session ID. The adapter allocates a separate directory per
+launch and binds the native file by its exact first user prompt. A completed
+source marker can establish delivery even when the pane wraps its path.
+Use `wait-report.sh --state FILE --once NAME /absolute/report.md` with the same
+state selected at commissioning. Other workers retain their existing display
+proof; pi native recovery and arbitrary branched sessions are unsupported.
