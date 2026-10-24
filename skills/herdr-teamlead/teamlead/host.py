@@ -7,6 +7,7 @@ from .errors import ConfigError, HerdrError
 
 GIB = 1073741824
 CHIP = re.compile(r"Apple M([1-9][0-9]*)(?: (?:Pro|Max|Ultra))?\Z")
+NON_APPLE_CHIP = re.compile(r"(?:Intel|AMD)(?:[ (].*)?\Z")
 HOST_KEYS = {"min_apple_m_generation", "min_memory_gib"}
 
 
@@ -45,12 +46,13 @@ def evaluate_host(agent, observed):
     valid_memory = isinstance(memory, str) and re.fullmatch(r"[1-9][0-9]*", memory)
     generation, size = int(match[1]) if match else None, int(memory) if valid_memory else None
     error = observed.get("error")
-    if error or generation is None or size is None:
+    non_apple = isinstance(chip, str) and NON_APPLE_CHIP.fullmatch(chip) is not None
+    if error or (generation is None and not non_apple) or size is None:
         reason, eligible = "host_probe_failed", None
         message = ("Cannot check host requirements for {!r} (host_probe_failed): {}. This seat is disabled for this run. "
                    "Run 'sysctl -n machdep.cpu.brand_string hw.memsize', resolve the reported error, then re-run teamlead measure.").format(agent.name, error or "unrecognized chip or memory response")
     else:
-        eligible = generation >= requirements["min_apple_m_generation"] and size >= requirements["min_memory_gib"] * GIB
+        eligible = generation is not None and generation >= requirements["min_apple_m_generation"] and size >= requirements["min_memory_gib"] * GIB
         reason = "host_eligible" if eligible else "host_ineligible"
         message = ("Host eligible for {!r}.".format(agent.name) if eligible else
                    "Skipping {!r} (host_ineligible): requires Apple M{} or newer and {} GiB RAM; this host reports {} and {:g} GiB. Other workers remain available. Run on an eligible host to enable this seat.".format(agent.name, requirements["min_apple_m_generation"], requirements["min_memory_gib"], chip, size / GIB))

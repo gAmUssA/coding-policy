@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Wait for one worker's round report to land, then report what was observed.
 #
-# Pi uses its source-bound contract in pi_native.py, with the matching --state.
+# Pi uses its source-bound contract in pi_native.py, with the matching --state
+# and --config (the default config is used when present). Configured pi seats
+# never fall back to pane markers when Herdr reports a different live kind.
 # Other workers require TWO signals, never one: the report FILE exists on disk AND the
 # worker's pane shows the `REPORT: ` marker line its brief ends with, carrying
 # THIS report's exact absolute path on one unquoted, unfenced row. Known native
@@ -15,7 +17,7 @@
 #
 # Contract:
 #   argv  : [--once] [--worktree <path>] [--base <revision>] [--since <iso8601>]
-#           [--state <teamlead-state>] <agent-name> <report-path>
+#           [--state <teamlead-state>] [--config <agent-config>] <agent-name> <report-path>
 #           --worktree names the worker's own checkout. With it, a budget
 #                  exhaustion classifies what the worker left behind and the
 #                  JSON carries a "stall" object; without it the exhaustion
@@ -184,6 +186,8 @@ ERRFILE=""
 # (rules/error-handling.md: fail visibly, never half-way).
 AGENT=""
 STATE_ARGS=()
+CONFIG_ARGS=()
+CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/teamlead/config.json"
 REPORT_PATH=""
 #: The worker's own checkout, when the caller named one. A stall classifies
 #: what it holds; without it the exhaustion reports the wait alone (#418).
@@ -219,18 +223,26 @@ emit() { # <state> <found-bool> <elapsed-seconds> [reason] [stall-json]
 
 # Echo "<state> <pane_id>" for the agent, or return 2 on a herdr failure.
 agent_info() { # <agent-name>
-  local raw rc=0 parsed
+  local raw rc=0 parsed configured_kind=""
   raw="$("$HERDR_BIN" agent get "$1" 2>"$ERRFILE")" || rc=$?
   if (( rc != 0 )); then
     warn "\`${HERDR_BIN} agent get $1\` failed (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — run \`${HERDR_BIN} agent list\` to see the live names"
     return 2
   fi
+  if [[ -f "$CONFIG_PATH" ]]; then
+    configured_kind="$(jq -r --arg name "$1" --argjson live "$raw" '
+      [.agents[] | select(.name == $name or .name == $live.result.agent.name) | .kind]
+      | if index("pi") then "pi" else "" end' "$CONFIG_PATH" 2>"$ERRFILE")" || {
+      warn "cannot read configured worker kind from $CONFIG_PATH — restore the agent config before deciding delivery"
+      return 2
+    }
+  fi
   rc=0
-  parsed="$(printf '%s' "$raw" | jq -r '
+  parsed="$(printf '%s' "$raw" | jq -r --arg configured_kind "$configured_kind" '
     if (.result.agent | type) != "object" then
       error("herdr agent get payload has no .result.agent object")
     else
-      "\(.result.agent.agent_status // "unknown") \(.result.agent.agent // "unknown") \(.result.agent.pane_id // "unknown")"
+      "\(.result.agent.agent_status // "unknown") \(if $configured_kind == "pi" then "pi" else .result.agent.agent // "unknown" end) \(.result.agent.pane_id // "unknown")"
     end' 2>"$ERRFILE")" || rc=$?
   if (( rc != 0 )); then
     warn "could not read the herdr agent get payload (jq exit ${rc}): $(tr '\n' ' ' < "$ERRFILE")"
@@ -295,7 +307,7 @@ native_marker_seen() { # <pane> <report> <visible rows>
   local rc=0 result skill_dir text="$3"
   skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   rc=0
-  result="$(printf '%s' "$text" | bash "$skill_dir/teamlead.sh" probe-report "${STATE_ARGS[@]}" \
+  result="$(printf '%s' "$text" | bash "$skill_dir/teamlead.sh" probe-report "${STATE_ARGS[@]}" "${CONFIG_ARGS[@]}" \
     --herdr-bin "$HERDR_BIN" --agent "$AGENT" --pane "$1" --report "$2" \
     --lines "$TEAMLEAD_PROBE_LINES")" || rc=$?
   if (( rc != 0 )); then
@@ -695,6 +707,9 @@ main() {
   while (( $# )); do
     case "${1:-}" in
       --once) once=1; shift ;;
+      --config)
+        if (( $# < 2 )) || [[ -z "$2" || ! -f "$2" ]]; then warn "--config needs a readable agent config file"; return 2; fi
+        CONFIG_PATH="$2"; CONFIG_ARGS=(--config "$2"); shift 2 ;;
       --state)
         if (( $# < 2 )) || [[ -z "$2" ]]; then warn "--state needs the teamlead state file"; return 2; fi
         STATE_ARGS=(--state "$2"); shift 2 ;;

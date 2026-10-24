@@ -35,8 +35,11 @@ class HostTests(unittest.TestCase):
             self.assertIs(check_hosts([agent()])["local"]["eligible"], True)
         for chip, memory, reason in (("Apple M1", "68719476736", "host_ineligible"),
                                      ("Apple M5 Max", "68719476735", "host_ineligible"),
-                                     ("Intel", "68719476736", "host_probe_failed"),
-                                     ("Apple M5 Ma", "", "host_probe_failed")):
+                                     ("Intel", "68719476736", "host_ineligible"),
+                                     ("Apple M5 Ma", "68719476736", "host_probe_failed"),
+                                     ("", "68719476736", "host_probe_failed"),
+                                     ("AMD EPYC", "68719476736", "host_ineligible"),
+                                     ("Apple M5 Max", "", "host_probe_failed")):
             with self.subTest(chip=chip, memory=memory), patch("subprocess.run", side_effect=sysctl(chip, memory)):
                 self.assertEqual(check_hosts([agent()])["local"]["reason"], reason)
 

@@ -162,7 +162,9 @@ def start_after_release(client, agent, pane, tier, sleep=time.sleep, before_star
 def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transition=None, before_start=None):
     require_host_eligible(agent)
     if agent.kind == "pi":
-        verify_running(client, agent, pane, tier)
+        proof = pi_native.read_launch(agent).get("proof")
+        pi_native.verify_running(client, agent, pane, proof)
+        pi_native.local_provider(agent, tier)
     worker_launch_args(agent.kind, agent.launch_args)
     if not isinstance(pane, str) or not pane or (agent.kind != "pi" and not agent.composer_glyph):
         raise HerdrError("Tier relaunch needs a live pane and configured composer glyph; fix the agent config.", {})

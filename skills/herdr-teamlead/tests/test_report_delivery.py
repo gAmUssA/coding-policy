@@ -63,6 +63,9 @@ class NativeDeliveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.tmp = Path(self.temp.name)
+        config_home = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.tmp / "config")})
+        config_home.start()
+        self.addCleanup(config_home.stop)
         self.report = self.tmp / "report [361]+.md"
         self.report.write_text("Current report bytes.\n")
         self.marker = "REPORT: " + str(self.report)

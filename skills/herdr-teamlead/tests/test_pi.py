@@ -55,7 +55,7 @@ class PiTransport:
             self.on_call(argv)
         if argv[1:3] == ["agent", "start"]:
             self.started = True
-            result = {"agent": self.info, "argv": self.bad_argv or ["pi"] + argv[argv.index("--") + 1:]}
+            result = {"agent": self.info, "argv": self.bad_argv if self.bad_argv is not None else ["pi"] + argv[argv.index("--") + 1:]}
         elif argv[1:3] == ["agent", "get"]:
             if not self.started:
                 return subprocess.CompletedProcess(argv, 1, "", '{"error":{"code":"agent_not_found"}}')
@@ -117,8 +117,105 @@ class PiTests(unittest.TestCase):
 
     def call(self, *args):
         out, err = io.StringIO(), io.StringIO()
-        rc = cli.main([*args, "--state", str(self.root / "state.json"), "--config", str(self.config)], stdout=out, stderr=err, client=self.client)
+        rc = cli.main(["--state", str(self.root / "state.json"), "--config", str(self.config), *args], stdout=out, stderr=err, client=self.client)
         return rc, json.loads(out.getvalue()) if out.getvalue() else None, err.getvalue()
+
+    def test_plan_skips_pi_for_fix_and_risk_rounds(self):
+        self.launch()
+        snapshot = measure(self.client, [self.agent], AT)
+        config = json.loads((FIXTURE.parents[2] / "config.example.json").read_text())
+        config["agents"] = [row for row in config["agents"] if row["kind"] != "pi"] + [pi_entry()]
+        for row in config["agents"]:
+            if row["kind"] != "pi":
+                row["capabilities"] = ["repo-read", "command-run"]
+                snapshot["agents"][row["name"]] = {"kind": row["kind"], "state": "idle", "headroom_pct": 80}
+        self.config.write_text(json.dumps(config))
+        path = self.root / "snapshot.json"
+        path.write_text(json.dumps(snapshot))
+        requirements = self.root / "requirements.json"
+        requirements.write_text(json.dumps({"schema_version": 1, "assignments": {"investigator": {
+            "specialty": "diagnosis", "required_capabilities": ["repo-read"],
+            "independent": False, "engagement": "pi-review-fix"}}}))
+        context = self.root / "context.json"
+        context.write_text(json.dumps({"tester": {"risk_flags": ["security"]}}))
+        for role, extra in (("investigator", ["--task", "issue-71", "--fix-round", "5", "--requirements", str(requirements)]),
+                            ("tester", ["--round", "tester=test_plan", "--round-context", str(context)])):
+            rc, result, error = self.call("plan", "--roles", role, "--snapshot", str(path), "--now", AT, *extra)
+            self.assertEqual(rc, 0, error)
+            self.assertNotEqual(result["assignments"][role], "local")
+            candidates = cli._candidate_tiers([role], parse_config(config),
+                {"tester": {"type": "test_plan", "context": {"risk_flags": ["security"]}}} if role == "tester" else {},
+                fix_round=5 if role == "investigator" else None)
+            self.assertEqual(set(candidates[role]), {"claude", "codex", "grok"})
+        with self.assertRaises(UsageError):
+            cli._candidate_tiers(["investigator"], [self.agent], {"investigator": {"type": "invalid"}})
+
+    def test_symlinked_state_root_and_default_root_share_receipt(self):
+        alias = self.root / "state-alias"
+        actual = self.root / "actual-state"
+        actual.mkdir()
+        alias.symlink_to(actual, target_is_directory=True)
+        self.agent.state_dir = alias
+        proof = self.launch()
+        self.assertEqual(pi_native.seat_dir(self.agent), pi_native.seat_dir(type("Seat", (), {"state_dir": actual.resolve(), "name": "local"})()))
+        self.assertEqual(Path(proof["session_dir"]).parent.parent.parent.parent, actual.resolve())
+        # The fallback must canonicalize too, without reading machine-local state.
+        self.agent.state_dir = None
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(alias)}):
+            self.assertEqual(pi_native.seat_dir(self.agent).parents[1], actual.resolve() / "teamlead")
+        self.agent.state_dir = actual.resolve()
+        self.assertTrue(pi_native.validate_proof(proof, self.tier, pi_native.seat_dir(self.agent)))
+        escaped = copy.deepcopy(proof)
+        escaped["session_dir"] = str(self.root / "outside" / "1")
+        escaped["argv"][-1] = escaped["session_dir"]
+        self.assertFalse(pi_native.validate_proof(escaped, self.tier, pi_native.seat_dir(self.agent)))
+        # Pre-fix receipts can still carry the symlink spelling in exact argv.
+        legacy = copy.deepcopy(proof)
+        legacy["session_dir"] = str(alias / Path(proof["session_dir"]).relative_to(actual.resolve()))
+        legacy["argv"][-1] = legacy["session_dir"]
+        self.assertTrue(pi_native.validate_proof(legacy, self.tier, pi_native.seat_dir(self.agent)))
+        body, prompt, report = self.native()
+        pi_native.bind_prompt(self.agent, prompt)
+        (Path(proof["session_dir"]) / "capture.jsonl").write_text(body)
+        rc, result, error = self.call("probe-report", "--state", str(alias / "state.json"),
+                                      "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
+        self.assertEqual(rc, 0, error)
+        self.assertTrue(result["found"], result)
+
+    def test_restart_changes_tier_without_adopting_another_process(self):
+        original = self.launch()
+        self.agent.tiers["test_plan"]["effort"] = "high"
+        tier_b = select_tier(self.agent, "tester", "test_plan")
+        fresh = restart_worker(self.client, self.agent, "wA:p8", tier_b, sleep=lambda _: None)
+        self.assertEqual(fresh["effort"], "high")
+        self.assertNotEqual(fresh["session_dir"], original["session_dir"])
+        self.assertTrue(Path(original["session_dir"]).is_dir())
+        self.assertEqual(pi_native.read_launch(self.agent)["proof"], fresh)
+        self.transport.process["foreground_processes"][0]["pid"] += 1
+        before = len(self.transport.calls)
+        with self.assertRaisesRegex(HerdrError, "continuity"):
+            restart_worker(self.client, self.agent, "wA:p8", self.tier, sleep=lambda _: None)
+        self.assertFalse(any(call[0] == "kill" for call in self.transport.calls[before:]))
+
+    def test_malformed_start_results_are_actionable_and_leave_no_receipt(self):
+        for argv in ([], [None]):
+            self.transport.started = False
+            self.transport.bad_argv = argv
+            with self.subTest(argv=argv), self.assertRaisesRegex(HerdrError, "Preserve the live pane"):
+                self.launch()
+            self.assertFalse((pi_native.seat_dir(self.agent) / "launch.json").exists())
+        for result in ({}, {"agent": None}, {"agent": {}, "argv": None}, None):
+            with self.subTest(result=result), self.assertRaisesRegex(HerdrError, "start a fresh recorded worker"):
+                pi_native.save_launch(self.client, self.agent, "wA:p8", self.tier, result)
+
+    def test_configured_pi_kind_mismatch_refuses_cli_delivery(self):
+        self.launch()
+        _, _, report = self.native()
+        for kind in ("codex", "unknown", None):
+            self.transport.info["agent"] = kind
+            rc, _, error = self.call("probe-report", "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
+            self.assertEqual(rc, 1, error)
+            self.assertIn("Configured pi seat differs", error)
 
     def test_start_local_cli_and_unmetered_measure(self):
         rc, output, error = self.call("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "tester", "--now", AT)
@@ -147,7 +244,7 @@ class PiTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, before)
 
     def test_host_skip_precedes_any_pi_contact_and_probe_failure_is_failed(self):
-        self.chip = "Apple M1"
+        self.chip = "Intel(R) Core(TM) i7"
         rc, snapshot, error = self.call("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["skip_reason"], "host_ineligible")
@@ -405,14 +502,22 @@ class PiTests(unittest.TestCase):
             "if command==['agent','get']: print(json.dumps({'result':{'agent':data['agent']}}))\n" +
             "elif command==['pane','get']: print(json.dumps({'result':{'pane':data['agent']}}))\n" +
             "elif command==['pane','process-info']: print(json.dumps({'result':{'process_info':data['process_info']}}))\n" +
+            "elif command==['pane','wait-output']: pass\n" +
             "elif command==['pane','read']: print('REPORT: ' + " + repr(str(report)) + ")\n" +
             "else: raise SystemExit('Unexpected boundary call')\n")
         fake.chmod(0o755)
-        command = ["bash", str(FIXTURE.parents[2] / "wait-report.sh"), "--once", "--state", str(self.root / "state.json"), "local", str(report)]
+        command = ["bash", str(FIXTURE.parents[2] / "wait-report.sh"), "--once", "--config", str(self.config), "--state", str(self.root / "state.json"), "local", str(report)]
         environment = {**os.environ, "HERDR_BIN": str(fake), "PY_BIN": sys.executable, "TEAMLEAD_UNCONFIRMED_IDLE_READS": "1"}
         accepted = REAL_RUN(command, capture_output=True, text=True, env=environment)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
         self.assertTrue(json.loads(accepted.stdout)["found"])
+        mismatched = copy.deepcopy(self.transport.info)
+        mismatched["agent"] = "codex"
+        responses.write_text(json.dumps({"agent": mismatched, "process_info": self.transport.process}))
+        refused = REAL_RUN(command, capture_output=True, text=True, env=environment)
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertEqual(refused.stdout, "")
+        responses.write_text(json.dumps({"agent": self.transport.info, "process_info": self.transport.process}))
         source.write_text(body.replace('"stopReason": "stop"', '"stopReason": "error"'))
         rejected = REAL_RUN(command, capture_output=True, text=True, env=environment)
         self.assertEqual(rejected.returncode, 4, rejected.stderr)

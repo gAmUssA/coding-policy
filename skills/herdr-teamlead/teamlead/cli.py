@@ -25,7 +25,7 @@ from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
 from . import attention, composition, engagement, gates, historical, memory, no_work_recovery, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
-from .errors import ConfigError, PlanError, StateError, TeamLeadError, UsageError
+from .errors import ConfigError, HerdrError, PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
     DEFAULT_MARKER_TIMEOUT_MS,
     DEFAULT_SETTLE_TIMEOUT_MS,
@@ -41,7 +41,7 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
+from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, LocalRoleIneligible, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
 from .launch import start_worker, verify_running
 from . import host, pi_native
 from .tiers import require_role
@@ -592,8 +592,8 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes
                 continue
             try:
                 tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round)
-            except MissingTierError:
-                # A valid round can lack a configured row on one candidate.
+            except (MissingTierError, LocalRoleIneligible):
+                # An ineligible local round or missing row excludes only this candidate.
                 continue
             if tier is None:
                 continue
@@ -1470,8 +1470,13 @@ def cmd_probe_report(args, client=None, warn=None, trace=None):
         raise UsageError("Report probing needs an absolute one-row report path and positive --lines.", {})
     client = client if client is not None else _client(args, trace=trace)
     info = client.agent_get(args.agent)
-    if info.get("agent") == "pi":
-        agent = SimpleNamespace(name=info["name"], kind="pi", state_dir=_state_path(args).parent)
+    config_path = _config_path(args)
+    configured = next((agent for agent in load_config(config_path)
+                       if agent.name in {args.agent, info.get("name")}), None) if config_path.exists() else None
+    if configured is not None and configured.kind == "pi" and info.get("agent") != "pi":
+        raise HerdrError("Configured pi seat differs from Herdr's live kind (pi_permission_unproven). Preserve its report and inspect the pane before deciding delivery; no marker was accepted.", {})
+    if info.get("agent") == "pi" or configured is not None and configured.kind == "pi":
+        agent = SimpleNamespace(name=configured.name if configured is not None else info["name"], kind="pi", state_dir=_state_path(args).parent)
         return pi_native.probe(client, agent, args.pane, args.report), None
     return report_delivery.probe(client, args.agent, args.pane, args.report, sys.stdin.read().rstrip("\n"), args.lines), None
 

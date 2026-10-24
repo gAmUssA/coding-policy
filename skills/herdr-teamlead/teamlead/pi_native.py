@@ -19,7 +19,7 @@ from .tiers import EFFORTS, PI_MODEL, PI_PROFILE, launch_flags
 def seat_dir(agent):
     from .state import default_state_path
     root = Path(agent.state_dir) if agent.state_dir is not None else default_state_path().parent
-    return root / "pi" / hashlib.sha256(agent.name.encode()).hexdigest()[:24]
+    return root.resolve() / "pi" / hashlib.sha256(agent.name.encode()).hexdigest()[:24]
 
 
 def profile_args(agent, tier, directory):
@@ -47,7 +47,7 @@ def validate_proof(proof, tier, root=None):
     directory = proof.get("session_dir")
     if (proof.get("source") != "launch_argv" or type(proof.get("pid")) is not int or proof["pid"] <= 0
             or not all(isinstance(proof.get(key), str) and proof[key] for key in ("pane_id", "terminal_id", "session_dir"))
-            or not Path(directory).is_absolute() or root is not None and (Path(directory).parent != root / "sessions" or not Path(directory).name.isdecimal())
+            or not Path(directory).is_absolute() or root is not None and (Path(directory).resolve().parent != (root / "sessions").resolve() or not Path(directory).name.isdecimal())
             or proof.get("model") != tier.get("model") or proof.get("effort") != tier.get("effort")):
         return False
     return argv == ["pi"] + PI_PROFILE + launch_flags("pi", tier) + ["--session-dir", directory]
@@ -97,10 +97,13 @@ def foreground(client, pane):
 
 
 def save_launch(client, agent, pane, tier, result):
-    info = result["agent"]
+    info = result.get("agent") if isinstance(result, dict) else None
+    argv = result.get("argv") if isinstance(result, dict) else None
+    if not isinstance(info, dict) or not isinstance(argv, list) or not argv or any(not isinstance(arg, str) for arg in argv):
+        raise HerdrError("Cannot save pi launch receipt (pi_permission_unproven): Herdr start must return an agent object and non-empty string argv. Preserve the live pane, inspect Herdr's start response and start a fresh recorded worker before dispatch; no brief was sent.", {})
     pid = foreground(client, pane)["pid"]
-    proof = {"source": "launch_argv", "model": tier["model"], "effort": tier["effort"], "argv": result.get("argv"),
-             "pid": pid, "pane_id": pane, "terminal_id": info.get("terminal_id"), "session_dir": result.get("argv", [None])[-1]}
+    proof = {"source": "launch_argv", "model": tier["model"], "effort": tier["effort"], "argv": argv,
+             "pid": pid, "pane_id": pane, "terminal_id": info.get("terminal_id"), "session_dir": argv[-1]}
     if not validate_proof(proof, tier, seat_dir(agent)):
         raise HerdrError("Cannot verify pi execution mode (pi_permission_unproven). Inspect this installed pi version and start a fresh worker with the documented local profile; no brief was sent.", {})
     fresh = client.agent_get(agent.name)

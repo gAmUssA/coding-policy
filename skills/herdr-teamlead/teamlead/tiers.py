@@ -147,6 +147,10 @@ def without_retired_fields(tier):
     return {key: value for key, value in tier.items() if key not in RETIRED_TIER_FIELDS}
 
 
+class LocalRoleIneligible(UsageError):
+    """A local evidence seat cannot take this round; other candidates may."""
+
+
 class MissingTierError(UsageError):
     """A candidate lacks a required row; other candidates may still qualify."""
 
@@ -442,7 +446,7 @@ def select_tier(agent, role, round_type=None, context=None, fix_round=None):
         if role == "tester" and round_type != "test_plan":
             raise MissingTierError("Pi tester evidence requires an explicit test_plan round; retain a metered tester of record.", {})
         if fix_round or (context or {}).get("risk_flags") or (context or {}).get("prior_high_miss") or (context or {}).get("input_bytes", 0) > XHIGH_CONTEXT_BYTES:
-            raise UsageError("local_role_ineligible: pi cannot take fixes or risk escalation; use a judgment worker.", {})
+            raise LocalRoleIneligible("local_role_ineligible: pi cannot take fixes or risk escalation; use a judgment worker.", {})
         round_type = round_type or ("test_plan" if role == "tester" else "consultation")
     if not agent.tiers:
         if round_type is not None:

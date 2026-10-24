@@ -28,7 +28,8 @@ Bind the sole user turn to the exact dispatch prompt. A single linear native
 session whose completed final assistant text is exactly the requested REPORT
 marker and whose report exists proves delivery, independent of pane wrapping.
 Other worker kinds retain their existing row guard. Native recovery is out
-of scope. The lead verifies local command evidence before accepting results.
+of scope. Source-bound delivery proves the worker declared completion, not that
+its claims are true. The lead verifies local command evidence before accepting results.
 
 ## Consequences
 
