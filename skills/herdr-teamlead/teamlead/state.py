@@ -316,15 +316,24 @@ def _migrate_snapshot_1_to_2(snapshot):
 #: Snapshot documents carry their own version, like assignment rows: a
 #: snapshot outlives the state document it arrived in, and `measure` bumps it
 #: on its own release train.
+def _migrate_snapshot_4_to_5(snapshot):
+    snapshot["schema_version"] = 5
+    for record in snapshot.get("agents", {}).values():
+        if isinstance(record, dict):
+            record.update(budget_mode="metered", host_eligibility=None, skip_reason=None)
+    return snapshot
+
+
 SNAPSHOT_MIGRATIONS = {
     1: (2, _migrate_snapshot_1_to_2),
     2: (3, _migrate_snapshot_2_to_3),
     3: (4, _migrate_snapshot_3_to_4),
+    4: (5, _migrate_snapshot_4_to_5),
 }
 
 #: The snapshot version this build owns. Kept beside the migration table so
 #: the two move together; `measure.MEASURE_SCHEMA_VERSION` writes it.
-SNAPSHOT_SCHEMA_VERSION = 4
+SNAPSHOT_SCHEMA_VERSION = 5
 
 
 MIGRATIONS = {
@@ -464,7 +473,12 @@ def _validate(payload, path):
             try:
                 parse_tiers({"build": {"model": tier["model"], "effort": tier.get("effort")}}, tier["kind"])
                 launch_args = parse_launch_args(tier.get("launch_args", []), tier["kind"])
-                verify_argv(tier["kind"], tier, proof.get("argv"), launch_args)
+                if tier["kind"] == "pi":
+                    from .pi_native import validate_proof
+                    if not validate_proof(proof, tier):
+                        raise _NoUsableState("a pi assignment has invalid fresh-launch evidence")
+                else:
+                    verify_argv(tier["kind"], tier, proof.get("argv"), launch_args)
             except (ConfigError, HerdrError, UsageError):
                 raise _NoUsableState("an assignment row's launch arguments do not prove its tier") from None
         if session is not None and (

@@ -12,11 +12,12 @@ import re
 from pathlib import Path
 
 from .errors import ConfigError, TeamLeadError
+from .host import parse_requirements as parse_host_requirements
 from .herdr import SLASH_DELIVERIES, SLASH_DELIVERY_PASTE
 from .tiers import EFFORTS, TOP_MODELS, judgment_refusal, parse_launch_args, parse_tiers, parse_top_models, top_models_for, effort_at_or_above, JUDGMENT_EFFORT_FLOOR
 
-CONFIG_SCHEMA_VERSION = 4
-READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3, 4})
+CONFIG_SCHEMA_VERSION = 5
+READABLE_CONFIG_VERSIONS = frozenset({1, 2, 3, 4, 5})
 #: The first config schema that may carry a top-level `top_models` block.
 TOP_MODELS_CONFIG_VERSION = 4
 CAPABILITY_ID = re.compile(r"[a-z][a-z0-9_-]*\Z")
@@ -63,10 +64,13 @@ class Agent:
         "tiers",
         "launch_args",
         "capabilities",
-        "top_models",
+        "top_models", "host_requirements", "allowed_roles", "state_dir",
     )
 
-    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=(), top_models=None):
+    def __init__(self, name, kind, usage_prompt, usage_marker, usage_read_source, clear_prompt, close_keys=(), idle_markers=(), working_markers=(), dialog_next_tab_keys=(), recover_keys=(), composer_placeholders=(), slash_delivery=DEFAULT_SLASH_DELIVERY, composer_glyph="", composer_ignore_dim=DEFAULT_COMPOSER_IGNORE_DIM, slash_enter_count=DEFAULT_SLASH_ENTER_COUNT, model_label="", window_group="", tiers=None, launch_args=(), capabilities=(), top_models=None, host_requirements=None, allowed_roles=None):
+        self.host_requirements = host_requirements
+        self.allowed_roles = tuple(allowed_roles) if allowed_roles is not None else (("developer",) if kind == "pi" else None)
+        self.state_dir = None
         self.name = name
         self.kind = kind
         self.usage_prompt = usage_prompt
@@ -136,6 +140,10 @@ class Agent:
             record["launch_args"] = list(self.launch_args)
         if self.capabilities:
             record["capabilities"] = list(self.capabilities)
+        if self.host_requirements is not None:
+            record["host_requirements"] = self.host_requirements
+        if self.allowed_roles is not None:
+            record["allowed_roles"] = list(self.allowed_roles)
         return record
 
 
@@ -168,7 +176,7 @@ def _missing_config_error(path):
 
 
 #: Per-agent fields gated on a config schema version, and that version.
-AGENT_FIELD_GATES = (("tiers", 2), ("capabilities", 3))
+AGENT_FIELD_GATES = (("tiers", 2), ("capabilities", 3), ("host_requirements", 5), ("allowed_roles", 5))
 
 
 def validate_config_schema(payload, source="<memory>"):
@@ -207,8 +215,12 @@ def validate_config_schema(payload, source="<memory>"):
                 "Config at {}: agents[{}].kind is a JSON {}; write it as a string naming the agent's CLI, "
                 "one of {}.".format(source, index, type(entry["kind"]).__name__, ", ".join(sorted(TOP_MODELS))),
                 {"source": source, "index": index, "field": "kind"})
+        if isinstance(entry, dict) and entry.get("kind") == "pi" and version < 5:
+            raise ConfigError("Config at {}: agents[{}].kind pi needs schema_version 5. Set \"schema_version\": 5; existing agent entries need no other changes.".format(source, index), {})
         for field, gate in AGENT_FIELD_GATES:
             if isinstance(entry, dict) and field in entry and version < gate:
+                if gate == 5:
+                    raise ConfigError("Config at {}: agents[{}].{} needs schema_version 5. Set \"schema_version\": 5; existing agent entries need no other changes.".format(source, index, field), {"source": source, "index": index, "found": version, "expected": 5, "field": field})
                 raise ConfigError(
                     "Config at {}: agents[{}] declares `{}`, which needs config schema_version {}; "
                     "set \"schema_version\" to {} or later in that file.".format(source, index, field, gate, gate),
@@ -244,7 +256,9 @@ def parse_config(payload, source="<memory>"):
                 ),
                 {"source": source, "index": index},
             )
-        missing = [field for field in REQUIRED_AGENT_FIELDS if not entry.get(field)]
+        if entry.get("kind") == "pi":
+            entry = {"usage_prompt": "", "usage_marker": "", "usage_read_source": "visible", **entry}
+        missing = [field for field in REQUIRED_AGENT_FIELDS if not entry.get(field) and not (entry.get("kind") == "pi" and field in {"usage_prompt", "usage_marker"})]
         if missing:
             raise ConfigError(
                 "Config at {}: agents[{}] is missing {} - add {} to that entry.".format(
@@ -262,6 +276,13 @@ def parse_config(payload, source="<memory>"):
                 {"source": source, "index": index, "usage_read_source": read_source},
             )
         name = entry["name"]
+        host_requirements = parse_host_requirements(entry.get("host_requirements"), "Config at {}: agents[{}].host_requirements".format(source, index), pi=entry["kind"] == "pi")
+        allowed_roles = entry.get("allowed_roles")
+        known_roles = {"developer", "tester", "reviewer", "judge", "release", "architect", "critic", "lead", "advisor", "investigator"}
+        if allowed_roles is not None and (not isinstance(allowed_roles, list) or any(not isinstance(role, str) or role not in known_roles for role in allowed_roles) or len(set(allowed_roles)) != len(allowed_roles)):
+            raise ConfigError("Config at {}: agents[{}].allowed_roles must be an array of distinct known roles; omit it for the kind's defaults.".format(source, index), {})
+        if entry["kind"] == "pi" and (not entry.get("tiers") or entry.get("window_group") or entry["clear_prompt"] != "/new" or set(allowed_roles or []) - {"developer"}):
+            raise ConfigError("Pi needs a tier table, /new reset and no shared window; allowed_roles accepts only ['developer'] or [] to disable pi; use metered workers for reviewing, testing and consultation.", {})
         capabilities = parse_capabilities(entry.get("capabilities", []), "{}: agents[{}].capabilities".format(source, index))
         if name in seen:
             raise ConfigError(
@@ -368,6 +389,7 @@ def parse_config(payload, source="<memory>"):
                 top_models=top_models_for(entry["kind"], extra_top_models),
                 launch_args=parse_launch_args(entry.get("launch_args", []), entry["kind"]),
                 capabilities=capabilities,
+                host_requirements=host_requirements, allowed_roles=allowed_roles,
                 slash_enter_count=enters,
                 **lists
             )

@@ -57,6 +57,8 @@ from .probe import PROBE_READ_LINES, PROBE_READ_SOURCE, resolve_status, stderr_w
 from .chronology import latest_assignment
 from .state import MAX_FIX_ROUNDS
 from .recovery import developer_attempts, empty_recovery, fresh_transition, task_record, validate_work
+from . import host, pi_native
+from .tiers import select_tier, require_role
 from .launch import restart_worker, verify_running, verify_running_permissions
 from .tiers import effort_rank, launch_flags, worker_launch_args
 from .composition import normalize_requirement, parse_requirements
@@ -237,13 +239,22 @@ def validate_agents(assignments, agents_by_name):
                 {"role": role, "agent": name},
             )
 
+        require_role(agents_by_name[name], role)
+        host.require_host_eligible(agents_by_name[name])
 
-def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None, refusal_moves=None):
+
+def validate_context_mode(assignments, no_clear, retain_context, task, fix_round, *, recovery=None, history=None, plan_id=None, work=None, retain_specialist=False, requirements=None, refusal_moves=None, agents_by_name=None):
     """Validate the explicit context choice before any herdr operation."""
     parse_requirements(
         {"schema_version": 1, "assignments": requirements} if requirements else None,
         list(assignments), task,
     )
+    developer = (agents_by_name or {}).get(assignments.get("developer"))
+    local_developer = developer is not None and developer.kind == "pi"
+    if local_developer:
+        if no_clear or retain_context or retain_specialist:
+            raise UsageError("pi_permission_unproven: pi uses fresh launches only; remove retained/no-clear options and supply a full handoff brief.", {})
+        select_tier(developer, "developer", fix_round=fix_round, correction_plan=plan_id)
     if no_clear and retain_context:
         raise UsageError("Choose --no-clear or --retain-context, never both.", {})
     if retain_specialist:
@@ -292,7 +303,7 @@ def validate_context_mode(assignments, no_clear, retain_context, task, fix_round
         raise UsageError(
             "--retain-context requires one developer assignment and --fix-round 1, 2 or 3.", {}
         )
-    if "developer" in assignments and fix_round in RETAIN_CONTEXT_ROUNDS and not retain_context and not move:
+    if "developer" in assignments and fix_round in RETAIN_CONTEXT_ROUNDS and not retain_context and not move and not local_developer:
         if transition is None:
             raise UsageError("Early developer fixes require --retain-context or a recorded fresh handoff. Use recover-role-clear for a verified automatic role clear, or follow dispatch-recovery.md for other causes; never reset the task.", {})
         task_record(store, task)
@@ -462,6 +473,8 @@ def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear
     steps = []
     for role, name in assignments.items():
         agent = agents_by_name[name]
+        if agent.kind == "pi" and no_clear:
+            raise UsageError("pi_permission_unproven: pi dispatch requires a fresh launch; remove no-clear or retained options.", {})
         launch_args = worker_launch_args(agent.kind, agent.launch_args)
         pane_id = panes.get(name) or PANE_ID_PLACEHOLDER
         text = assignment_text(role, paths["common"], paths[role])
@@ -497,7 +510,7 @@ def build_steps(client, assignments, agents_by_name, paths, panes=None, no_clear
                 commands.append(["kill", "-TERM", "VERIFIED-IDLE-FOREGROUND-PID"])
                 commands.append(client.argv_pane_process_info(pane_id))
                 commands.append(client.argv_agent_start(name, agent.kind, pane_id,
-                    launch_args + launch_flags(agent.kind, tier)))
+                    pi_native.profile_args(agent, tier, pi_native.seat_dir(agent) / "sessions" / "NEXT-LAUNCH") if agent.kind == "pi" else launch_args + launch_flags(agent.kind, tier)))
         else:
             # Initial all-target preflight, then this role's own boundary.
             commands.append(client.argv_pane_process_info(pane_id))
@@ -611,9 +624,12 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
     and must not count as experience of the role.
     """
     validate_agents(assignments, agents_by_name)
+    for name in assignments.values():
+        if agents_by_name[name].kind == "pi" and (no_clear or retain_context or retain_specialist):
+            raise UsageError("pi_permission_unproven: pi uses fresh launches only; remove retained/no-clear options.", {})
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
                                        recovery=recovery, history=history, plan_id=plan_id, work=work,
-                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves)
+                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves, agents_by_name=agents_by_name)
     validate_fix_history(assignments, history, task, fix_round, recovery=recovery)
     prior = validate_retained_history(assignments, history, task, fix_round) if retain_context else None
     tiers = dict(tiers or {})
@@ -745,7 +761,7 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             if retrospective_guard is not None:
                 retrospective_guard.after_transition(step)
         context_session = None
-        tracks_session = task is not None and (step["role"] == "developer"
+        tracks_session = agent.kind != "pi" and task is not None and (step["role"] == "developer"
             or step["role"] in CONSULTATION_ROLES and (requirements or {}).get(step["role"]) is not None)
         if tracks_session:
             # Query again after the clear, or immediately before retaining.
@@ -768,6 +784,8 @@ def apply(client, assignments, agents_by_name, paths, at, no_clear=False, settle
             on_before_send(step, {"cleared": cleared, "clear_reason": clear_reason,
                                   "context_session": context_session, "tier": tier_record,
                                   "transition": transition if step["role"] == "developer" else None})
+        if agent.kind == "pi":
+            pi_native.bind_prompt(agent, step["prompt"])
         landing = send_message(
             client,
             agent,
@@ -867,7 +885,7 @@ def dry_run(client, assignments, agents_by_name, paths, no_clear=False, settle_t
     """
     transition = validate_context_mode(assignments, no_clear, retain_context, task, fix_round,
                                        recovery=recovery, history=history, plan_id=plan_id, work=work,
-                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves)
+                                       retain_specialist=retain_specialist, requirements=requirements, refusal_moves=refusal_moves, agents_by_name=agents_by_name)
     validate_fix_history(assignments, history, task, fix_round, recovery=recovery)
     if retain_specialist:
         validate_specialist_history(assignments, history, task, requirements, tiers)

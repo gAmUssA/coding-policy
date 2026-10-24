@@ -279,10 +279,16 @@ class SelectionTest(unittest.TestCase):
     def test_the_shipped_example_is_the_cheapest_documented_template(self):
         example = json.loads((Path(__file__).resolve().parents[1] / "config.example.json").read_text())
         tiered = [worker for worker in example["agents"] if worker.get("tiers")]
-        self.assertEqual(sorted(worker["kind"] for worker in tiered), ["claude", "codex", "grok"])
+        self.assertEqual(sorted(worker["kind"] for worker in tiered), ["claude", "codex", "grok", "pi"])
         for worker in tiered:
             tiers = parse_tiers(worker["tiers"], worker["kind"])
-            probe = SimpleNamespace(name=worker["kind"], kind=worker["kind"], tiers=tiers)
+            probe = SimpleNamespace(name=worker["kind"], kind=worker["kind"], tiers=tiers,
+                                    allowed_roles=worker.get("allowed_roles"), capabilities=worker.get("capabilities", []))
+            if worker["kind"] == "pi":
+                self.assertEqual(select_tier(probe, "developer", "build")["effort"], "off")
+                self.assertEqual(select_tier(probe, "developer", fix_round=1)["round"], "fix")
+                self.assertEqual(set(tiers), {"build", "fix"})
+                continue
             with self.subTest(kind=worker["kind"]):
                 self.assertEqual(tiers["hostile_verify"]["effort"], "high")
                 self.assertEqual(select_tier(probe, "tester")["effort"], "high")

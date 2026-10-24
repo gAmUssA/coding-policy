@@ -211,6 +211,7 @@ main() {
 
   TMP="$(mktemp -d -t teamlead-wait-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
+  export XDG_CONFIG_HOME="$TMP/config"
 
   FAKE="$TMP/herdr"
   mk_fake_herdr "$FAKE"

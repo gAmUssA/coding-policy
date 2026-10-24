@@ -181,7 +181,7 @@ class MigrationTest(unittest.TestCase):
                             "schema_version": version, "snapshots": [snapshot], "assignments": [row]})
                 migrated = self.load()
                 self.assertEqual(migrated["schema_version"], STATE_SCHEMA_VERSION)
-                self.assertEqual(migrated["snapshots"], [{"schema_version": 4, "agents": {"grok": {"window_group": "pool", "tier_billing": {}, "headroom_model": ""}}}])
+                self.assertEqual(migrated["snapshots"], [{"schema_version": 5, "agents": {"grok": {"window_group": "pool", "tier_billing": {}, "headroom_model": "", "budget_mode": "metered", "host_eligibility": None, "skip_reason": None}}}])
                 self.assertEqual(migrated["assignments"], [dict(
                     row, schema_version=STATE_SCHEMA_VERSION, cleared=None,
                     clear_reason="unknown", task=None, fix_round=None, context_session=None, tier=None,
@@ -597,7 +597,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path.write_text(json.dumps(self._state_with_v1_snapshot()), encoding="utf-8")
         state = load_state(path, warn=lambda message: None)
         snapshot = state["snapshots"][0]
-        self.assertEqual(snapshot["schema_version"], 4)
+        self.assertEqual(snapshot["schema_version"], 5)
         self.assertEqual(snapshot["agents"]["claude"]["window_group"], "")
 
     def test_the_upgrade_is_written_back(self):
@@ -605,7 +605,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path.write_text(json.dumps(self._state_with_v1_snapshot()), encoding="utf-8")
         load_state(path, warn=lambda message: None)
         on_disk = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(on_disk["snapshots"][0]["schema_version"], 4)
+        self.assertEqual(on_disk["snapshots"][0]["schema_version"], 5)
         self.assertEqual(
             on_disk["snapshots"][0]["agents"]["claude"]["window_group"], ""
         )
@@ -649,7 +649,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path.write_text(json.dumps(self._state_with_v3_snapshot(record)), encoding="utf-8")
         load_state(path, warn=lambda message: None)
         on_disk = json.loads(path.read_text(encoding="utf-8"))["snapshots"][0]
-        self.assertEqual(on_disk["schema_version"], 4)
+        self.assertEqual(on_disk["schema_version"], 5)
         self.assertEqual(on_disk["agents"]["claude"]["headroom_model"], "")
         self.assertEqual(on_disk["agents"]["claude"]["headroom_pct"], 0.0)
 
@@ -676,7 +676,7 @@ class SnapshotMigrationTest(unittest.TestCase):
         path = Path(self.tmp) / "state.json"
         path.write_text(json.dumps(payload), encoding="utf-8")
         snapshot = load_state(path, warn=lambda message: None)["snapshots"][0]
-        self.assertEqual(snapshot["schema_version"], 4)
+        self.assertEqual(snapshot["schema_version"], 5)
         return plan(["judge"], snapshot, warn=lambda message: None, judge_agent="judge",
                     judge_tier={"model": "claude-opus-5-5", "effort": "high"})
 

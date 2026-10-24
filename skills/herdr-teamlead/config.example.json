@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "role_costs": {
     "developer": 12,
     "tester": 10,
@@ -348,6 +348,34 @@
         "--dangerously-skip-permissions"
       ],
       "capabilities": []
+    },
+    {
+      "name": "local_pi",
+      "kind": "pi",
+      "clear_prompt": "/new",
+      "capabilities": [
+        "repo-read",
+        "command-run"
+      ],
+      "host_requirements": {
+        "min_apple_m_generation": 5,
+        "min_memory_gib": 32
+      },
+      "allowed_roles": [
+        "developer"
+      ],
+      "tiers": {
+        "build": {
+          "model": "ollama/flint:40b-a2b-ctx64k",
+          "effort": "off",
+          "multiplier": 1.0
+        },
+        "fix": {
+          "model": "ollama/flint:40b-a2b-ctx64k",
+          "effort": "off",
+          "multiplier": 1.0
+        }
+      }
     }
   ]
 }

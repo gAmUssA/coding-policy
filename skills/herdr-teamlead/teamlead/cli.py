@@ -25,7 +25,7 @@ from .assign import apply as apply_assignments
 from .assign import APPLY_SCHEMA_VERSION, dry_run, native_context_session, normalize_assignments, resolve_paths, validate_fix_history
 from . import attention, composition, engagement, gates, historical, memory, no_work_recovery, partition, preflight, recovery, report_delivery, restoration, role_clear, retrospective, retrospective_runtime, supervision, supervision_runtime, triggers
 from .config import default_config_path, load_config, load_judge, load_role_costs, select_agents
-from .errors import ConfigError, PlanError, StateError, TeamLeadError, UsageError
+from .errors import ConfigError, HerdrError, PlanError, StateError, TeamLeadError, UsageError
 from .herdr import (
     DEFAULT_MARKER_TIMEOUT_MS,
     DEFAULT_SETTLE_TIMEOUT_MS,
@@ -41,8 +41,10 @@ from .measure import (
     measure,
 )
 from .planner import plan as build_plan
-from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
+from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, LocalRoleIneligible, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
 from .launch import start_worker, verify_running
+from . import host, pi_native
+from .tiers import require_role
 from .state import (
     add_assignment,
     add_snapshot,
@@ -159,6 +161,13 @@ def build_parser():
     parser.add_argument("--version", action="version", version="teamlead " + __version__)
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
+
+    local_parser = sub.add_parser("start-local", parents=[common], help="Commission a fresh pi seat in an idle shell pane with a durable launch receipt.")
+    local_parser.add_argument("--agent", required=True)
+    local_parser.add_argument("--pane", required=True)
+    local_parser.add_argument("--role", choices=("developer",), default="developer")
+    local_parser.add_argument("--task", required=True)
+    local_parser.add_argument("--now")
 
     judge_parser = sub.add_parser("start-judge", parents=[common],
                                   help="Start the plan's judge in a shell pane and verify its launch argv.")
@@ -552,8 +561,9 @@ def _round_inputs(args, roles):
     return rounds
 
 
-def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes=None):
+def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes=None, correction_plan=None):
     tiered = any(agent.tiers for agent in agents)
+    metered_tiered = any(agent.tiers for agent in agents if agent.kind != "pi")
     if not tiered and not (judge and "judge" in roles):
         if rounds:
             raise UsageError("Round selection requires configured tier tables.", {})
@@ -572,14 +582,18 @@ def _candidate_tiers(roles, agents, rounds, fix_round=None, judge=None, excludes
                 continue
             if role == "judge":
                 continue
+            try:
+                require_role(agent, role)
+            except UsageError:
+                continue
             if not agent.tiers:
-                if not tiered:
+                if not metered_tiered:
                     candidates[role][agent.name] = None
                 continue
             try:
-                tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round)
-            except MissingTierError:
-                # A valid round can lack a configured row on one candidate.
+                tier = select_tier(agent, role, inputs.get("type"), inputs.get("context"), fix_round, correction_plan=correction_plan)
+            except (MissingTierError, LocalRoleIneligible):
+                # An ineligible local round or missing row excludes only this candidate.
                 continue
             if tier is None:
                 continue
@@ -620,8 +634,44 @@ def _read_record(path):
     return data
 
 
+def runtime_agents(agents, args):
+    for agent in agents:
+        agent.state_dir = _state_path(args).parent
+    return agents
+
+
+def validate_local_assignments(assignments, agents, args):
+    for role, name in assignments.items():
+        if name not in agents:
+            continue
+        agent = agents[name]
+        require_role(agent, role)
+        host.require_host_eligible(agent)
+        if agent.kind == "pi" and any(getattr(args, field, False) for field in ("no_clear", "retain_context", "retain_specialist")):
+            raise UsageError("pi_permission_unproven: pi uses fresh launches only; remove retained/no-clear options and replan.", {})
+
+
+def cmd_start_local(args, client=None, warn=None, trace=None):
+    agents = runtime_agents(load_config(_config_path(args)), args)
+    agent = next((item for item in agents if item.name == args.agent), None)
+    if agent is None or agent.kind != "pi":
+        raise UsageError("start-local needs a configured pi agent; edit schema-5 config and retry.", {})
+    tier = select_tier(agent, args.role)
+    host.require_host_eligible(agent)
+    state_path, at = _state_path(args), args.now or now_iso()
+    attention.require_dispatch_clear(state_path, args.task, at)
+    client = client if client is not None else _client(args, trace=trace)
+    state = retrospective_runtime.read_history(state_path)
+    item = retrospective_runtime.request({"transitions": [{"agent": agent.name, "role": args.role,
+        "model": tier["model"], "effort": tier["effort"], "context": "start", "task": args.task, "pane": args.pane}]})["transitions"][0]
+    guard = retrospective_runtime.Guard(state_path, state, client, {agent.name: agent}, at)
+    proof = start_worker(client, agent, args.pane, tier, before_start=lambda: guard.before_start(item))
+    guard.after_transition({"agent": agent.name}, launch_proof=verify_running(client, agent, args.pane, tier))
+    return {"agent": agent.name, "verified": proof}, None
+
+
 def cmd_measure(args, client=None, warn=None, trace=None):
-    agents = select_agents(load_config(_config_path(args)), args.agents)
+    agents = runtime_agents(select_agents(load_config(_config_path(args)), args.agents), args)
     client = client if client is not None else _client(args, trace=trace)
     snapshot = measure(
         client,
@@ -688,7 +738,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     role_costs = load_role_costs(_config_path(args))
     judge = load_judge(_config_path(args))
     rounds = _round_inputs(args, roles)
-    agents = load_config(_config_path(args)) if _config_path(args).exists() else []
+    agents = runtime_agents(load_config(_config_path(args)), args) if _config_path(args).exists() else []
     state_path = _state_path(args)
     state = load_state(state_path, warn=warn)
     requirements = composition.parse_requirements(_read_record(args.requirements) if args.requirements else None, roles, args.task)
@@ -742,7 +792,23 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     )
     for role, names in constraints["exclude"].items():
         excludes[role] = sorted(set(excludes.get(role, [])) | set(names))
-    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge, excludes=excludes)
+    observations = host.check_hosts(agents)
+    ineligible, local = {}, []
+    for agent in agents:
+        observation = observations[agent.name]
+        records = snapshot.get("agents")
+        record = records.get(agent.name, {}) if isinstance(records, dict) else {}
+        record = record if isinstance(record, dict) else {}
+        reason = observation["reason"] if observation is not None and observation["eligible"] is not True else None
+        if agent.kind == "pi" and (snapshot.get("schema_version") != 5 or record.get("kind") != "pi" or record.get("budget_mode") != "local_unmetered" or record.get("skipped") or record.get("error") or record.get("state") not in {"idle", "done"} or not isinstance(record.get("host_eligibility"), dict) or record["host_eligibility"].get("eligible") is not True):
+            reason = reason or record.get("skip_reason") or "local_measurement_unproven"
+        if reason:
+            ineligible[agent.name] = {"reason": reason, "message": observation["message"] if observation is not None and observation["eligible"] is not True else "Re-run teamlead measure on a commissioned idle pi seat."}
+            for role in roles:
+                excludes[role] = sorted(set(excludes.get(role, [])) | {agent.name})
+        elif agent.kind == "pi":
+            local.append(agent.name)
+    tier_candidates = _candidate_tiers(roles, agents, rounds, args.fix_round, judge, excludes=excludes, correction_plan=args.correction_plan)
 
     result = build_plan(
             roles,
@@ -769,6 +835,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
             selection_rationale=constraints["rationale"],
             roster=[agent.name for agent in agents],
             operator_exclude=operator_excludes,
+            local_agents=local, ineligible_agents=ineligible,
         )
     result["task_context"] = ({"task": args.task, "fix_round": args.fix_round,
                                "plan": args.correction_plan, "work": work} if args.task else None)
@@ -789,10 +856,11 @@ def _refusal_moves(store, agents_by_name, assignments, roles, args, paths, repor
 
 
 def cmd_apply(args, client=None, warn=None, trace=None):
-    agents = load_config(_config_path(args))
+    agents = runtime_agents(load_config(_config_path(args)), args)
     agents_by_name = {agent.name: agent for agent in agents}
     document = _load_assignments(args.assignments, document=True)
     assignments = normalize_assignments(document)
+    validate_local_assignments(assignments, agents_by_name, args)
     requirements = composition.parse_requirements(
         {"schema_version": 1, "assignments": document["requirements"]} if "requirements" in document else None,
         list(assignments), args.task, allow_historical_architect=True,
@@ -912,7 +980,7 @@ def cmd_apply(args, client=None, warn=None, trace=None):
     for role, name in assignments.items():
         if name in constraints["exclude"].get(role, []):
             raise UsageError("Assigned worker {} is ineligible for {} under current capabilities or contribution history; replan an independent capable worker.".format(name, role), {})
-    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge, excludes=constraints["exclude"])
+    candidates = _candidate_tiers(list(assignments), agents, rounds, args.fix_round, judge, excludes=constraints["exclude"], correction_plan=args.correction_plan)
     tiers = {}
     if candidates is not None:
         for role, name in assignments.items():
@@ -1161,7 +1229,7 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
     elif args.command == "authorize-refused-dispatch":
         result = recovery.authorize_refused_dispatch(store, data, at)
     elif args.command == "record-refusal":
-        agents_by_name = {agent.name: agent for agent in load_config(_config_path(args))}
+        agents_by_name = {agent.name: agent for agent in runtime_agents(load_config(_config_path(args)), args)}
         dispatch = next((item for item in store["dispatches"] if isinstance(data, dict) and item["id"] == data.get("dispatch")), None)
         if dispatch is not None and dispatch["agent"] not in agents_by_name:
             raise UsageError("Refused worker {} is not in config.json; restore its entry so the refusing provider is recorded.".format(dispatch["agent"]), {})
@@ -1194,7 +1262,7 @@ def cmd_recovery(args, client=None, warn=None, trace=None):
                 _require_independent_report(state, attempt["task"], data.get("reviewer"))
         result = historical.record_review(store, data, at)
     else:
-        agents = {agent.name: agent for agent in load_config(_config_path(args))}
+        agents = {agent.name: agent for agent in runtime_agents(load_config(_config_path(args)), args)}
         name = recovery.recovery_agent(store, history, args.command, data)
         if name not in agents:
             raise UsageError("The recorded worker is absent from config; restore its original identity before recovering.", {})
@@ -1345,7 +1413,7 @@ def cmd_retrospective(args, client=None, warn=None, trace=None):
     state = retrospective_runtime.read_history(path)
     agents = {}
     if normalized["transitions"]:
-        agents = {agent.name: agent for agent in load_config(_config_path(args))}
+        agents = {agent.name: agent for agent in runtime_agents(load_config(_config_path(args)), args)}
         client = client if client is not None else _client(args, trace=trace)
     result = retrospective_runtime.check(path, state, client, agents, normalized, at, allow_pending=saved is not None)
     if saved is None:
@@ -1401,6 +1469,15 @@ def cmd_probe_report(args, client=None, warn=None, trace=None):
     if not Path(args.report).is_absolute() or any(ord(char) < 32 for char in args.report) or args.lines < 1:
         raise UsageError("Report probing needs an absolute one-row report path and positive --lines.", {})
     client = client if client is not None else _client(args, trace=trace)
+    info = client.agent_get(args.agent)
+    config_path = _config_path(args)
+    configured = next((agent for agent in load_config(config_path)
+                       if agent.name in {args.agent, info.get("name")}), None) if config_path.exists() else None
+    if configured is not None and configured.kind == "pi" and info.get("agent") != "pi":
+        raise HerdrError("Configured pi seat differs from Herdr's live kind (pi_permission_unproven). Preserve its report and inspect the pane before deciding delivery; no marker was accepted.", {})
+    if info.get("agent") == "pi" or configured is not None and configured.kind == "pi":
+        agent = SimpleNamespace(name=configured.name if configured is not None else info["name"], kind="pi", state_dir=_state_path(args).parent)
+        return pi_native.probe(client, agent, args.pane, args.report), None
     return report_delivery.probe(client, args.agent, args.pane, args.report, sys.stdin.read().rstrip("\n"), args.lines), None
 
 
@@ -1444,6 +1521,7 @@ COMMANDS = {
     "validate-partition": cmd_validate_partition,
     "start-judge": cmd_start_judge,
     "probe-report": cmd_probe_report,
+    "start-local": cmd_start_local,
     "check-gates": cmd_check_gates,
     **{command: cmd_retrospective for command in ("retro-check", "retro-record", "retro-list", "retro-show")},
     **{command: cmd_memory for command in memory.COMMANDS},
@@ -1473,7 +1551,7 @@ def main(argv=None, stdout=None, stderr=None, client=None):
         separate_owner = args.command in memory.COMMANDS | attention.COMMANDS | SUPERVISION_COMMANDS | restoration.COMMANDS
         lock = nullcontext() if readonly or separate_owner else state_lock(retrospective.canonical_state(_state_path(args)))
         with lock:
-            retro_lock = retrospective.lock(_state_path(args)) if not readonly and args.command in {"apply", "start-judge", "retro-record"} else nullcontext()
+            retro_lock = retrospective.lock(_state_path(args)) if not readonly and args.command in {"apply", "start-judge", "start-local", "retro-record"} else nullcontext()
             with retro_lock:
                 payload, failure = COMMANDS[args.command](args, client=client, warn=warn, trace=trace)
     except TeamLeadError as exc:

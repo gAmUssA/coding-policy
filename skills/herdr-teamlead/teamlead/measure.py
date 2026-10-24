@@ -28,7 +28,10 @@ CLI-layer concern, which is what lets the tests assert on an exact timestamp.
 """
 
 import time
+from types import EllipsisType
 
+from . import host, pi_native
+from .herdr import error_code
 from .composer import COMPOSER_SETTLE_SEC, DispatchSession, send_command
 from .errors import HerdrError, ParseError
 from .herdr import BUSY_STATES, DEFAULT_MARKER_TIMEOUT_MS, READY_STATES, format_argv
@@ -177,13 +180,30 @@ def skipped_record(agent, status, herdr_status, state_source):
     }
 
 
-def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, read_lines=DEFAULT_READ_LINES, warn=None, poll_attempts=DEFAULT_MARKER_POLL_ATTEMPTS, poll_interval_sec=DEFAULT_MARKER_POLL_INTERVAL_SEC, sleep=time.sleep, max_tabs=MAX_DIALOG_TABS, settle_sec=COMPOSER_SETTLE_SEC, session=None):
+def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, read_lines=DEFAULT_READ_LINES, warn=None, poll_attempts=DEFAULT_MARKER_POLL_ATTEMPTS, poll_interval_sec=DEFAULT_MARKER_POLL_INTERVAL_SEC, sleep=time.sleep, max_tabs=MAX_DIALOG_TABS, settle_sec=COMPOSER_SETTLE_SEC, session=None, host_observation: dict[str, object] | None | EllipsisType = ...):
     """Measure one agent and return its record.
 
     Raises HerdrError or ParseError; the caller decides whether one bad agent
     fails the whole run.
     """
-    info = client.agent_get(agent.name)
+    observation = host.check_hosts([agent])[agent.name] if isinstance(host_observation, EllipsisType) else host_observation
+    if observation is not None and observation["eligible"] is not True:
+        (warn or stderr_warn)(observation["message"])
+        record = skipped_record(agent, None, None, None)
+        record.update(host_eligibility=observation, skip_reason=observation["reason"])
+        if observation["eligible"] is None:
+            record["error"] = {"code": "host_probe_failed", "message": observation["message"]}
+        return record
+    try:
+        info = client.agent_get(agent.name)
+    except HerdrError as exc:
+        if agent.kind != "pi" or error_code(exc) != "agent_not_found":
+            raise
+        message = "Skipping {!r} (agent_not_running): no live pi worker is registered. Start the configured worker in an idle pane on an eligible host, then re-run teamlead measure.".format(agent.name)
+        (warn or stderr_warn)(message)
+        record = skipped_record(agent, "not_running", None, None)
+        record.update(host_eligibility=observation, skip_reason="agent_not_running")
+        return record
     herdr_status = info.get("agent_status")
     pane_id = info.get("pane_id")
     status, state_source = resolve_status(client, agent, herdr_status, warn=warn)
@@ -191,6 +211,9 @@ def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, re
     if status in BUSY_STATES:
         record = skipped_record(agent, status, herdr_status, state_source)
         record["pane_id"] = pane_id
+        record["host_eligibility"] = observation
+        if agent.kind == "pi":
+            record["skip_reason"] = "agent_not_ready"
         return record
 
     if not pane_id:
@@ -199,6 +222,25 @@ def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, re
             "`herdr agent list`.".format(agent.name),
             {"agent": agent.name},
         )
+
+    if agent.kind == "pi":
+        if status not in READY_STATES:
+            raise HerdrError("Pi is not ready; wait for an idle or done seat before measurement.", {})
+        receipt = pi_native.read_launch(agent)
+        proof = receipt.get("proof")
+        if not isinstance(proof, dict):
+            raise HerdrError("pi_permission_unproven: commission a fresh local seat before measuring.", {})
+        tier = next((row for row in agent.tiers.values() if row["model"] == proof.get("model") and row["effort"] == proof.get("effort")), None)
+        if tier is None:
+            raise HerdrError("pi_permission_unproven: current config differs from the launch receipt; start a fresh seat.", {})
+        pi_native.local_provider(agent, tier)
+        pi_native.verify_running(client, agent, pane_id, tier)
+        from .composer import ensure_ready
+        ensure_ready(client, agent, pane_id=pane_id, sleep=sleep)
+        return {"kind": "pi", "state": status, "herdr_state": herdr_status, "state_source": state_source,
+                "pane_id": pane_id, "windows": {}, "headroom_pct": None, "headroom_model": tier["model"],
+                "credits": None, "plan": None, "window_group": "", "skipped": False,
+                "budget_mode": "local_unmetered", "host_eligibility": observation, "skip_reason": None}
 
     send_command(
         client,
@@ -268,6 +310,7 @@ def measure(client, agents, measured_at, marker_timeout_ms=DEFAULT_MARKER_TIMEOU
     # One session per run: recovery may only ever clear a command teamlead
     # itself typed during it.
     session = DispatchSession(allow_recovery=allow_recovery)
+    observations = host.check_hosts(agents)
     for agent in agents:
         try:
             records[agent.name] = measure_agent(
@@ -280,7 +323,7 @@ def measure(client, agents, measured_at, marker_timeout_ms=DEFAULT_MARKER_TIMEOU
                 poll_interval_sec=poll_interval_sec,
                 sleep=sleep,
                 settle_sec=settle_sec,
-                session=session,
+                session=session, host_observation=observations[agent.name],
             )
         except (HerdrError, ParseError) as exc:
             failures.append(agent.name)
@@ -302,11 +345,13 @@ def measure(client, agents, measured_at, marker_timeout_ms=DEFAULT_MARKER_TIMEOU
                 "skipped": False,
                 "error": {"code": exc.code, "message": exc.message},
             }
+    failures.extend(name for name, record in records.items() if name not in failures and record.get("error"))
     return {
         "schema_version": MEASURE_SCHEMA_VERSION,
         "measured_at": measured_at,
         "agents": {
-            agent.name: {**records[agent.name], "tier_billing": tier_billing(agent.tiers)}
+            agent.name: {"budget_mode": "metered", "host_eligibility": observations[agent.name], "skip_reason": None,
+                         **records[agent.name], "tier_billing": ({key: {**value, "window": "local_unmetered"} for key, value in tier_billing(agent.tiers).items()} if records[agent.name].get("budget_mode") == "local_unmetered" else tier_billing(agent.tiers))}
             for agent in agents
         },
         "failed_agents": failures,
