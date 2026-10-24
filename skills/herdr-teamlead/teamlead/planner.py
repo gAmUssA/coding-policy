@@ -754,8 +754,9 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         group = groups.get(chosen)
         if group is not None:
             for name in headrooms:
-                if groups.get(name) == group and headrooms[name] is not None:
-                    headrooms[name] -= cost
+                remaining_headroom = headrooms[name]
+                if groups.get(name) == group and remaining_headroom is not None:
+                    headrooms[name] = remaining_headroom - cost
 
     rationale.extend(_notes(excluded, agents, warn))
     rationale.extend(selection_rationale or [])

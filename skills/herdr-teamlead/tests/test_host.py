@@ -31,6 +31,11 @@ def sysctl(chip="Apple M5 Max", memory="68719476736"):
 
 
 class HostTests(unittest.TestCase):
+    def observation(self, seat):
+        observation = check_hosts([seat])[seat.name]
+        assert observation is not None, "Configured host requirements must produce an observation"
+        return observation
+
     def test_measured_host_and_byte_boundary(self):
         example = json.loads((Path(__file__).parents[1] / "config.example.json").read_text())
         seats = [agent(), next(seat for seat in parse_config(example) if seat.kind == "pi")]
@@ -40,7 +45,7 @@ class HostTests(unittest.TestCase):
                                            ("Apple M5 Max", "68719476736", True),
                                            ("Apple M1", "68719476736", False)):
                 with self.subTest(seat=seat.name, chip=chip, memory=memory), patch("subprocess.run", side_effect=sysctl(chip, memory)):
-                    observation = check_hosts([seat])[seat.name]
+                    observation = self.observation(seat)
                     self.assertIs(observation["eligible"], eligible)
                     self.assertEqual(observation["reason"], "host_eligible" if eligible else "host_ineligible")
         for chip, memory, reason in (("Intel", "68719476736", "host_ineligible"),
@@ -49,12 +54,12 @@ class HostTests(unittest.TestCase):
                                      ("AMD EPYC", "68719476736", "host_ineligible"),
                                      ("Apple M5 Max", "", "host_probe_failed")):
             with self.subTest(chip=chip, memory=memory), patch("subprocess.run", side_effect=sysctl(chip, memory)):
-                self.assertEqual(check_hosts([agent()])["local"]["reason"], reason)
+                self.assertEqual(self.observation(agent())["reason"], reason)
 
     def test_probe_failure_is_unknown(self):
         for exc in (OSError("missing"), subprocess.TimeoutExpired("sysctl", 5)):
             with patch("subprocess.run", side_effect=exc):
-                self.assertIsNone(check_hosts([agent()])["local"]["eligible"])
+                self.assertIsNone(self.observation(agent())["eligible"])
 
     def test_config_guards(self):
         for field, values in (("min_memory_gib", [True, 0, 32.5, "32 GiB"]), ("min_apple_m_generation", [1, False])):

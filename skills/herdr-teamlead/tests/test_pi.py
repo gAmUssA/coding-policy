@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from collections.abc import Callable
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,8 +47,8 @@ class PiTransport:
         self.info["name"] = "local"
         self.process = json.loads(fixture("process-info.json")["stdout"])["result"]["process_info"]
         self.composer = fixture("composer.json")["stdout"]
-        self.bad_argv = None
-        self.on_call = None
+        self.bad_argv: list[str] | list[None] | None = None
+        self.on_call: Callable[[list[str]], None] | None = None
 
     def __call__(self, argv):
         self.calls.append(argv)
@@ -120,6 +121,11 @@ class PiTests(unittest.TestCase):
         rc = cli.main(["--state", str(self.root / "state.json"), "--config", str(self.config), *args], stdout=out, stderr=err, client=self.client)
         return rc, json.loads(out.getvalue()) if out.getvalue() else None, err.getvalue()
 
+    def call_json(self, *args):
+        rc, output, error = self.call(*args)
+        assert isinstance(output, dict), (rc, output, error)
+        return rc, output, error
+
     def test_plan_skips_pi_for_fix_and_risk_rounds(self):
         self.launch()
         snapshot = measure(self.client, [self.agent], AT)
@@ -140,7 +146,7 @@ class PiTests(unittest.TestCase):
         context.write_text(json.dumps({"tester": {"risk_flags": ["security"]}}))
         for role, extra in (("investigator", ["--task", "issue-71", "--fix-round", "5", "--requirements", str(requirements)]),
                             ("tester", ["--round", "tester=test_plan", "--round-context", str(context)])):
-            rc, result, error = self.call("plan", "--roles", role, "--snapshot", str(path), "--now", AT, *extra)
+            rc, result, error = self.call_json("plan", "--roles", role, "--snapshot", str(path), "--now", AT, *extra)
             self.assertEqual(rc, 0, error)
             self.assertNotEqual(result["assignments"][role], "local")
             candidates = cli._candidate_tiers([role], parse_config(config),
@@ -177,7 +183,7 @@ class PiTests(unittest.TestCase):
         body, prompt, report = self.native()
         pi_native.bind_prompt(self.agent, prompt)
         (Path(proof["session_dir"]) / "capture.jsonl").write_text(body)
-        rc, result, error = self.call("probe-report", "--state", str(alias / "state.json"),
+        rc, result, error = self.call_json("probe-report", "--state", str(alias / "state.json"),
                                       "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
         self.assertEqual(rc, 0, error)
         self.assertTrue(result["found"], result)
@@ -219,10 +225,10 @@ class PiTests(unittest.TestCase):
 
     def test_start_local_cli_and_unmetered_measure(self):
         self.chip, self.memory = "Apple M5", "34359738368"
-        rc, output, error = self.call("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "tester", "--now", AT)
+        rc, output, error = self.call_json("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "tester", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(output["verified"]["pid"], 58701)
-        rc, snapshot, error = self.call("measure", "--now", AT)
+        rc, snapshot, error = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         row = snapshot["agents"]["local"]
         self.assertEqual((snapshot["schema_version"], row["budget_mode"], row["windows"], row["headroom_pct"]), (5, "local_unmetered", {}, None))
@@ -230,21 +236,21 @@ class PiTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "ps" for call in self.transport.calls))
         self.memory = "34359738367"
         before = list(self.transport.calls)
-        rc, rejected, error = self.call("measure", "--now", AT)
+        rc, rejected, error = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(rejected["agents"]["local"]["skip_reason"], "host_ineligible")
         self.assertEqual(self.transport.calls, before)
         self.memory = "34359738368"
-        rc, snapshot, error = self.call("measure", "--now", AT)
+        rc, snapshot, error = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["budget_mode"], "local_unmetered")
-        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--now", AT)
+        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "local"})
         common, brief = self.root / "COMMON.md", self.root / "brief.md"
         common.write_text("Common")
         brief.write_text("Brief")
-        rc, applied, error = self.call("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "tester=" + str(brief), "--dry-run", "--now", AT)
+        rc, applied, error = self.call_json("apply", "--assignments", json.dumps(result), "--common", str(common), "--brief", "tester=" + str(brief), "--dry-run", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(applied["steps"][0]["tier"]["billing_window"], "local_unmetered")
         self.chip = "Apple M1"
@@ -256,7 +262,7 @@ class PiTests(unittest.TestCase):
 
     def test_host_skip_precedes_any_pi_contact_and_probe_failure_is_failed(self):
         self.chip = "Intel(R) Core(TM) i7"
-        rc, snapshot, error = self.call("measure", "--now", AT)
+        rc, snapshot, error = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(snapshot["agents"]["local"]["skip_reason"], "host_ineligible")
         self.assertEqual(self.transport.calls, [])
@@ -264,7 +270,7 @@ class PiTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("'local' is host_ineligible and no other worker", error)
         self.chip = "unrecognized"
-        rc, snapshot, _ = self.call("measure", "--now", AT)
+        rc, snapshot, _ = self.call_json("measure", "--now", AT)
         self.assertEqual(rc, 1)
         self.assertEqual(snapshot["failed_agents"], ["local"])
         self.assertEqual(self.transport.calls, [])
@@ -313,7 +319,7 @@ class PiTests(unittest.TestCase):
         measured["agents"]["claude"] = {"kind": "claude", "state": "idle", "headroom_pct": 80}
         self.config.write_text(json.dumps({"schema_version": 5, "agents": [pi_entry(), CONFIG["agents"][0]]}))
         path.write_text(json.dumps(measured))
-        rc, result, error = self.call("plan", "--roles", "tester", "--snapshot", str(path))
+        rc, result, error = self.call_json("plan", "--roles", "tester", "--snapshot", str(path))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["ineligible_agents"]["local"]["reason"], "local_measurement_unproven")
         with self.assertRaises(PlanError):
@@ -323,6 +329,24 @@ class PiTests(unittest.TestCase):
         (pi_native.seat_dir(self.agent) / "launch.json").write_text(json.dumps(receipt))
         with self.assertRaises(HerdrError):
             pi_native.read_launch(self.agent)
+
+    def test_missing_receipt_proof_and_session_directory_fail_closed(self):
+        self.launch()
+        _, _, report = self.native()
+        receipt = pi_native.read_launch(self.agent)
+        for proof in (None, {}, {**receipt["proof"], "session_dir": None}):
+            malformed = {**receipt, "proof": proof}
+            path = pi_native.seat_dir(self.agent) / "launch.json"
+            path.write_text(json.dumps(malformed))
+            before = list(self.transport.calls)
+            with self.subTest(proof=proof), self.assertRaisesRegex(HerdrError, "receipt profile differs"):
+                verify_running(self.client, self.agent, "wA:p8", self.tier)
+            self.assertEqual(self.transport.calls, before)
+            rc, output, error = self.call_json("probe-report", "--agent", "local", "--pane", "wA:p8",
+                                                "--report", str(report), "--lines", "40")
+            self.assertEqual(rc, 0, error)
+            self.assertFalse(output["found"])
+            self.assertEqual(output["reason"], "pi_marker_unconfirmed")
 
     def test_endpoint_and_permission_profile_fail_closed(self):
         self.launch()
@@ -383,17 +407,17 @@ class PiTests(unittest.TestCase):
         source = Path(proof["session_dir"]) / "capture.jsonl"
         source.write_text(body)
         args = ("probe-report", "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
-        rc, result, error = self.call(*args)
+        rc, result, error = self.call_json(*args)
         self.assertEqual(rc, 0, error)
         self.assertTrue(result["found"], result)
         for replacement in ("```\nREPORT: " + str(report) + "\n```", "> REPORT: " + str(report), "REPORT: /other.md"):
             rows = [json.loads(line) for line in body.splitlines()]
             rows[-1]["message"]["content"] = [{"type": "text", "text": replacement}]
             source.write_text("\n".join(json.dumps(row) for row in rows))
-            self.assertFalse(self.call(*args)[1]["found"])
+            self.assertFalse(self.call_json(*args)[1]["found"])
         source.write_text(body)
         report.unlink()
-        self.assertFalse(self.call(*args)[1]["found"])
+        self.assertFalse(self.call_json(*args)[1]["found"])
 
     def test_source_and_receipt_changes_during_probe_are_unconfirmed(self):
         proof = self.launch()
@@ -485,14 +509,14 @@ class PiTests(unittest.TestCase):
         snapshot["agents"].pop("metered")
         snapshot["agents"].update({name: {"kind": name, "state": "idle", "headroom_pct": 80} for name in ("claude", "codex", "grok")})
         (self.root / "snapshot.json").write_text(json.dumps(snapshot))
-        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "local"})
-        rc, ordinary, error = self.call("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
+        rc, ordinary, error = self.call_json("plan", "--roles", "tester", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(ordinary["assignments"], {"tester": "claude"})
         self.chip = "Apple M1"
-        rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
+        rc, result, error = self.call_json("plan", "--roles", "tester", "--round", "tester=test_plan", "--snapshot", str(self.root / "snapshot.json"))
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "claude"})
         self.assertEqual(result["ineligible_agents"]["local"]["reason"], "host_ineligible")

@@ -28,6 +28,7 @@ CLI-layer concern, which is what lets the tests assert on an exact timestamp.
 """
 
 import time
+from types import EllipsisType
 
 from . import host, pi_native
 from .herdr import error_code
@@ -179,13 +180,13 @@ def skipped_record(agent, status, herdr_status, state_source):
     }
 
 
-def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, read_lines=DEFAULT_READ_LINES, warn=None, poll_attempts=DEFAULT_MARKER_POLL_ATTEMPTS, poll_interval_sec=DEFAULT_MARKER_POLL_INTERVAL_SEC, sleep=time.sleep, max_tabs=MAX_DIALOG_TABS, settle_sec=COMPOSER_SETTLE_SEC, session=None, host_observation=...):
+def measure_agent(client, agent, marker_timeout_ms=DEFAULT_MARKER_TIMEOUT_MS, read_lines=DEFAULT_READ_LINES, warn=None, poll_attempts=DEFAULT_MARKER_POLL_ATTEMPTS, poll_interval_sec=DEFAULT_MARKER_POLL_INTERVAL_SEC, sleep=time.sleep, max_tabs=MAX_DIALOG_TABS, settle_sec=COMPOSER_SETTLE_SEC, session=None, host_observation: dict[str, object] | None | EllipsisType = ...):
     """Measure one agent and return its record.
 
     Raises HerdrError or ParseError; the caller decides whether one bad agent
     fails the whole run.
     """
-    observation = host.check_hosts([agent])[agent.name] if host_observation is ... else host_observation
+    observation = host.check_hosts([agent])[agent.name] if isinstance(host_observation, EllipsisType) else host_observation
     if observation is not None and observation["eligible"] is not True:
         (warn or stderr_warn)(observation["message"])
         record = skipped_record(agent, None, None, None)

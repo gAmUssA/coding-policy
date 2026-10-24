@@ -47,7 +47,7 @@ def validate_proof(proof, tier, root=None):
     directory = proof.get("session_dir")
     if (proof.get("source") != "launch_argv" or type(proof.get("pid")) is not int or proof["pid"] <= 0
             or not all(isinstance(proof.get(key), str) and proof[key] for key in ("pane_id", "terminal_id", "session_dir"))
-            or not Path(directory).is_absolute() or root is not None and (Path(directory).resolve().parent != (root / "sessions").resolve() or not Path(directory).name.isdecimal())
+            or not isinstance(directory, str) or not Path(directory).is_absolute() or root is not None and (Path(directory).resolve().parent != (root / "sessions").resolve() or not Path(directory).name.isdecimal())
             or proof.get("model") != tier.get("model") or proof.get("effort") != tier.get("effort")):
         return False
     return argv == ["pi"] + PI_PROFILE + launch_flags("pi", tier) + ["--session-dir", directory]
@@ -134,7 +134,7 @@ def read_launch(agent):
 def verify_running(client, agent, pane, tier):
     receipt = read_launch(agent)
     proof = receipt.get("proof")
-    if not validate_proof(proof, tier, seat_dir(agent)):
+    if not isinstance(proof, dict) or not validate_proof(proof, tier, seat_dir(agent)):
         raise HerdrError("pi_permission_unproven: receipt profile differs from the requested tier; start a fresh seat.", {})
     info = client.agent_get(agent.name)
     terminal = client.pane_get(pane)
