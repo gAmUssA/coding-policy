@@ -14,6 +14,8 @@ source through the new source-bound path, substituting temporary report paths.
 The original file's first user prompt and parent chain stay the binding oracle.
 
 `Apple M5 Max` and `68719476736` are live-observed host values. `Apple M1` is
-the brief-supplied target string, not a live M1 measurement. Byte shortfalls,
+the brief-supplied target string, not a live M1 measurement. The 32 GiB boundary
+(`34359738368` bytes) is the operator-selected default, not a live hardware
+measurement. Byte shortfalls,
 changed PIDs/profiles, remote endpoints and malformed transcripts in the tests
 are explicitly synthetic negative cases. Tests read no original user path.

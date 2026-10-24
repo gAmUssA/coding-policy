@@ -1,5 +1,6 @@
 """Host thresholds use the measured M5 string and brief-supplied M1 target."""
 
+import json
 import subprocess
 import sys
 import unittest
@@ -15,7 +16,7 @@ from teamlead.host import check_hosts
 def pi_entry():
     return {"name": "local", "kind": "pi", "clear_prompt": "/new",
             "capabilities": ["repo-read", "command-run"],
-            "host_requirements": {"min_apple_m_generation": 5, "min_memory_gib": 64},
+            "host_requirements": {"min_apple_m_generation": 5, "min_memory_gib": 32},
             "tiers": {name: {"model": "ollama/flint:40b-a2b-ctx64k", "effort": "off"} for name in ("consultation", "test_plan")}}
 
 
@@ -31,11 +32,18 @@ def sysctl(chip="Apple M5 Max", memory="68719476736"):
 
 class HostTests(unittest.TestCase):
     def test_measured_host_and_byte_boundary(self):
-        with patch("subprocess.run", side_effect=sysctl()):
-            self.assertIs(check_hosts([agent()])["local"]["eligible"], True)
-        for chip, memory, reason in (("Apple M1", "68719476736", "host_ineligible"),
-                                     ("Apple M5 Max", "68719476735", "host_ineligible"),
-                                     ("Intel", "68719476736", "host_ineligible"),
+        example = json.loads((Path(__file__).parents[1] / "config.example.json").read_text())
+        seats = [agent(), next(seat for seat in parse_config(example) if seat.kind == "pi")]
+        for seat in seats:
+            for chip, memory, eligible in (("Apple M5", "34359738368", True),
+                                           ("Apple M5", "34359738367", False),
+                                           ("Apple M5 Max", "68719476736", True),
+                                           ("Apple M1", "68719476736", False)):
+                with self.subTest(seat=seat.name, chip=chip, memory=memory), patch("subprocess.run", side_effect=sysctl(chip, memory)):
+                    observation = check_hosts([seat])[seat.name]
+                    self.assertIs(observation["eligible"], eligible)
+                    self.assertEqual(observation["reason"], "host_eligible" if eligible else "host_ineligible")
+        for chip, memory, reason in (("Intel", "68719476736", "host_ineligible"),
                                      ("Apple M5 Ma", "68719476736", "host_probe_failed"),
                                      ("", "68719476736", "host_probe_failed"),
                                      ("AMD EPYC", "68719476736", "host_ineligible"),
@@ -49,7 +57,7 @@ class HostTests(unittest.TestCase):
                 self.assertIsNone(check_hosts([agent()])["local"]["eligible"])
 
     def test_config_guards(self):
-        for field, values in (("min_memory_gib", [True, 0, 64.5, "64 GiB"]), ("min_apple_m_generation", [1, False])):
+        for field, values in (("min_memory_gib", [True, 0, 32.5, "32 GiB"]), ("min_apple_m_generation", [1, False])):
             for value in values:
                 entry = pi_entry()
                 entry["host_requirements"][field] = value

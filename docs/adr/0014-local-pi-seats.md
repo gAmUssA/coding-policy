@@ -14,7 +14,9 @@ intrinsic execution, loopback provider profile and JSONL v3 message format.
 
 ## Decision
 
-Config 5 adds explicit host requirements and role restrictions. Snapshot 5
+Config 5 adds explicit host requirements and role restrictions. The example
+profile requires Apple M5 or newer and 32 GiB RAM, an operator-selected
+activation floor rather than a measured memory minimum. Snapshot 5
 represents local capacity as `local_unmetered`, with no percentage. Local
 workers rank before equally familiar metered candidates; metered algorithms
 and judgment pins stay unchanged. Pi supplies investigator and parallel tester

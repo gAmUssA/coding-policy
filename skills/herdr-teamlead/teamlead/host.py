@@ -15,10 +15,10 @@ def parse_requirements(value, source, *, pi=False):
     if value is None and not pi:
         return None
     if not isinstance(value, dict) or set(value) != HOST_KEYS:
-        raise ConfigError("{} must contain exactly min_apple_m_generation and min_memory_gib; use 5 and 64 for the Flint seat.".format(source), {})
+        raise ConfigError("{} must contain exactly min_apple_m_generation and min_memory_gib; use 5 and 32 for the Flint seat.".format(source), {})
     for key in HOST_KEYS:
         if type(value[key]) is not int or value[key] <= 0:
-            raise ConfigError("{}.{} must be a positive integer{}. Use 64 for the Flint seat; booleans and unit strings are not accepted.".format(source, key, " in GiB" if key == "min_memory_gib" else ""), {})
+            raise ConfigError("{}.{} must be a positive integer{}. Use 32 for the Flint seat; booleans and unit strings are not accepted.".format(source, key, " in GiB" if key == "min_memory_gib" else ""), {})
     if pi and value["min_apple_m_generation"] < 5:
         raise ConfigError("{} needs min_apple_m_generation at least 5 for pi; retain the host activation floor.".format(source), {})
     return dict(value)

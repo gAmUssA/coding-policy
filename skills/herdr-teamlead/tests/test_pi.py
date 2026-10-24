@@ -218,6 +218,7 @@ class PiTests(unittest.TestCase):
             self.assertIn("Configured pi seat differs", error)
 
     def test_start_local_cli_and_unmetered_measure(self):
+        self.chip, self.memory = "Apple M5", "34359738368"
         rc, output, error = self.call("start-local", "--agent", "local", "--pane", "wA:p8", "--task", "issue-71", "--role", "tester", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(output["verified"]["pid"], 58701)
@@ -227,6 +228,16 @@ class PiTests(unittest.TestCase):
         self.assertEqual((snapshot["schema_version"], row["budget_mode"], row["windows"], row["headroom_pct"]), (5, "local_unmetered", {}, None))
         self.assertFalse(any(call[1:3] in (["agent", "prompt"], ["agent", "send-keys"]) for call in self.transport.calls))
         self.assertFalse(any(call[0] == "ps" for call in self.transport.calls))
+        self.memory = "34359738367"
+        before = list(self.transport.calls)
+        rc, rejected, error = self.call("measure", "--now", AT)
+        self.assertEqual(rc, 0, error)
+        self.assertEqual(rejected["agents"]["local"]["skip_reason"], "host_ineligible")
+        self.assertEqual(self.transport.calls, before)
+        self.memory = "34359738368"
+        rc, snapshot, error = self.call("measure", "--now", AT)
+        self.assertEqual(rc, 0, error)
+        self.assertEqual(snapshot["agents"]["local"]["budget_mode"], "local_unmetered")
         rc, result, error = self.call("plan", "--roles", "tester", "--round", "tester=test_plan", "--now", AT)
         self.assertEqual(rc, 0, error)
         self.assertEqual(result["assignments"], {"tester": "local"})

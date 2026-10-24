@@ -743,7 +743,8 @@ records.
 
 The operator may add `host_requirements` with exactly
 `min_apple_m_generation` and `min_memory_gib`, positive integers excluding
-booleans. Pi requires this object, generation at least 5, a tier table and
+booleans. The example sets generation 5 and memory 32 GiB; both fields remain
+explicit configuration. Pi requires this object, generation at least 5, a tier table and
 `clear_prompt: /new`. Usage fields may be omitted for pi; no usage command runs.
 `allowed_roles` is a distinct array of known roles; empty disables routing.
 Absent means unrestricted for old kinds and investigator/tester for pi.

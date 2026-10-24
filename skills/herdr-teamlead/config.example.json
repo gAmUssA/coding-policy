@@ -359,7 +359,7 @@
       ],
       "host_requirements": {
         "min_apple_m_generation": 5,
-        "min_memory_gib": 64
+        "min_memory_gib": 32
       },
       "allowed_roles": [
         "investigator",
