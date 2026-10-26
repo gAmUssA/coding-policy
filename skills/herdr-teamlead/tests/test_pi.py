@@ -312,6 +312,43 @@ class PiTests(unittest.TestCase):
             restart_worker(self.client, self.agent, "wA:p8", self.tier, sleep=lambda _: None)
         self.assertFalse(any(call[0] == "kill" for call in self.transport.calls[before:]))
 
+    def assert_replacement_refused(self, guarded):
+        original = self.launch()
+        injected, transitions = [], []
+
+        def replace_at_composer(argv):
+            if not injected and argv[1:3] == ["agent", "read"]:
+                self.transport.process["foreground_processes"][0]["pid"] += 1
+                injected.append(True)
+
+        self.transport.on_call = replace_at_composer
+        before = len(self.transport.calls)
+        with self.assertRaises(HerdrError) as caught:
+            restart_worker(self.client, self.agent, "wA:p8", self.tier, sleep=lambda _: None,
+                           before_transition=(lambda: transitions.append(True)) if guarded else None)
+        self.assertEqual(injected, [True])
+        self.assertIn("pi_permission_unproven", str(caught.exception))
+        self.assertIn("no process was terminated", str(caught.exception))
+        self.assertEqual(transitions, [])
+        self.assertFalse(any(call[0] == "kill" or call[1:3] == ["agent", "start"]
+                             for call in self.transport.calls[before:]))
+        self.assertEqual(pi_native.read_launch(self.agent)["proof"], original)
+
+    def test_restart_refuses_pid_replaced_after_entry_verification_before_any_kill(self):
+        self.assert_replacement_refused(guarded=False)
+
+    def test_restart_refuses_replacement_before_transition_callback(self):
+        self.assert_replacement_refused(guarded=True)
+
+    def test_restart_with_unchanged_receipt_pid_still_relaunches(self):
+        original = self.launch()
+        before = len(self.transport.calls)
+        fresh = restart_worker(self.client, self.agent, "wA:p8", self.tier, sleep=lambda _: None)
+        kills = [call[-1] for call in self.transport.calls[before:] if call[0] == "kill"]
+        self.assertEqual(kills, [str(original["pid"])])
+        self.assertNotEqual(fresh["session_dir"], original["session_dir"])
+        self.assertEqual(pi_native.read_launch(self.agent)["proof"], fresh)
+
     def test_malformed_start_results_are_actionable_and_leave_no_receipt(self):
         for argv in ([], [None]):
             self.transport.started = False

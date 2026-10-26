@@ -802,6 +802,12 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     )
     for role, names in constraints["exclude"].items():
         excludes[role] = sorted(set(excludes.get(role, [])) | set(names))
+    for role in roles:
+        for agent in agents:
+            try:
+                require_role(agent, role)
+            except UsageError:
+                excludes[role] = sorted(set(excludes.get(role, [])) | {agent.name})
     observations = host.check_hosts(agents)
     ineligible, local = {}, []
     for agent in agents:

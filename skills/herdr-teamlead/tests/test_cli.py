@@ -385,6 +385,77 @@ class StateCommandTest(CliCase):
         self.assertIn(str(self.state), err)
 
 
+class MeteredRoleRoutingTest(CliCase):
+    """Historical review-7 fleet: planning and dry-run apply agree on roles."""
+
+    def invoke(self, arguments):
+        out, err = io.StringIO(), io.StringIO()
+        runner = FakeRunner()
+        code = main(self.base() + arguments, stdout=out, stderr=err,
+                    client=HerdrClient(runner=runner))
+        self.assertEqual(runner.calls, [])
+        return code, out.getvalue(), err.getvalue()
+
+    def fleet(self, allowed, tiered=False, pinned=False):
+        config = copy.deepcopy(CONFIG)
+        config["schema_version"] = 5
+        config["agents"] = config["agents"][:2]
+        if allowed is not None:
+            config["agents"][0]["allowed_roles"] = allowed
+        if tiered:
+            for row, model in zip(config["agents"], ("sonnet-5", "gpt-6.1-sol")):
+                row["tiers"] = {"build": {"model": model, "effort": "high"}}
+        snapshot = copy.deepcopy(SNAPSHOT)
+        snapshot["schema_version"] = 5
+        snapshot["agents"].pop("grok")
+        snapshot["agents"]["claude"]["headroom_pct"] = 90
+        snapshot["agents"]["codex"]["headroom_pct"] = 20
+        if pinned:
+            config["agents"][0]["name"] = "judge"
+            config["judge"] = {"agent": "judge", "model": "claude-fable-5-1", "effort": "max"}
+            snapshot["agents"]["judge"] = snapshot["agents"].pop("claude")
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        self.snapshot.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    def assert_dry_run(self, output, role, expected):
+        plan = self.tmp / "plan.json"
+        plan.write_text(output, encoding="utf-8")
+        brief = self.tmp / (role + ".md")
+        brief.write_text("# " + role + "\n", encoding="utf-8")
+        code, out, err = self.invoke(["apply", "--assignments", str(plan), "--dry-run",
+            "--common", str(self.common), "--brief", role + "=" + str(brief), "--now", AT])
+        self.assertEqual(code, 0, err)
+        payload = json.loads(out)
+        self.assertFalse(payload["sent"])
+        self.assertEqual(payload["steps"][0]["agent"], expected)
+
+    def test_plan_then_dry_run_respects_metered_allowed_roles_with_and_without_tiers(self):
+        for tiered in (False, True):
+            for allowed, expected in ((["reviewer"], "codex"), ([], "codex"),
+                                      (["developer"], "claude"), (None, "claude")):
+                with self.subTest(tiered=tiered, allowed=allowed):
+                    self.fleet(allowed, tiered=tiered)
+                    code, out, err = self.invoke(["plan", "--roles", "developer", "--snapshot", str(self.snapshot)])
+                    self.assertEqual(code, 0, err)
+                    self.assertEqual(json.loads(out)["assignments"], {"developer": expected})
+                    self.assert_dry_run(out, "developer", expected)
+
+    def test_pinned_judge_role_declaration_refuses_or_plans_without_substitution(self):
+        for allowed in ([], ["judge"]):
+            with self.subTest(allowed=allowed):
+                self.fleet(allowed, pinned=True)
+                code, out, err = self.invoke(["plan", "--roles", "judge", "--judge-mode", "adjudication",
+                                             "--snapshot", str(self.snapshot)])
+                if allowed:
+                    self.assertEqual(code, 0, err)
+                    self.assertEqual(json.loads(out)["assignments"], {"judge": "judge"})
+                    self.assert_dry_run(out, "judge", "judge")
+                else:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(out, "")
+                    self.assertEqual(json.loads(err)["error"], "plan_error")
+
+
 class PlanCommandTest(CliCase):
     def test_plans_from_a_snapshot_file(self):
         code, out, err = self.run_cli(

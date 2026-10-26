@@ -161,9 +161,9 @@ def start_after_release(client, agent, pane, tier, sleep=time.sleep, before_star
 
 def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transition=None, before_start=None):
     require_host_eligible(agent)
+    proof = None
     if agent.kind == "pi":
-        proof = pi_native.read_launch(agent).get("proof")
-        pi_native.verify_running(client, agent, pane, proof)
+        proof = pi_native.verify_running(client, agent, pane, pi_native.read_launch(agent).get("proof"))
         pi_native.local_provider(agent, tier)
     worker_launch_args(agent.kind, agent.launch_args)
     if not isinstance(pane, str) or not pane or (agent.kind != "pi" and not agent.composer_glyph):
@@ -182,6 +182,8 @@ def restart_worker(client, agent, pane, tier, sleep=time.sleep, before_transitio
             or fresh.get("agent_session") != info.get("agent_session")):
         raise AgentBusyError("Worker changed during relaunch checks; no process was terminated.", {})
     current = pi_native.foreground(client, pane) if agent.kind == "pi" else foreground_agent(client, pane, agent.kind)
+    if proof is not None and current.get("pid") != proof["pid"]:
+        raise HerdrError("pi_permission_unproven: foreground PID no longer matches the commissioned launch receipt; no process was terminated. Inspect the pane and start a fresh recorded seat.", {})
     if current.get("pid") != process.get("pid"):
         raise HerdrError("Foreground PID changed during relaunch checks; inspect the pane.", {})
     if before_transition is not None:

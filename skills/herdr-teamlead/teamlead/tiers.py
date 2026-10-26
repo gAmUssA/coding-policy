@@ -553,5 +553,7 @@ def require_role(agent, role):
     allowed = getattr(agent, "allowed_roles", None)
     if agent.kind == "pi" and not {"repo-read", "command-run"}.issubset(agent.capabilities):
         raise UsageError("local_role_ineligible: declare repo-read and command-run capabilities before using pi development.", {})
+    if agent.kind != "pi" and allowed is not None and role not in allowed:
+        raise UsageError("Worker {!r} cannot perform {!r}: allowed_roles is {!r}. Replan with an eligible worker or edit allowed_roles in config.json.".format(agent.name, role, list(allowed)), {})
     if (allowed is not None and role not in allowed) or (agent.kind == "pi" and role != "developer"):
         raise UsageError("Worker {!r} cannot perform {!r} (local_role_ineligible). Use pi only as developer with a fresh full handoff brief; select metered workers for reviewing, testing, judgment, release and consultation. Changing allowed_roles cannot enable other pi roles.".format(agent.name, role), {})
