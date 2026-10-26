@@ -18,6 +18,8 @@ if _ROOT not in _sys.path:
 
 import contextlib
 import copy
+import hashlib
+import itertools
 import os
 import io
 import json
@@ -35,6 +37,7 @@ from teamlead.cli import build_parser, main
 from teamlead.errors import UsageError
 from teamlead.herdr import HerdrClient
 from teamlead.state import STATE_SCHEMA_VERSION, add_assignment, empty_state, save_state
+from teamlead.tiers import DEFAULT_ROUNDS
 
 from tests.fakes import (
     FakeRunner,
@@ -491,6 +494,133 @@ class MeteredRoleRoutingTest(CliCase):
         self.assertIn("Worker 'judge' cannot perform 'judge': allowed_roles is []", payload["message"])
         self.assertIn("edit allowed_roles in config.json", payload["message"])
         self.assertNotIn("--exclude", payload["message"])
+
+    def test_case_a_role_refusal_and_missing_tier_row_compose(self):
+        # Review 9 config-tierrow.json: claude has build but is restricted;
+        # codex is unrestricted but has only fix. Adding codex's row repairs it.
+        self.fleet(["reviewer"], tiered=True)
+        config = json.loads(self.config.read_text())
+        config["agents"][1]["tiers"] = {"fix": {"model": "gpt-6.1-sol", "effort": "high"}}
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        args = ["plan", "--roles", "developer", "--snapshot", str(self.snapshot)]
+        code, out, err = self.invoke(args)
+        self.assertEqual((code, out), (1, ""))
+        message = json.loads(err)["message"]
+        self.assertIn("Worker 'claude' cannot perform 'developer': allowed_roles is ['reviewer']", message)
+        self.assertIn("Configure a tier row", message)
+        config["agents"][1]["tiers"]["build"] = config["agents"][1]["tiers"]["fix"]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        code, out, err = self.invoke(args)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["assignments"], {"developer": "codex"})
+
+    def test_case_b_excluded_judge_and_restricted_peer_names_only_pin(self):
+        # Review 9 config-judge.json: changing codex cannot repair the pin.
+        self.fleet(None, pinned=True)
+        config = json.loads(self.config.read_text())
+        config["agents"][1]["allowed_roles"] = ["developer"]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        args = ["plan", "--roles", "judge", "--judge-mode", "adjudication",
+                "--snapshot", str(self.snapshot)]
+        code, out, err = self.invoke(args + ["--exclude", "judge=judge"])
+        self.assertEqual((code, out), (1, ""))
+        message = json.loads(err)["message"]
+        self.assertIn("--exclude bars judge", message)
+        self.assertNotIn("Worker 'codex'", message)
+        code, out, err = self.invoke(args)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["assignments"], {"judge": "judge"})
+
+    def diagnostic_matrix(self):
+        """Every round x tier mode x O/R/row powerset for two workers.
+
+        The judge uses its configured tier: only O/R apply to pin and peer.
+        Fixed specialist metadata reaches planning, not usage validation.
+        """
+        causes = ((), ("operator",), ("role",), ("row",),
+                  ("operator", "role"), ("operator", "row"),
+                  ("role", "row"), ("operator", "role", "row"))
+        cases = itertools.chain(
+            itertools.product(DEFAULT_ROUNDS, (False, True), itertools.product(causes, repeat=2)),
+            (("judge", True, pair) for pair in itertools.product(causes[:3] + (causes[4],), repeat=2)),
+        )
+        for role, tiered, pair in cases:
+            self.fleet(None, pinned=role == "judge")
+            config = json.loads(self.config.read_text())
+            extra = []
+            for agent, bars in zip(config["agents"], pair):
+                if tiered and role != "judge":
+                    round_type = DEFAULT_ROUNDS[role]
+                    if "row" in bars:
+                        round_type = "fix" if round_type != "fix" else "build"
+                    agent["tiers"] = {round_type: {
+                        "model": "claude-fable-5-1" if agent["kind"] == "claude" else "gpt-6.1-sol",
+                        "effort": "max"}}
+                if "role" in bars:
+                    agent["allowed_roles"] = []
+                if "operator" in bars:
+                    extra += ["--exclude", role + "=" + agent["name"]]
+                if role in ("architect", "advisor", "investigator"):
+                    agent["capabilities"] = ["repo-read"]
+            if role == "judge":
+                extra += ["--judge-mode", "adjudication"]
+            if role in ("architect", "advisor", "investigator"):
+                requirements = self.tmp / "requirements.json"
+                requirements.write_text(json.dumps({"schema_version": 1, "assignments": {role: {
+                    "specialty": "investigator", "required_capabilities": ["repo-read"],
+                    "independent": False, "engagement": "diagnostic-fixture"}}}), encoding="utf-8")
+                extra += ["--task", "diagnostic-fixture", "--requirements", str(requirements)]
+            self.config.write_text(json.dumps(config), encoding="utf-8")
+            code, out, err = self.invoke(["plan", "--roles", role, "--snapshot", str(self.snapshot)] + extra)
+            payload = json.loads(out if code == 0 else err)
+            if code == 0:
+                payload.pop("snapshot_ref")
+            yield role, tiered, pair, code, payload
+
+    def test_generated_empty_field_cause_remedy_oracle(self):
+        observed, priority, counts = [], [], {"success": 0, "composed": 0, "priority": 0}
+        for role, tiered, pair, code, payload in self.diagnostic_matrix():
+            # Whole success JSON and every exit are frozen at 3bc3a46. The
+            # separate differential records per-row comparisons for review.
+            observed.append([role, tiered, pair, code, payload if code == 0 else None])
+            with self.subTest(role=role, tiered=tiered, causes=pair):
+                if code == 0:
+                    counts["success"] += 1
+                    continue
+                self.assertEqual(code, 1)
+                self.assertEqual(payload["error"], "plan_error")
+                if "eligibility" in payload["details"] or payload["message"].startswith("Cannot fill role"):
+                    # #72 advisories: leave these higher-priority exits alone.
+                    priority.append(payload)
+                    counts["priority"] += 1
+                    continue
+                counts["composed"] += 1
+                message = payload["message"]
+                names = ("judge",) if role == "judge" else ("claude", "codex")
+                operator_names = [name for name, bars in zip(names, pair) if "operator" in bars]
+                if operator_names:
+                    self.assertIn("--exclude bars {}. Drop an exclusion if appropriate.".format(
+                        ", ".join(operator_names)), message)
+                else:
+                    self.assertNotIn("--exclude", message)
+                for name, bars in zip(names, pair):
+                    if "role" in bars:
+                        self.assertIn("Worker {!r} cannot perform {!r}: allowed_roles is []".format(name, role), message)
+                        self.assertIn("edit allowed_roles in config.json", message)
+                    else:
+                        self.assertNotIn("Worker {!r}".format(name), message)
+                if role == "judge":
+                    self.assertNotIn("codex", message)
+                    self.assertNotIn("Measure another eligible worker", message)
+                elif tiered and any("row" in bars and not {"operator", "role"}.intersection(bars) for bars in pair):
+                    self.assertIn("Configure a tier row for this round on an eligible worker", message)
+                    self.assertIn("eligible metered worker", message)
+        self.assertEqual(counts, {"success": 391, "composed": 561, "priority": 216})
+        # Canonical JSON SHA256 of all 1,168 rows (exit + whole success plan),
+        # captured by running this fixture on 3bc3a4629803c0f40f43f96500bc912e06ad0964.
+        digest = lambda value: hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+        self.assertEqual(digest(observed), "9cd478609a1f055d7d6039329efddc4699efe9387cb4aaccfd3d45c5e63ee5ba")
+        self.assertEqual(digest(priority), "f8d937de6eaf90906dba0a2958d8160ad9536c6ab18ca4d4dc2ada0fc498457f")
 
     def test_pinned_judge_role_declaration_refuses_or_plans_without_substitution(self):
         for allowed in ([], ["judge"]):

@@ -499,6 +499,31 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=Non
         )
 
 
+def _empty_field_message(role, agents, judge_agent, operator_excluded, role_refusals, tier_candidates=None):
+    """Compose independent bars within the workers that can own this seat."""
+    domain = set(agents) & {judge_agent} if role == "judge" else set(agents) - {judge_agent}
+    operator_names = sorted(set(operator_excluded.get(role, [])) & domain)
+    refusals = {name: message for name, message in sorted((role_refusals or {}).get(role, {}).items())
+                if name in domain}
+    clauses = [("No agent is eligible for role {!r}." if tier_candidates is None
+                else "No tier is eligible for {!r}.").format(role)]
+    if operator_names:
+        clauses.append("--exclude bars {}. Drop an exclusion if appropriate.".format(
+            ", ".join(operator_names)))
+    clauses.extend(refusals.values())
+    if role == "judge":
+        clauses.append("Role 'judge' is pinned to worker {!r}; check that worker's judge configuration and eligibility.".format(judge_agent))
+    else:
+        if tier_candidates is not None and any(
+                name not in operator_names and name not in refusals
+                and name not in tier_candidates.get(role, {}) for name in domain):
+            # Candidate absence also covers a refused local round; do not
+            # claim it proves a missing row, or suggest unlocking pi's roles.
+            clauses.append("Configure a tier row for this round on an eligible worker, or select an eligible metered worker for the round.")
+        clauses.append("Measure another eligible worker.")
+    return " ".join(clauses), refusals
+
+
 def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None, local_agents=None, ineligible_agents=None, role_refusals=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
@@ -640,15 +665,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                     {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
                      "eligibility": list(selection_rationale)},
                 )
-            operator_names = sorted(set(operator_excluded[role]) & set(agents))
-            refusals = (role_refusals or {}).get(role, {})
-            message = "No agent is eligible for role {!r}.".format(role)
-            if operator_names:
-                message += " --exclude bars {}. Drop an exclusion if appropriate.".format(
-                    ", ".join(operator_names))
-            if refusals:
-                message += " " + " ".join(value for name, value in sorted(refusals.items()))
-            message += " Measure another eligible worker."
+            message, refusals = _empty_field_message(
+                role, agents, judge_agent, operator_excluded, role_refusals)
             raise PlanError(
                 message,
                 {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
@@ -670,12 +688,9 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 if name not in tier_candidates.get(role, {}):
                     excluded[role] = sorted(set(excluded[role]) | {name})
             if all(name in excluded[role] for name in agents):
-                refusals = (role_refusals or {}).get(role, {})
-                if refusals:
-                    raise PlanError("No tier is eligible for {!r}. {} Measure another eligible worker.".format(
-                        role, " ".join(value for name, value in sorted(refusals.items()))),
-                        {"role": role, "role_refusals": refusals})
-                raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
+                message, refusals = _empty_field_message(
+                    role, agents, judge_agent, operator_excluded, role_refusals, tier_candidates)
+                raise PlanError(message, {"role": role, "role_refusals": refusals})
 
     def candidate_cost(role, name):
         if name in local_agents:
