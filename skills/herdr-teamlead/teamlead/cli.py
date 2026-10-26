@@ -802,11 +802,13 @@ def cmd_plan(args, client=None, warn=None, trace=None):
     )
     for role, names in constraints["exclude"].items():
         excludes[role] = sorted(set(excludes.get(role, [])) | set(names))
+    role_refusals = {role: {} for role in roles}
     for role in roles:
         for agent in agents:
             try:
                 require_role(agent, role)
-            except UsageError:
+            except UsageError as exc:
+                role_refusals[role][agent.name] = exc.message
                 excludes[role] = sorted(set(excludes.get(role, [])) | {agent.name})
     observations = host.check_hosts(agents)
     ineligible, local = {}, []
@@ -851,7 +853,7 @@ def cmd_plan(args, client=None, warn=None, trace=None):
             selection_rationale=constraints["rationale"],
             roster=[agent.name for agent in agents],
             operator_exclude=operator_excludes,
-            local_agents=local, ineligible_agents=ineligible,
+            local_agents=local, ineligible_agents=ineligible, role_refusals=role_refusals,
         )
     result["task_context"] = ({"task": args.task, "fix_round": args.fix_round,
                                "plan": args.correction_plan, "work": work} if args.task else None)

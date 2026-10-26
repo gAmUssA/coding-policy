@@ -440,6 +440,58 @@ class MeteredRoleRoutingTest(CliCase):
                     self.assertEqual(json.loads(out)["assignments"], {"developer": expected})
                     self.assert_dry_run(out, "developer", expected)
 
+    def assert_all_restricted_refusal(self, tiered):
+        self.fleet(["reviewer"], tiered=tiered)
+        config = json.loads(self.config.read_text())
+        config["agents"][1]["allowed_roles"] = ["reviewer"]
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        code, out, err = self.invoke(["plan", "--roles", "developer", "--snapshot", str(self.snapshot)])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        payload = json.loads(err)
+        self.assertEqual(payload["error"], "plan_error")
+        message = payload["message"]
+        for name in ("claude", "codex"):
+            self.assertIn("Worker {!r} cannot perform 'developer': allowed_roles is ['reviewer']".format(name), message)
+        self.assertIn("edit allowed_roles in config.json", message)
+        self.assertIn("measure another eligible worker", message.lower())
+        self.assertNotIn("--exclude", message)
+
+    def test_all_workers_role_restricted_untiered_names_allowed_roles(self):
+        self.assert_all_restricted_refusal(tiered=False)
+
+    def test_all_workers_role_restricted_tiered_names_allowed_roles(self):
+        self.assert_all_restricted_refusal(tiered=True)
+
+    def test_mixed_operator_and_role_exclusions_keep_their_provenance(self):
+        for tiered in (False, True):
+            with self.subTest(tiered=tiered):
+                self.fleet(["reviewer"], tiered=tiered)
+                code, out, err = self.invoke(["plan", "--roles", "developer", "--snapshot", str(self.snapshot),
+                                             "--exclude", "developer=codex"])
+                self.assertEqual(code, 1)
+                self.assertEqual(out, "")
+                payload = json.loads(err)
+                self.assertEqual(payload["error"], "plan_error")
+                message = payload["message"]
+                self.assertIn("--exclude bars codex.", message)
+                self.assertIn("Worker 'claude' cannot perform 'developer': allowed_roles is ['reviewer']", message)
+                self.assertNotIn("--exclude bars claude", message)
+                self.assertIn("edit allowed_roles in config.json", message)
+                self.assertIn("measure another eligible worker", message.lower())
+
+    def test_pinned_judge_empty_role_declaration_names_allowed_roles(self):
+        self.fleet([], pinned=True)
+        code, out, err = self.invoke(["plan", "--roles", "judge", "--judge-mode", "adjudication",
+                                     "--snapshot", str(self.snapshot)])
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        payload = json.loads(err)
+        self.assertEqual(payload["error"], "plan_error")
+        self.assertIn("Worker 'judge' cannot perform 'judge': allowed_roles is []", payload["message"])
+        self.assertIn("edit allowed_roles in config.json", payload["message"])
+        self.assertNotIn("--exclude", payload["message"])
+
     def test_pinned_judge_role_declaration_refuses_or_plans_without_substitution(self):
         for allowed in ([], ["judge"]):
             with self.subTest(allowed=allowed):

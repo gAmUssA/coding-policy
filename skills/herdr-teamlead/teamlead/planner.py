@@ -499,7 +499,7 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=Non
         )
 
 
-def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None, local_agents=None, ineligible_agents=None):
+def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None, local_agents=None, ineligible_agents=None, role_refusals=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
     `counts` is `{role: {agent: times_held}}` from the state ledger; omit it
@@ -523,6 +523,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
     generated bars into `exclude`; omit it when `exclude` carries only what
     the operator asked for. `same_family` is the model-family tie-break from
     `composition.selection_constraints`; omit it to rank without one.
+    `role_refusals` maps each role to worker refusal messages from
+    `require_role`, preserving the reason for those generated exclusions.
 
     Raises PlanError when there are no roles, no agents, fewer agents than
     roles, an exclusion naming a role nobody is assigning, or a role whose
@@ -604,11 +606,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
 
     # Only the names the operator typed: a generated bar naming a measured
     # agent would otherwise vouch for an exclusion list that matched nobody.
-    _refuse_inert_exclusions(
-        excluded if operator_exclude is None
-        else _normalize_exclusions(operator_exclude, roles),
-        agents,
-    )
+    operator_excluded = _normalize_exclusions(exclude if operator_exclude is None else operator_exclude, roles)
+    _refuse_inert_exclusions(operator_excluded, agents)
     _refuse_degenerate_field(roles, agents, judge_agent, roster)
 
     # Expressed as exclusions so eligibility, fillability and the rationale all
@@ -641,13 +640,19 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                     {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
                      "eligibility": list(selection_rationale)},
                 )
+            operator_names = sorted(set(operator_excluded[role]) & set(agents))
+            refusals = (role_refusals or {}).get(role, {})
+            message = "No agent is eligible for role {!r}.".format(role)
+            if operator_names:
+                message += " --exclude bars {}. Drop an exclusion if appropriate.".format(
+                    ", ".join(operator_names))
+            if refusals:
+                message += " " + " ".join(value for name, value in sorted(refusals.items()))
+            message += " Measure another eligible worker."
             raise PlanError(
-                "No agent is eligible for role {!r} - --exclude bars {}, and "
-                "those are every agent in the snapshot ({}). Drop an exclusion, "
-                "or measure another agent.".format(
-                    role, ", ".join(excluded[role]), ", ".join(sorted(agents))
-                ),
-                {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents)},
+                message,
+                {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
+                 "role_refusals": refusals},
             )
     local_agents = {name for name in (local_agents or []) if snapshot.get("schema_version") == 5 and isinstance(agents.get(name), dict)
         and agents[name].get("kind") == "pi" and agents[name].get("budget_mode") == "local_unmetered"
@@ -665,6 +670,11 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 if name not in tier_candidates.get(role, {}):
                     excluded[role] = sorted(set(excluded[role]) | {name})
             if all(name in excluded[role] for name in agents):
+                refusals = (role_refusals or {}).get(role, {})
+                if refusals:
+                    raise PlanError("No tier is eligible for {!r}. {} Measure another eligible worker.".format(
+                        role, " ".join(value for name, value in sorted(refusals.items()))),
+                        {"role": role, "role_refusals": refusals})
                 raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
 
     def candidate_cost(role, name):
