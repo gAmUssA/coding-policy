@@ -522,6 +522,11 @@ class PiTests(unittest.TestCase):
         rc, result, error = self.call_json(*args)
         self.assertEqual(rc, 0, error)
         self.assertTrue(result["found"], result)
+        evidence = json.loads((Path(proof["session_dir"]) / "delivery.json").read_text())
+        self.assertEqual(evidence["schema_version"], 1)
+        self.assertTrue(all(row["schema_version"] == 1 for row in evidence["records"]))
+        self.assertEqual(evidence["source_path"], str(source))
+        self.assertTrue(self.call_json(*args)[1]["found"])
         for replacement in ("```\nREPORT: " + str(report) + "\n```", "> REPORT: " + str(report), "REPORT: /other.md"):
             rows = [json.loads(line) for line in body.splitlines()]
             rows[-1]["message"]["content"] = [{"type": "text", "text": replacement}]
@@ -530,6 +535,44 @@ class PiTests(unittest.TestCase):
         source.write_text(body)
         report.unlink()
         self.assertFalse(self.call_json(*args)[1]["found"])
+
+    def test_delivery_artifact_refuses_unknown_versions_and_corruption(self):
+        proof = self.launch()
+        body, prompt, report = self.native()
+        pi_native.bind_prompt(self.agent, prompt)
+        directory = Path(proof["session_dir"])
+        (directory / "capture.jsonl").write_text(body)
+        args = ("probe-report", "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
+        self.assertTrue(self.call_json(*args)[1]["found"])
+        path = directory / "delivery.json"
+        good = json.loads(path.read_text())
+        cases = [{**good, "schema_version": version} for version in (0, 2, True, "1")]
+        cases += [{**good, "records": [{**good["records"][0], "schema_version": version}]} for version in (0, 2, True, None)]
+        cases += [{**good, "records": []}, {**good, "source_sha256": "forged"}, None,
+                  {**good, "records": [{**good["records"][0], "id": False}]}]
+        for key, value in (("type", []), ("version", True), ("id", "")):
+            cases.append({**good, "records": [{**good["records"][0], key: value}]})
+        for key, value in (("type", "unknown"), ("parentId", True), ("message", [])):
+            broken = copy.deepcopy(good)
+            broken["records"][-1][key] = value
+            cases.append(broken)
+        for key, value in (("role", []), ("content", [True]), ("content", [{"type": "text", "text": False}]), ("model", [])):
+            broken = copy.deepcopy(good)
+            broken["records"][-1]["message"][key] = value
+            cases.append(broken)
+        for value in cases:
+            with self.subTest(value=value):
+                path.write_text(json.dumps(value))
+                before = path.read_bytes()
+                self.assertFalse(self.call_json(*args)[1]["found"])
+                self.assertEqual(path.read_bytes(), before)
+        path.write_text(json.dumps(good))
+        self.assertTrue(self.call_json(*args)[1]["found"])
+        before = path.read_bytes()
+        with patch("os.replace", side_effect=OSError("injected filesystem replacement failure")):
+            self.assertFalse(self.call_json(*args)[1]["found"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue(self.call_json(*args)[1]["found"])
 
     def test_source_and_receipt_changes_during_probe_are_unconfirmed(self):
         proof = self.launch()

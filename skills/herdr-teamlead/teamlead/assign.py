@@ -120,11 +120,8 @@ def tiered_prompt(text, tier, common, brief):
 def normalize_assignments(payload):
     """Accept either `plan` output or a bare `{role: agent}` mapping.
 
-    Version-agnostic on purpose: this reads `assignments` alone, which every
-    plan version carries in the same shape. A version-1 plan has no `judge`
-    object; so does a version-2 plan whose round assigned no judge seat, and
-    both take the same path here (rules/stateful-artifacts.md Cross-Pipeline
-    Schema Bumps -- an additive bump a reader absorbs through absence).
+    The CLI validates and migrates saved plan envelopes before this map-only
+    normalizer. Library callers pass already validated instructions.
     """
     if isinstance(payload, dict) and isinstance(payload.get("assignments"), dict):
         payload = payload["assignments"]

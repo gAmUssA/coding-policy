@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .errors import HerdrError
+from .errors import HerdrError, StateError
 from .tiers import EFFORTS, PI_MODEL, PI_PROFILE, launch_flags
 
 
@@ -164,6 +164,10 @@ def conversation(body, prompt, tier=None):
         rows = [json.loads(line) for line in body.splitlines() if line.strip()]
     except (ValueError, UnicodeDecodeError):
         return None
+    return _conversation_rows(rows, prompt, tier)
+
+
+def _conversation_rows(rows, prompt, tier=None):
     if not rows or any(not isinstance(row, dict) for row in rows):
         return None
     header = rows[0]
@@ -202,6 +206,90 @@ def conversation(body, prompt, tier=None):
     return (header["id"], final) if users == 1 else None
 
 
+def delivery_evidence(directory, source, body):
+    """Owner import of pi's native stream; readers consume versioned rows.
+
+    Missing evidence is a first import. Unknown/corrupt owner artifacts are
+    preserved, never replaced. Each probe imports fresh source bytes rather
+    than granting delivery from a saved result. Schema contract: state-schema.md.
+    """
+    from .state import save_state
+    path = Path(directory) / "delivery.json"
+    missing = False
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        previous = None
+        missing = True
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if not missing and not _valid_delivery_evidence(previous):
+        return None
+    try:
+        rows = [json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip()]
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not rows or any(not isinstance(row, dict) or "schema_version" in row for row in rows):
+        return None
+    records = []
+    for row in rows:
+        record = {"schema_version": 1, **{key: row[key] for key in ("type", "version", "id", "parentId") if key in row}}
+        if isinstance(row.get("message"), dict):
+            message = row["message"]
+            content = message.get("content")
+            if isinstance(content, list):
+                content = [{key: block[key] for key in ("type", "text") if key in block} for block in content]
+            normalized_message = {key: message.get(key) for key in ("role", "provider", "model", "thinkingLevel", "stopReason")}
+            normalized_message["content"] = content
+            record["message"] = normalized_message
+        records.append(record)
+    value = {"schema_version": 1, "source_path": str(source), "source_sha256": hashlib.sha256(body).hexdigest(), "records": records}
+    if not _valid_delivery_evidence(value):
+        return None
+    try:
+        save_state(path, value)
+        # Consume the durable artifact, never the pre-write in-memory rows.
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (StateError, OSError, UnicodeDecodeError, ValueError):
+        return None
+    return saved["records"] if _valid_delivery_evidence(saved) and saved == value else None
+
+
+def _valid_delivery_evidence(value):
+    return (isinstance(value, dict) and type(value.get("schema_version")) is int and value["schema_version"] == 1
+            and set(value) == {"schema_version", "source_path", "source_sha256", "records"}
+            and isinstance(value["source_path"], str) and Path(value["source_path"]).is_absolute()
+            and isinstance(value["source_sha256"], str) and len(value["source_sha256"]) == 64
+            and all(char in "0123456789abcdef" for char in value["source_sha256"])
+            and isinstance(value["records"], list) and bool(value["records"])
+            and all(_valid_delivery_record(row, index) for index, row in enumerate(value["records"])))
+
+
+def _valid_delivery_record(row, index):
+    if not isinstance(row, dict) or type(row.get("schema_version")) is not int or row["schema_version"] != 1 or not isinstance(row.get("id"), str) or not row["id"]:
+        return False
+    if index == 0:
+        return set(row) == {"schema_version", "type", "version", "id"} and row["type"] == "session" and type(row["version"]) is int and row["version"] == 3
+    if not isinstance(row.get("type"), str) or row["type"] not in {"model_change", "thinking_level_change", "message"}:
+        return False
+    if "parentId" not in row or row["parentId"] is not None and not isinstance(row["parentId"], str):
+        return False
+    if row["type"] != "message":
+        return set(row) == {"schema_version", "type", "id", "parentId"}
+    message = row.get("message")
+    if set(row) != {"schema_version", "type", "id", "parentId", "message"} or not isinstance(message, dict) or set(message) != {"role", "content", "provider", "model", "thinkingLevel", "stopReason"}:
+        return False
+    if not isinstance(message["role"], str) or message["role"] not in {"system", "user", "assistant", "toolResult"}:
+        return False
+    if any(message[key] is not None and not isinstance(message[key], str) for key in ("provider", "model", "thinkingLevel", "stopReason")):
+        return False
+    content = message["content"]
+    if message["role"] == "system" and isinstance(content, str):
+        return True
+    return (isinstance(content, list) and all(isinstance(block, dict) and set(block).issubset({"type", "text"})
+            and isinstance(block.get("type"), str) and ("text" not in block or isinstance(block["text"], str)) for block in content))
+
+
 def probe(client, agent, pane, report):
     """R3 source-only acceptance, with receipt/process/source stability checks."""
     failure = {"found": False, "reason": "pi_marker_unconfirmed", "message": "Pi report marker is unconfirmed (pi_marker_unconfirmed). Preserve the report and pane evidence; inspect the exact final marker and native session before recording delivery. Do not rerun the task solely because delivery is unconfirmed."}
@@ -223,6 +311,9 @@ def probe(client, agent, pane, report):
         if len(matches) != 1:
             return failure
         path, body, (session, final) = matches[0]
+        records = delivery_evidence(proof["session_dir"], path, body)
+        if records is None or _conversation_rows(records, prompt, proof) != (session, final):
+            return failure
         if final != "REPORT: " + report:
             return failure
         verify_running(client, agent, pane, proof)

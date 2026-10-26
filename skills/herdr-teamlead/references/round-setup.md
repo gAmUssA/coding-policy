@@ -206,6 +206,29 @@ before relying on its role (`headroom_failed`).
 
 ## Step 3 — Plan the Roles
 
+Commission an optional pi seat before measuring and planning it. Use an idle
+shell pane, the configured seat name, and the same task/config/state selections
+as dispatch:
+
+```bash
+CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
+bash "$CP/skills/herdr-teamlead/teamlead.sh" start-local \
+  --agent <configured-name> --pane <idle-shell-pane> --task <task-id> \
+  [--role developer] [--config <config-file>] [--state <state-file>]
+```
+
+Success emits `{"agent":"<name>","verified":{...}}`: `verified` is the
+launch proof documented in `skills/herdr-teamlead/state-schema.md` Local pi
+artifacts. Exit 0 confirms commissioning; exit 1 emits a JSON error on stderr
+for config, host, retrospective, attention, launch or receipt failures; exit 2
+is an argument error. Resolve the diagnostic before dispatch. The command
+launches a process, allocates a fresh session directory, writes its launch
+receipt and retrospective transition evidence, and takes the normal state,
+attention and retrospective locks. It sends no assignment brief. Failure
+after process launch can leave a live worker; inspect it before retrying.
+The runtime predicates belong to `skills/herdr-teamlead/teamlead/cli.py`
+(`cmd_start_local`) and `skills/herdr-teamlead/teamlead/pi_native.py`.
+
 Choose the next needed responsibilities before selecting workers. Consult the
 profiles and requirement contract in `skills/herdr-teamlead/references/specialists.md`; available
 profiles need no activation until a bounded question or deliverable warrants it.

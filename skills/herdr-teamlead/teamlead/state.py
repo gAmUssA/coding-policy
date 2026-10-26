@@ -317,11 +317,55 @@ def _migrate_snapshot_1_to_2(snapshot):
 #: snapshot outlives the state document it arrived in, and `measure` bumps it
 #: on its own release train.
 def _migrate_snapshot_4_to_5(snapshot):
+    agents = _snapshot_agents(snapshot)
+    fields = {"budget_mode", "host_eligibility", "skip_reason"}
+    if any(fields.intersection(record) for record in agents.values()):
+        raise _NoUsableState("a version-4 snapshot contains version-5 agent fields; restore the original snapshot or re-measure")
+    for record in agents.values():
+        record.update(budget_mode="metered", host_eligibility=None, skip_reason=None)
     snapshot["schema_version"] = 5
-    for record in snapshot.get("agents", {}).values():
-        if isinstance(record, dict):
-            record.update(budget_mode="metered", host_eligibility=None, skip_reason=None)
     return snapshot
+
+
+def _snapshot_agents(snapshot):
+    agents = snapshot.get("agents")
+    if not isinstance(agents, dict) or any(not isinstance(record, dict) for record in agents.values()):
+        raise _NoUsableState("snapshot agents and every agent record must be JSON objects; restore the snapshot or re-measure")
+    return agents
+
+
+def _valid_host_observation(value):
+    if value is None:
+        return True
+    if not isinstance(value, dict) or set(value) != {"schema_version", "eligible", "reason", "message", "observed", "requirements", "details"}:
+        return False
+    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        return False
+    if value["eligible"] is not None and type(value["eligible"]) is not bool:
+        return False
+    if not isinstance(value["reason"], str) or value["reason"] not in {"host_eligible", "host_ineligible", "host_probe_failed"} or not isinstance(value["message"], str):
+        return False
+    observed, requirements, details = (value[key] for key in ("observed", "requirements", "details"))
+    keys = {"min_apple_m_generation", "min_memory_gib"}
+    if not isinstance(requirements, dict) or set(requirements) != keys or any(type(item) is not int or item <= 0 for item in requirements.values()):
+        return False
+    if not isinstance(observed, dict) or set(observed) != {"chip", "apple_m_generation", "memory_bytes"} or not isinstance(observed["chip"], str):
+        return False
+    if any(observed[key] is not None and (type(observed[key]) is not int or observed[key] <= 0) for key in ("apple_m_generation", "memory_bytes")):
+        return False
+    return (isinstance(details, dict) and set(details) == {"error", "unmet"}
+            and (details["error"] is None or isinstance(details["error"], str))
+            and isinstance(details["unmet"], list) and all(isinstance(key, str) and key in keys for key in details["unmet"]))
+
+
+def _validate_snapshot(snapshot):
+    for record in _snapshot_agents(snapshot).values():
+        if not {"budget_mode", "host_eligibility", "skip_reason"}.issubset(record):
+            raise _NoUsableState("a version-5 snapshot lacks required agent fields; re-measure with this owner")
+        if (not isinstance(record["budget_mode"], str) or record["budget_mode"] not in {"metered", "local_unmetered"}
+                or not _valid_host_observation(record["host_eligibility"])
+                or record["skip_reason"] is not None and (not isinstance(record["skip_reason"], str) or not record["skip_reason"])):
+            raise _NoUsableState("a version-5 snapshot has invalid agent field types or host evidence; restore the snapshot or re-measure")
 
 
 SNAPSHOT_MIGRATIONS = {
@@ -511,6 +555,7 @@ def _validate(payload, path):
         snapshot, snap_migrated = _apply_migrations(
             snapshot, SNAPSHOT_MIGRATIONS, "a snapshot", SNAPSHOT_SCHEMA_VERSION
         )
+        _validate_snapshot(snapshot)
         migrated = migrated or snap_migrated
         snapshots.append(snapshot)
     payload["snapshots"] = snapshots

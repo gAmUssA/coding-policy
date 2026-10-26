@@ -436,13 +436,13 @@ original flags. Identity comes from the recorded start receipt plus live
 PID/pane/terminal continuity, never that title. Commissioning is mandatory.
 
 Pi's empty composer lies between the final pair of horizontal editor borders;
-`teamlead/composer.py` reads that evidenced shape and refuses occupied or
+`skills/herdr-teamlead/teamlead/composer.py` reads that evidenced shape and refuses occupied or
 unobservable editors. `/new` is the documented manual reset. Apply launches a
 fresh process for each assignment. Composer recovery is not enabled by default.
 
 Herdr supplies no pi session ID. The adapter allocates a separate directory per
 launch and binds the native file by its exact first user prompt. A completed
 source marker can establish delivery even when the pane wraps its path.
-Use `wait-report.sh --state FILE --once NAME /absolute/report.md` with the same
-state selected at commissioning. Other workers retain their existing display
+Use the canonical report-wait invocation and state/config options in
+Step 9 of `skills/herdr-teamlead/SKILL.md`. Other workers retain their existing display
 proof; pi native recovery and arbitrary branched sessions are unsupported.

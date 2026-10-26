@@ -211,10 +211,7 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
 - Default each task's fix allowance to five rounds
 - Reserve the developer through initial and early-fix verification before assigning it another task or role
 - Fix rounds 1–3 retain the same metered developer's context when the retention preconditions hold
-- Pi developer rounds always launch fresh with a full handoff brief
-- Preserve pi's original task and next fix number without requiring a context-recovery permission
-- Skip pi for fixes 4 and later, risk escalation, large inputs and correction-plan rounds
-- Never pair a planned pi developer with `--retain-context`, `--retain-specialist` or `--no-clear`
+- Pi routing, fresh-launch and independence requirements follow Optional local pi developer seats in `skills/herdr-teamlead/references/model-tiers.md`
 - Narrow exception for retaining context on a same-role fix round.
 - Preconditions (all required):
   1. The worker remains the developer for the same task
@@ -350,12 +347,6 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
 ## Worker Launch Mode
 
 - Start metered team workers in YOLO mode, including reviewer, tester, release, and judge
-- Commission optional local pi with its evidenced intrinsic-execution profile under `skills/herdr-teamlead/references/model-tiers.md`
-- Use pi only as developer for initial implementation and fresh early fixes
-- Treat pi developer work as contribution for independence exclusions
-- Keep a metered independent tester of record
-- Keep reviewers metered
-- Refuse pi for every non-developer role
 - Apply the same mode on every relaunch
 - Verify metered permission flags from launch or live foreground-process argv before dispatch
 - Verify pi through its fresh-launch receipt and live PID/pane/terminal continuity

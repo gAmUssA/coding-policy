@@ -7,7 +7,8 @@ per-agent `tiers`; schema 1 remains readable without tiers. The full version
 gate list is in `skills/herdr-teamlead/state-schema.md`.
 The utility never rewrites the operator's config. Copy the example into a new
 file, preserve local agent names and UI options, then validate it with
-`teamlead.sh plan` before replacing a working configuration.
+the Step 3 `plan` invocation in `skills/herdr-teamlead/references/round-setup.md`
+before replacing a working configuration.
 
 Each `tiers` entry maps a round type to:
 
@@ -254,15 +255,16 @@ The operator owns billing inputs inside config.json; these readers never write
 or migrate that file. Billing evidence records use schema 1. The state owner
 records launch proof in assignment rows; rows written before the battery's
 retirement may also carry a `qualification` summary, which readers ignore. See
-`state-schema.md` for migration and reader behavior.
+`skills/herdr-teamlead/state-schema.md` for migration and reader behavior.
 
 
 ## Optional local pi developer seats
 
 Config 5 supports pi 1.4.0 with the explicitly selected static Ollama loopback
-profile. Commission with `teamlead.sh start-local --config FILE --state FILE
---agent local_pi --pane PANE --task TASK`. The pane must hold an idle shell.
-The host gate runs before pi contact; see `teamlead/host.py` for its predicate.
+profile. Commission under Step 3 of
+`skills/herdr-teamlead/references/round-setup.md`, the canonical `start-local`
+invocation and I/O/side-effect contract.
+The host gate runs before pi contact; see `skills/herdr-teamlead/teamlead/host.py` for its predicate.
 The example requires Apple M5 or newer and 32 GiB RAM. This operator-selected
 activation floor is not a measured memory minimum; memory remains configurable.
 The adapter supplies the disabled-extension/MCP profile and the session
@@ -276,7 +278,9 @@ each as a fresh launch with a full handoff brief containing prior changes,
 remaining findings and validation. Never pair pi with `--retain-context`,
 `--retain-specialist` or `--no-clear`. The planner skips pi for fixes 4 and
 later, risk flags, a prior high miss, large inputs and correction-plan rounds,
-leaving metered developers eligible. See `teamlead/tiers.py` for thresholds.
+leaving metered developers eligible. Preserve the original task and next fix
+number without requiring context-recovery permission. See
+`skills/herdr-teamlead/teamlead/tiers.py` for thresholds.
 
 Pi is a contributor: its work cannot qualify it for independent verification.
 Reviewer and tester of record remain metered. Tester rounds (including
@@ -295,6 +299,5 @@ Measure records local_unmetered capacity with null percentage and no usage
 commands. Host-ineligible or absent local seats are expected skips. Probe or
 identity failures remain visible failures. The planner prioritizes eligible
 local seats within an equally familiar affordable field and never charges a
-subscription pool for them. Apply rechecks eligibility before transitions and
-starts a fresh recorded process; retained/no-clear dispatches are unavailable.
-Delivery uses the dedicated native source contract in state-schema.md.
+subscription pool for them. Apply rechecks eligibility before transitions.
+Delivery uses the dedicated native source contract in `skills/herdr-teamlead/state-schema.md`.

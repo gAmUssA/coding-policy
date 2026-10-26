@@ -7,4 +7,4 @@ bump: minor
 
 ### Fixed
 
-- Narrow validated pi launch receipts, host observations and pooled headroom for the configured Python diagnostics gate; test helpers assert JSON and host-observation presence before reading them. Malformed receipts still refuse verification before worker contact.
+- Validate snapshot agent maps and schema-5 fields before accepting or rewriting state, and refuse future fields in schema-4 snapshots. Saved plans migrate through their runtime owner and unsupported versions refuse before worker contact. Normalize pi delivery evidence into owner-versioned records while preserving native input and live continuity checks (ADR 0015). Canonical commissioning and report-wait steps document their inputs, outputs, exits and state/config selection.

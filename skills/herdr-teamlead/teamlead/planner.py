@@ -69,9 +69,34 @@ from .parsers import headroom_pct
 #: the start and the dispatch read the lead's decision rather than retaking it
 #: (#425). Additive: a version-5 plan simply carries no mode, and its readers
 #: refuse the start rather than defaulting one.
-#: A plan is a round's instruction, not stored state -- it is produced and
-#: consumed inside one round and never migrated (rules/stateful-artifacts.md).
+#: Saved plans are owned by teamlead; its CLI migrates file-backed plans on
+#: read and refuses future versions. See skills/herdr-teamlead/state-schema.md.
 PLAN_SCHEMA_VERSION = 7
+
+
+def upgrade_plan(payload):
+    """Validate a saved plan and return (current document, migrated).
+
+    Versions 1-6 used the same assignment map. Optional metadata stays absent
+    when it was never recorded (notably judge.mode); migration invents no
+    dispatch authorization. Version 7 adds the ineligible-agent map.
+    """
+    if not isinstance(payload, dict) or "assignments" not in payload and "schema_version" not in payload:
+        return payload, False  # Legacy, ad-hoc role -> agent instruction.
+    version = payload.get("schema_version", 1)
+    if type(version) is not int or not 1 <= version <= PLAN_SCHEMA_VERSION:
+        raise PlanError("No usable saved plan at schema_version {!r}; re-run teamlead plan with a compatible owner. The file is unchanged.".format(version), {})
+    if not isinstance(payload.get("assignments"), dict) or not payload["assignments"]:
+        raise PlanError("Saved plan assignments must be a non-empty object; re-run teamlead plan. The file is unchanged.", {})
+    if version < 7 and "ineligible_agents" in payload:
+        raise PlanError("Older plan contains version-7 ineligible_agents; restore the original plan or re-plan. The file is unchanged.", {})
+    result = dict(payload)
+    if version < 7:
+        result.update(schema_version=PLAN_SCHEMA_VERSION, ineligible_agents={})
+    skipped = result.get("ineligible_agents")
+    if not isinstance(skipped, dict) or any(not isinstance(value, dict) or any(not isinstance(value.get(key), str) or not value[key] for key in ("reason", "message")) for value in skipped.values()):
+        raise PlanError("Saved plan ineligible_agents must map names to reason/message objects; re-run teamlead plan. The file is unchanged.", {})
+    return result, version != PLAN_SCHEMA_VERSION or "schema_version" not in payload
 
 #: What one round in each seat is expected to burn, in points of the agent's
 #: remaining headroom percentage. The ORDER is what the planner acts on:

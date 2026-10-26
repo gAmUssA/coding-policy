@@ -40,7 +40,7 @@ from .measure import (
     DEFAULT_READ_LINES,
     measure,
 )
-from .planner import plan as build_plan
+from .planner import plan as build_plan, upgrade_plan
 from .tiers import EFFORTS, JUDGMENT_EFFORT_FLOOR, LocalRoleIneligible, MissingTierError, effort_at_or_above, judgment_refusal, parse_launch_args, parse_tiers, select_tier, without_retired_fields, worker_launch_args
 from .launch import start_worker, verify_running
 from . import host, pi_native
@@ -507,6 +507,7 @@ def _parse_excludes(pairs):
 def _load_assignments(value, document=False):
     """`--assignments` takes inline JSON or a path to a JSON file."""
     text = value.strip()
+    path = None
     if not text.startswith("{"):
         path = Path(text)
         try:
@@ -536,7 +537,16 @@ def _load_assignments(value, document=False):
             ),
             {},
         ) from None
-    return payload if document else normalize_assignments(payload)
+    if path is not None and isinstance(payload, dict) and "assignments" not in payload and "schema_version" not in payload:
+        payload = {"schema_version": 1, "assignments": payload}
+    payload, migrated = upgrade_plan(payload)
+    assignments = normalize_assignments(payload)
+    if migrated and path is not None:
+        try:
+            save_state(path, payload)
+        except StateError as exc:
+            raise UsageError("Cannot persist the saved-plan migration: {}. Make --assignments writable or re-run teamlead plan to a new file.".format(exc), {"path": str(path)}) from None
+    return payload if document else assignments
 
 
 def _round_inputs(args, roles):
@@ -1477,7 +1487,8 @@ def cmd_probe_report(args, client=None, warn=None, trace=None):
         raise HerdrError("Configured pi seat differs from Herdr's live kind (pi_permission_unproven). Preserve its report and inspect the pane before deciding delivery; no marker was accepted.", {})
     if info.get("agent") == "pi" or configured is not None and configured.kind == "pi":
         agent = SimpleNamespace(name=configured.name if configured is not None else info["name"], kind="pi", state_dir=_state_path(args).parent)
-        return pi_native.probe(client, agent, args.pane, args.report), None
+        with state_lock(retrospective.canonical_state(_state_path(args))):
+            return pi_native.probe(client, agent, args.pane, args.report), None
     return report_delivery.probe(client, args.agent, args.pane, args.report, sys.stdin.read().rstrip("\n"), args.lines), None
 
 
@@ -1546,7 +1557,9 @@ def main(argv=None, stdout=None, stderr=None, client=None):
 
     try:
         # Commands that may migrate or write state share its canonical lock.
-        # Dry runs, probes, and retrospective reads remain read-only.
+        # Dry runs and retrospective reads do not write the state ledger.
+        # Pi report probes take their owner lock inside cmd_probe_report for
+        # the normalized delivery sidecar; other probes remain read-only.
         readonly = args.command in {"probe-report", "check-gates", "detect-triggers", "validate-partition", "retro-check", "retro-list", "retro-show"} or getattr(args, "dry_run", False)
         separate_owner = args.command in memory.COMMANDS | attention.COMMANDS | SUPERVISION_COMMANDS | restoration.COMMANDS
         lock = nullcontext() if readonly or separate_owner else state_lock(retrospective.canonical_state(_state_path(args)))

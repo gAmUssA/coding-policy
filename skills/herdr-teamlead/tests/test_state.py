@@ -107,6 +107,71 @@ class MigrationTest(unittest.TestCase):
 
     # -- older: migrate, then rewrite ---------------------------------------
 
+    def test_v4_snapshot_migrates_without_changing_existing_readings(self):
+        snapshot = {"schema_version": 4, "agents": {"grok": {"headroom_pct": 42, "windows": {}, "headroom_model": "grok"}}}
+        state = empty_state()
+        state["snapshots"] = [snapshot]
+        self.write(state)
+        loaded, usable = load_state_checked(self.path)
+        self.assertTrue(usable)
+        self.assertEqual(loaded["snapshots"], [{"schema_version": 5, "agents": {"grok": {
+            "headroom_pct": 42, "windows": {}, "headroom_model": "grok",
+            "budget_mode": "metered", "host_eligibility": None, "skip_reason": None}}}])
+        self.assertEqual(self.on_disk(), loaded)
+        self.assertEqual(load_state_checked(self.path), (loaded, True))
+
+    def test_malformed_snapshot_agents_are_preserved_and_unusable(self):
+        for version in (4, 5):
+            for agents in (None, [], "forged", {"grok": []}, {"good": {}, "bad": None}):
+                with self.subTest(version=version, agents=agents):
+                    state = empty_state()
+                    state["snapshots"] = [{"schema_version": version, "agents": agents}]
+                    self.write(state)
+                    before = self.path.read_bytes()
+                    self.assertEqual(load_state_checked(self.path, warn=self.warnings.append), (empty_state(), False))
+                    self.assertEqual(self.path.read_bytes(), before)
+
+    def test_v4_snapshot_refuses_each_future_agent_field(self):
+        for key, value in (("budget_mode", "local_unmetered"), ("host_eligibility", None), ("skip_reason", None)):
+            with self.subTest(key=key):
+                state = empty_state()
+                state["snapshots"] = [{"schema_version": 4, "agents": {"first": {}, "grok": {key: value}}}]
+                self.write(state)
+                before = self.path.read_bytes()
+                self.assertEqual(load_state_checked(self.path, warn=self.warnings.append), (empty_state(), False))
+                self.assertEqual(self.path.read_bytes(), before)
+
+    def test_v5_snapshot_checks_all_new_agent_fields(self):
+        from teamlead.host import evaluate_host
+        from types import SimpleNamespace
+        host = evaluate_host(SimpleNamespace(name="local", host_requirements={"min_apple_m_generation": 5, "min_memory_gib": 32}),
+                             {"machdep.cpu.brand_string": "Apple M5", "hw.memsize": "34359738368"})
+        assert isinstance(host, dict)
+        valid = {"kind": "pi", "budget_mode": "local_unmetered", "host_eligibility": host, "skip_reason": None}
+        state = empty_state()
+        state["snapshots"] = [{"schema_version": 5, "agents": {"local": valid}}]
+        self.write(state)
+        self.assertEqual(load_state_checked(self.path), (state, True))
+        for key, value in (("budget_mode", []), ("budget_mode", "free"), ("host_eligibility", True),
+                           ("host_eligibility", {}), ("skip_reason", False), ("skip_reason", "")):
+            with self.subTest(key=key, value=value):
+                state["snapshots"][0]["agents"]["local"] = {**valid, key: value}
+                self.write(state)
+                before = self.path.read_bytes()
+                self.assertEqual(load_state_checked(self.path, warn=self.warnings.append), (empty_state(), False))
+                self.assertEqual(self.path.read_bytes(), before)
+        for key in valid.keys() - {"kind"}:
+            with self.subTest(missing=key):
+                state["snapshots"][0]["agents"]["local"] = {k: v for k, v in valid.items() if k != key}
+                self.write(state)
+                self.assertEqual(load_state_checked(self.path, warn=self.warnings.append), (empty_state(), False))
+        for key, value in (("schema_version", 2), ("schema_version", True), ("eligible", "true"),
+                           ("requirements", []), ("observed", {}), ("details", {"error": None, "unmet": [True]})):
+            with self.subTest(host_key=key):
+                state["snapshots"][0]["agents"]["local"] = {**valid, "host_eligibility": {**host, key: value}}
+                self.write(state)
+                self.assertEqual(load_state_checked(self.path, warn=self.warnings.append), (empty_state(), False))
+
     def test_an_unversioned_document_is_migrated_and_its_rows_stamped(self):
         self.write(
             {

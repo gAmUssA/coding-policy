@@ -38,6 +38,11 @@ and durable `events`; a quiet deadline completes only that checkpoint.
 For each event or pending recheck, verify report delivery with the skill's
 Step 9 `wait-report.sh --once` command.
 
+Observation does not dispatch input. A pi probe imports its live native source
+into the normalized delivery sidecar under the owner contract in
+`skills/herdr-teamlead/state-schema.md` Pi delivery evidence. An unwritable or
+unsupported sidecar proves no delivery; preserve it for inspection.
+
 The checkpoint emits delivery JSON; exit 2 emits only stderr. Exit 0 confirms
 delivery, 1 remains pending, 3 confirms blocked, 4 lacks confirmed delivery, and
 5 proves terminal refusal; record it with `record-refusal`. Read delivered

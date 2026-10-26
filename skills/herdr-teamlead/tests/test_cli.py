@@ -571,6 +571,63 @@ class PlanCommandTest(CliCase):
         self.assertEqual(json.loads(out)["assignments"]["developer"], "grok")
 
 
+class SavedPlanSchemaTest(CliCase):
+    def apply_plan(self, value):
+        self.out.seek(0)
+        self.out.truncate()
+        self.err.seek(0)
+        self.err.truncate()
+        return self.run_cli(self.base() + ["apply", "--assignments", value, "--common", str(self.common),
+            "--dry-run", "--brief", "developer=" + str(self.briefs["developer"])])
+
+    def test_older_file_plans_migrate_and_current_plans_round_trip(self):
+        path = self.tmp / "plan.json"
+        for version in range(1, 8):
+            with self.subTest(version=version):
+                plan = {"schema_version": version, "assignments": {"developer": "grok"}, "rationale": ["saved evidence"]}
+                if version == 7:
+                    plan["ineligible_agents"] = {}
+                path.write_text(json.dumps(plan))
+                rc, out, err = self.apply_plan(str(path))
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(json.loads(out)["steps"][0]["agent"], "grok")
+                self.assertEqual(json.loads(path.read_text()), {**plan, "schema_version": 7, "ineligible_agents": {}})
+                before = path.read_bytes()
+                self.assertEqual(self.apply_plan(str(path))[0], 0)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_unsupported_or_malformed_plans_refuse_without_rewriting(self):
+        path = self.tmp / "plan.json"
+        for fields in ({"schema_version": 8}, {"schema_version": True}, {"schema_version": "7"}, {"schema_version": 0},
+                       {"schema_version": 6, "ineligible_agents": {}}, {"schema_version": 7},
+                       {"schema_version": 7, "ineligible_agents": {}, "assignments": []},
+                       {"schema_version": 7, "ineligible_agents": []},
+                       {"schema_version": 7, "ineligible_agents": {"local": {"reason": False, "message": "skip"}}}):
+            with self.subTest(fields=fields):
+                plan = {"assignments": {"developer": "grok"}, **fields}
+                path.write_text(json.dumps(plan))
+                before = path.read_bytes()
+                rc, out, err = self.apply_plan(str(path))
+                self.assertEqual(rc, 1, err)
+                self.assertEqual(out, "")
+                self.assertIn("plan", err.lower())
+                self.assertEqual(path.read_bytes(), before)
+                self.assertFalse(self.state.exists())
+
+    def test_inline_old_plan_and_bare_map_remain_usable(self):
+        for plan in ({"developer": "grok"}, {"schema_version": 1, "assignments": {"developer": "grok"}}):
+            rc, out, err = self.apply_plan(json.dumps(plan))
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(json.loads(out)["steps"][0]["agent"], "grok")
+
+    def test_file_backed_bare_map_gains_the_owner_envelope(self):
+        path = self.tmp / "bare-plan.json"
+        path.write_text('{"developer":"grok"}')
+        rc, _, err = self.apply_plan(str(path))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(path.read_text()), {"schema_version": 7, "assignments": {"developer": "grok"}, "ineligible_agents": {}})
+
+
 class MeasureCommandTest(CliCase):
     CORRUPT_STATE = '{"schema_version": 2, "snapshots": [broken'
 

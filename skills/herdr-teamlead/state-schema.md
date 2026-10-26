@@ -14,6 +14,8 @@ the utility alone records the saved notes and their separate index.
 | `$XDG_CONFIG_HOME/teamlead/config.json` (default `~/.config/teamlead/config.json`, override `--config FILE`) | the operator | Per-agent usage / clear commands; teamlead reads it and never writes it |
 | `<task-reports-dir>/TASK-LEDGER.md` | `herdr-teamlead`, written by the lead | Evidence-backed assignment acceptance and task completion across rounds |
 | `<canonical-state-path>.retrospectives/` | `herdr-teamlead`, through its retrospective utility | Immutable retrospective notes, versioned index, and transition coverage |
+| Caller-selected saved plan JSON (`--assignments FILE`) | teamlead runtime, through `skills/herdr-teamlead/teamlead/planner.py` and its CLI reader | Versioned dispatch instructions; owner migration on read |
+| `<launch-session-dir>/delivery.json` | `skills/herdr-teamlead/teamlead/pi_native.py` | Normalized, versioned pi source observations; live verification remains mandatory |
 
 The JSON formats and utility contracts below apply to `state.json` and config.
 The Markdown ledger has its own contract in Task Ledger below; adding it changes
@@ -120,6 +122,31 @@ default (see `skills/herdr-teamlead/references/round-setup.md`, Step 3).
 A missing map means no overrides; a value that is not a non-negative finite
 number is refused, naming the file and the role. `plan` is the only reader.
 
+## Saved plans (schema 7)
+
+The teamlead runtime is the single owner. Its `plan` command produces a
+schema-7 document on stdout; the caller saves those bytes for `apply` or
+`start-judge`. Both CLI consumers validate the envelope through
+`skills/herdr-teamlead/teamlead/planner.py` (`upgrade_plan`) before worker
+contact. Required fields are integer `schema_version: 7`, nonempty
+`assignments` (role→agent strings), and `ineligible_agents` (name→objects with
+nonempty string `reason` and `message`). Existing optional rationale, snapshot,
+task context, requirements, rounds, tiers and judge fields retain their
+contracts above. No absent authorization or judge mode is invented.
+
+The owner accepts versions 1–6 and unversioned legacy envelopes as version 1,
+preserves their existing metadata, adds `ineligible_agents: {}`, stamps 7,
+and atomically rewrites file-backed input before use (also on a dry-run).
+Inline JSON upgrades in memory only. A current plan is validated without
+rewriting. An older envelope already carrying the version-7 field is refused.
+Unsupported newer/invalid versions or malformed required fields mean no
+usable plan: exit 1 with an actionable diagnostic, no worker contact and
+the original file preserved. Missing files fail with an actionable path error.
+Re-plan with a compatible owner; non-owner readers never migrate saved plans.
+A file-backed bare role→agent map migrates as a version-1 envelope. An inline
+bare map remains an ad-hoc instruction; it supplies no tier, task or judgment
+evidence and creates no saved artifact.
+
 ## Task Ledger
 
 Choose one absolute task reports directory outside the shared checkout and
@@ -149,7 +176,7 @@ required fields; unavailable values are the literal `unknown`, never guesses:
 The task identity and base in the document apply to every event. Append a new
 decision when evidence changes; preserve earlier records. Event sections may
 contain prose under `assessment` for the lead's reasoning. This is a human-readable
-decision log, not a new machine status API or an input to `teamlead.sh apply`.
+decision log, not a new machine status API or an input to `apply`.
 
 - **Writer** — the lead running `herdr-teamlead` writes after dispatch, after
   every wait outcome, after report assessment, and before any pause or handoff.
@@ -749,19 +776,23 @@ explicit configuration. Pi requires this object, generation at least 5, a tier t
 `allowed_roles` is a distinct array of known roles; empty disables routing.
 Absent means unrestricted for old kinds and developer-only for pi. Pi accepts
 only `["developer"]` or `[]`, and its tier table permits `build` and `fix` rows.
-Initial implementation and fix rounds 1–3 launch fresh with a full handoff
-brief; no retained/no-clear mode is permitted. Fixes 4 and later, risk flags,
-prior high misses, large inputs and correction-plan rounds skip pi while
-preserving metered candidates. Reviewer and tester of record remain metered.
-Pi developer assignments count as contributions for independence exclusions.
+Routing, handoff and independence follow the single operational contract in
+`skills/herdr-teamlead/references/model-tiers.md` Optional local pi developer seats.
 Pi cannot gain other roles, judgment pins or a shared `window_group` through
 configuration. Its capability declaration must include repo-read and command-run.
 
 Snapshot 5 adds `budget_mode`, `host_eligibility`, and `skip_reason` to every
-agent record. The owner migrates 4→5, stamping `metered`, null, null without
+agent record. The owner first requires an `agents` object containing only
+object records; a version-4 record already carrying any of these fields is
+refused before any modification. The owner migrates 4→5, stamping `metered`, null, null without
 changing windows, numerical readings, groups or `headroom_model`. Earlier
 versions chain through the existing migrations. Newer snapshots remain
 unusable and preserved. Old pi-looking records require fresh measurement.
+Every accepted version-5 snapshot requires all three fields per agent:
+`budget_mode` is `metered` or `local_unmetered`; `skip_reason` is null or a
+nonempty string; `host_eligibility` is null or the typed schema-1 observation
+below. Malformed maps, records or fields take the corrupt-state path without
+rewriting the file, including when an earlier migration ran in memory.
 
 An eligible commissioned idle pi record has `budget_mode: local_unmetered`,
 empty `windows`, null `headroom_pct`, and an observed schema-1
@@ -770,10 +801,15 @@ empty `windows`, null `headroom_pct`, and an observed schema-1
 `details` with probe error/unmet requirements. Host-ineligible and absent pi
 records are skipped without `failed_agents`; host-probe failures are visible
 failures. Busy, failed, absent or uncommissioned local seats never rank.
-Plan 7 adds `ineligible_agents`, a name→reason/message map; older plans stay
-readable. Plan and apply recheck this machine's host requirements.
+Its `schema_version` is integer 1, `eligible` is boolean or null, `reason` is
+`host_eligible`, `host_ineligible` or `host_probe_failed`, and `message` is a
+string. `observed` contains string `chip` and positive integer-or-null
+`apple_m_generation`/`memory_bytes`. `requirements` contains the two positive
+integer host floors above; `details` contains string-or-null `error` and
+`unmet`, an array of host-floor key strings. Booleans never count as integers.
+Plan 7's contract is in Saved plans above. Plan and apply recheck this machine's host requirements.
 
-`teamlead/pi_native.py` owns schema-1 `<state-dir>/pi/<seat-hash>/launch.json`.
+`skills/herdr-teamlead/teamlead/pi_native.py` owns schema-1 `<state-dir>/pi/<seat-hash>/launch.json`.
 The seat hash is derived from the configured name. The owner writes only after
 a verified fresh start and before dispatch; measure, retrospective guards and
 report probes read without migration. Fields: `schema_version`, `agent`,
@@ -781,12 +817,14 @@ report probes read without migration. Fields: `schema_version`, `agent`,
 `argv`, `model`, `effort`, `source: launch_argv`, positive `pid`, `pane_id`,
 `terminal_id`, and absolute `session_dir`. Each start allocates a new numbered
 `<seat-dir>/sessions/<number>/`; old sessions are preserved. Native pi alone
-writes its JSONL v3 files there. Missing or malformed receipts prove nothing.
+writes its JSONL v3 files there as external runtime input. Teamlead never
+rewrites that third-party format; its own persisted delivery evidence is
+normalized and versioned under Pi delivery evidence below. Missing or malformed receipts prove nothing.
 Unknown receipt versions are refused and preserved. Assignment schema remains
 7; a pi tier's existing `verified` object carries this kind-specific proof.
 
-Commissioning writer: `start-local --agent NAME --pane PANE --task TASK`;
-optional `--role developer` is the only supported role. Its fixed tools are
+Commissioning uses the canonical Step 3 command/contract in
+`skills/herdr-teamlead/references/round-setup.md`. Its fixed tools are
 `read,bash,edit,write`, with extensions and MCP disabled. It shares the
 normal retrospective, attention and state locks. Apply always launches pi
 fresh, never resumes or adopts an unrecorded process. Dry-run launch commands
@@ -795,9 +833,46 @@ Retrospective observations retain the exposed title-only argv0; that title
 never authorizes input. The launch receipt and live PID/pane/terminal checks
 supply permission/model proof.
 
-Report probes use the selected state directory. Pass `wait-report.sh --state
-FILE` when commissioning used a non-default state file. Pi delivery requires
+Report probes use the canonical Step 9 invocation/state/config contract in
+`skills/herdr-teamlead/SKILL.md`. Pi delivery requires
 one bound session with its sole user message equal to `dispatch_prompt`, a
 linear parent chain, and a completed final assistant text equal to the exact
 REPORT marker, plus the file. It grants delivery only. Generic pane-row proof
 and other kinds' recovery contracts remain unchanged.
+
+## Pi delivery evidence (schema 1)
+
+Single owner and writer: the teamlead pi adapter in
+`skills/herdr-teamlead/teamlead/pi_native.py`. After binding one native
+session, each report probe imports its current JSONL bytes into
+`<launch-session-dir>/delivery.json`, atomically replacing the preceding
+schema-1 observation under the canonical state lock. The document has integer `schema_version: 1`, absolute
+string `source_path`, lowercase 64-character `source_sha256`, and a nonempty
+`records` array. Every normalized record has integer `schema_version: 1`.
+The reader consumes the durable normalized artifact, never a cached verdict.
+
+Record shapes (no other keys are retained):
+
+| Record | Fields besides `schema_version` |
+| ------ | ------------------------------ |
+| Header (first only) | `type: session`, integer native `version: 3`, nonempty string `id` |
+| Pre-user change | `type: model_change` or `thinking_level_change`, nonempty string `id`, string-or-null `parentId` |
+| Message | `type: message`, nonempty string `id`, string-or-null `parentId`, `message` object |
+
+`message` contains `role` (`system`, `user`, `assistant`, `toolResult`),
+`content`, and nullable string `provider`, `model`, `thinkingLevel`,
+`stopReason`. `content` is an array of objects containing string `type` and
+optional string `text`; pre-user system content may instead be a string.
+Tool-call payloads, usage data, timestamps and thinking text are discarded.
+The linear-chain, sole-user/prompt, model/effort and final REPORT checks
+consume these normalized fields. Source bytes and receipt/process continuity
+are rechecked before delivery, even when a prior normalized file exists.
+
+Missing evidence means first import from a freshly verified source. There
+is no older owner schema: invalid, unversioned, older or newer documents or
+records mean unconfirmed delivery; preserve them without writes and update
+the owner or inspect the artifact before retrying. Native JSONL is never
+migrated. Non-owner readers do not migrate or write delivery evidence.
+Existing commissioned sessions need no receipt migration: their first probe
+creates the normalized sidecar from current source. This adds no authority
+to deliver a missing report or recover a retired process. See ADR 0015.
