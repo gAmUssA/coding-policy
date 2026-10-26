@@ -68,6 +68,8 @@ def require_pi(agent):
         result = subprocess.run(["pi", "--version"], capture_output=True, text=True, timeout=5, check=False)
     except FileNotFoundError:
         found = "not installed"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        found = "not runnable ({})".format(exc)
     else:
         found = result.stdout.strip() if result.returncode == 0 else "unreadable (pi --version exit {})".format(result.returncode)
     if found != PI_VERSION:

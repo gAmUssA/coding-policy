@@ -104,7 +104,7 @@ class PiTests(unittest.TestCase):
         self.boundary = patch("subprocess.run", side_effect=self.system).start()
         self.chip, self.memory = "Apple M5 Max", "68719476736"
         self.version = fixture("version.json")["stdout"]
-        self.version_error: OSError | None = None
+        self.version_error: OSError | subprocess.TimeoutExpired | None = None
         self.version_exit = 0
 
     def system(self, argv, **kwargs):
@@ -475,6 +475,18 @@ class PiTests(unittest.TestCase):
         self.launch()
         self.version_error = FileNotFoundError("pi executable missing")
         self.assertIn("not installed", self.assert_pi_install_guidance())
+
+    def test_nonexecutable_pi_reports_install_guidance(self):
+        self.launch()
+        self.version_error = PermissionError(13, "Permission denied", "pi")
+        message = self.assert_pi_install_guidance()
+        self.assertIn("not runnable ([Errno 13] Permission denied: 'pi')", message)
+
+    def test_hanging_pi_reports_install_guidance(self):
+        self.launch()
+        self.version_error = subprocess.TimeoutExpired(["pi", "--version"], 5)
+        message = self.assert_pi_install_guidance()
+        self.assertIn("not runnable (Command '['pi', '--version']' timed out after 5 seconds)", message)
 
     def test_wrong_pi_version_reports_install_guidance(self):
         self.launch()
