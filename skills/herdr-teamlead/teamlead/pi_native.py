@@ -162,7 +162,7 @@ def conversation(body, prompt, tier=None):
     """Only fresh, linear v3 sessions with this sole user turn can bind."""
     try:
         rows = [json.loads(line) for line in body.splitlines() if line.strip()]
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     return _conversation_rows(rows, prompt, tier)
 
@@ -175,6 +175,8 @@ def _conversation_rows(rows, prompt, tier=None):
         return None
     previous, users, final, seen = None, 0, None, set()
     for row in rows[1:]:
+        if not isinstance(row.get("type"), str):
+            return None
         identifier = row.get("id")
         if not isinstance(identifier, str) or not identifier or identifier in seen or row.get("parentId") != previous:
             return None
@@ -199,7 +201,7 @@ def _conversation_rows(rows, prompt, tier=None):
         elif role == "assistant" and users == 1:
             if tier is not None and (message.get("provider") != "ollama" or message.get("model") != tier["model"].removeprefix("ollama/") or message.get("thinkingLevel") != tier["effort"]):
                 return None
-            if message.get("stopReason") == "stop" and all(block.get("type") in {"thinking", "text"} for block in blocks):
+            if message.get("stopReason") == "stop" and all(isinstance(block.get("type"), str) and block["type"] in {"thinking", "text"} for block in blocks):
                 final = text
         elif role != "toolResult" or users != 1:
             return None
@@ -227,7 +229,7 @@ def delivery_evidence(directory, source, body):
         return None
     try:
         rows = [json.loads(line) for line in body.decode("utf-8").splitlines() if line.strip()]
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return None
     if not rows or any(not isinstance(row, dict) or "schema_version" in row for row in rows):
         return None
@@ -238,6 +240,8 @@ def delivery_evidence(directory, source, body):
             message = row["message"]
             content = message.get("content")
             if isinstance(content, list):
+                if any(not isinstance(block, dict) for block in content):
+                    return None
                 content = [{key: block[key] for key in ("type", "text") if key in block} for block in content]
             normalized_message = {key: message.get(key) for key in ("role", "provider", "model", "thinkingLevel", "stopReason")}
             normalized_message["content"] = content

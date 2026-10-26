@@ -536,6 +536,63 @@ class PiTests(unittest.TestCase):
         report.unlink()
         self.assertFalse(self.call_json(*args)[1]["found"])
 
+    def test_malformed_native_input_is_unconfirmed(self):
+        proof = self.launch()
+        body, prompt, report = self.native()
+        pi_native.bind_prompt(self.agent, prompt)
+        directory = Path(proof["session_dir"])
+        source, evidence = directory / "capture.jsonl", directory / "delivery.json"
+        args = ("probe-report", "--agent", "local", "--pane", "wA:p8", "--report", str(report), "--lines", "40")
+        rows = [json.loads(line) for line in body.splitlines()]
+        mutations: list[tuple[str, int, str, object]] = [
+            ("system-content", 3, "message", {"role": "system", "content": [value]})
+            for value in ("text", 1, None, True, ["text"])]
+        mutations += [("header-content", 0, "message", {"role": "system", "content": ["text"]}),
+                      ("row-type", 1, "type", []),
+                      ("final-block-type", len(rows) - 1, "message", {**rows[-1]["message"], "content": [{"type": ["text"]}]})]
+        cases = []
+        for name, index, key, value in mutations:
+            broken = copy.deepcopy(rows)
+            broken[index][key] = value
+            cases.append((name, "\n".join(json.dumps(row) for row in broken)))
+        cases.append(("deep-nesting", body + '\n{"x":' + '[' * 200000 + ']' * 200000 + '}'))
+        for prior in (False, True):
+            evidence.unlink(missing_ok=True)
+            source.write_text(body)
+            if prior:
+                self.assertTrue(self.call_json(*args)[1]["found"])
+            before = evidence.read_bytes() if prior else None
+            for name, malformed in cases:
+                with self.subTest(case=name, prior=prior, native=malformed[:80]):
+                    source.write_text(malformed)
+                    rc, result, error = self.call_json(*args)
+                    self.assertEqual(rc, 0, error)
+                    self.assertFalse(result["found"])
+                    self.assertEqual(result["reason"], "pi_marker_unconfirmed")
+                    if prior:
+                        self.assertEqual(evidence.read_bytes(), before)
+                    else:
+                        self.assertFalse(evidence.exists())
+
+    def test_delivery_import_refuses_deep_native_nesting(self):
+        proof = self.launch()
+        body, _, _ = self.native()
+        directory = Path(proof["session_dir"])
+        source = directory / "capture.jsonl"
+        source.write_text(body)
+        malformed = body.encode() + b'\n{"x":' + b'[' * 200000 + b']' * 200000 + b'}'
+        for prior in (False, True):
+            with self.subTest(prior=prior):
+                if prior:
+                    self.assertIsNotNone(pi_native.delivery_evidence(directory, source, body.encode()))
+                evidence = directory / "delivery.json"
+                before = evidence.read_bytes() if prior else None
+                self.assertIsNone(pi_native.delivery_evidence(directory, source, malformed))
+                if prior:
+                    self.assertEqual(evidence.read_bytes(), before)
+                else:
+                    self.assertFalse(evidence.exists())
+
     def test_delivery_artifact_refuses_unknown_versions_and_corruption(self):
         proof = self.launch()
         body, prompt, report = self.native()
@@ -705,6 +762,16 @@ class PiTests(unittest.TestCase):
         accepted = REAL_RUN(command, capture_output=True, text=True, env=environment)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
         self.assertTrue(json.loads(accepted.stdout)["found"])
+        evidence = Path(proof["session_dir"]) / "delivery.json"
+        before = evidence.read_bytes()
+        rows = [json.loads(line) for line in body.splitlines()]
+        rows[3]["message"]["content"] = ["text"]
+        source.write_text("\n".join(json.dumps(row) for row in rows))
+        malformed = REAL_RUN(command, capture_output=True, text=True, env=environment)
+        self.assertEqual(malformed.returncode, 4, malformed.stderr)
+        self.assertFalse(json.loads(malformed.stdout)["found"])
+        self.assertEqual(evidence.read_bytes(), before)
+        source.write_text(body)
         mismatched = copy.deepcopy(self.transport.info)
         mismatched["agent"] = "codex"
         responses.write_text(json.dumps({"agent": mismatched, "process_info": self.transport.process}))
