@@ -304,7 +304,7 @@ marker_seen() { # <pane-id> <absolute-report-path>
 }
 
 native_marker_seen() { # <pane> <report> <visible rows>
-  local rc=0 result skill_dir text="$3"
+  local rc=0 result found skill_dir text="$3"
   skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   rc=0
   result="$(printf '%s' "$text" | bash "$skill_dir/teamlead.sh" probe-report "${STATE_ARGS[@]}" "${CONFIG_ARGS[@]}" \
@@ -314,8 +314,18 @@ native_marker_seen() { # <pane> <report> <visible rows>
     warn "native report-source verification failed — restore the named evidence/tool before deciding delivery"
     return 2
   fi
-  if [[ "$(printf '%s' "$result" | jq -r '.found')" == true ]]; then return 0; fi
-  return 1
+  if ! found="$(printf '%s' "$result" | jq -r 'if (.found | type) == "boolean" then .found else error("expected boolean .found") end')"; then
+    warn "native report-source result is unreadable or .found is not boolean — inspect probe-report output and repair the tool before deciding delivery"
+    return 2
+  fi
+  case "$found" in
+    true) return 0 ;;
+    false) return 1 ;;
+    *)
+      warn "native report-source result is not one boolean — inspect probe-report output and repair the tool before deciding delivery"
+      return 2
+      ;;
+  esac
 }
 
 # Does the visible pane show a dialog waiting on a human?

@@ -53,6 +53,27 @@ def validate_proof(proof, tier, root=None):
     return argv == ["pi"] + PI_PROFILE + launch_flags("pi", tier) + ["--session-dir", directory]
 
 
+# Pinned to the pi build whose runtime was captured (tests/fixtures/pi, ADR 0014).
+# Renovate does not track this pin: renew it by hand when a pi release
+# changes the captured CLI, re-capturing tests/fixtures/pi before moving it,
+# and re-check at each coding-policy minor release
+# (rules/dependency-management.md Freshness).
+PI_VERSION = "1.4.0"
+PI_PACKAGE = "@earendil-works/pi-coding-agent"
+
+
+def require_pi(agent):
+    """Report missing or unsupported pi with the operator-run install command."""
+    try:
+        result = subprocess.run(["pi", "--version"], capture_output=True, text=True, timeout=5, check=False)
+    except FileNotFoundError:
+        found = "not installed"
+    else:
+        found = result.stdout.strip() if result.returncode == 0 else "unreadable (pi --version exit {})".format(result.returncode)
+    if found != PI_VERSION:
+        raise HerdrError("Cannot use pi for {!r} (pi_version_unsupported): found {}, need {}. Install it yourself with `npm install -g {}@{}`, then re-run measurement. No unmetered capacity was assigned.".format(agent.name, found, PI_VERSION, PI_PACKAGE, PI_VERSION), {})
+
+
 def local_provider(agent, tier):
     """Resolve model before provider URL, refusing dynamic/auth URL overrides.
 
@@ -62,9 +83,7 @@ def local_provider(agent, tier):
     """
     root = Path(os.environ.get("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent")))
     try:
-        version = subprocess.run(["pi", "--version"], capture_output=True, text=True, timeout=5, check=False)
-        if version.returncode or version.stdout.strip() != "1.4.0":
-            raise ValueError("installed pi profile is not the evidenced 1.4.0")
+        require_pi(agent)
         config = json.loads((root / "models.json").read_text(encoding="utf-8"))
         auth_path = root / "auth.json"
         auth = json.loads(auth_path.read_text(encoding="utf-8")) if auth_path.exists() else {}
@@ -84,7 +103,7 @@ def local_provider(agent, tier):
             raise ValueError("endpoint is not the commissioned loopback URL")
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
         raise HerdrError("Cannot establish local inference for {!r} (pi_local_provider_unproven). Configure its Ollama provider to the documented loopback endpoint, verify the exact model, then re-run measurement. No unmetered capacity was assigned.".format(agent.name), {"reason": str(exc)}) from None
-    return {"endpoint": endpoint, "version": "1.4.0"}
+    return {"endpoint": endpoint, "version": PI_VERSION}
 
 
 def foreground(client, pane):

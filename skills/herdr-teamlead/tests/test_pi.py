@@ -104,10 +104,14 @@ class PiTests(unittest.TestCase):
         self.boundary = patch("subprocess.run", side_effect=self.system).start()
         self.chip, self.memory = "Apple M5 Max", "68719476736"
         self.version = fixture("version.json")["stdout"]
+        self.version_error: OSError | None = None
+        self.version_exit = 0
 
     def system(self, argv, **kwargs):
         if argv == ["pi", "--version"]:
-            return subprocess.CompletedProcess(argv, 0, self.version, "")
+            if self.version_error is not None:
+                raise self.version_error
+            return subprocess.CompletedProcess(argv, self.version_exit, self.version, "")
         return sysctl(self.chip, self.memory)(argv, **kwargs)
 
     def write_models(self):
@@ -455,6 +459,44 @@ class PiTests(unittest.TestCase):
             self.assertFalse(output["found"])
             self.assertEqual(output["reason"], "pi_marker_unconfirmed")
 
+    def assert_pi_install_guidance(self):
+        rc, result, error = self.call_json("measure", "--now", AT)
+        self.assertEqual(rc, 1, error)
+        self.assertEqual(result["failed_agents"], ["local"])
+        row = result["agents"]["local"]
+        self.assertNotEqual(row["budget_mode"], "local_unmetered")
+        message = row["error"]["message"]
+        self.assertIn("pi_version_unsupported", message)
+        self.assertIn("npm install -g @earendil-works/pi-coding-agent@1.4.0", message)
+        self.assertNotIn("Ollama", message)
+        return message
+
+    def test_missing_pi_reports_install_guidance(self):
+        self.launch()
+        self.version_error = FileNotFoundError("pi executable missing")
+        self.assertIn("not installed", self.assert_pi_install_guidance())
+
+    def test_wrong_pi_version_reports_install_guidance(self):
+        self.launch()
+        self.version = "1.5.0\n"
+        self.assertIn("found 1.5.0", self.assert_pi_install_guidance())
+
+    def test_unreadable_pi_version_reports_install_guidance(self):
+        self.launch()
+        self.version_exit = 2
+        self.assertIn("unreadable (pi --version exit 2)", self.assert_pi_install_guidance())
+
+    def test_missing_models_keeps_provider_guidance(self):
+        self.launch()
+        (self.provider / "models.json").unlink()
+        rc, result, error = self.call_json("measure", "--now", AT)
+        self.assertEqual(rc, 1, error)
+        self.assertEqual(result["failed_agents"], ["local"])
+        message = result["agents"]["local"]["error"]["message"]
+        self.assertIn("pi_local_provider_unproven", message)
+        self.assertIn("Ollama", message)
+        self.assertNotIn("npm install", message)
+
     def test_endpoint_and_permission_profile_fail_closed(self):
         self.launch()
         self.version = "0.99.2\n"
@@ -762,6 +804,31 @@ class PiTests(unittest.TestCase):
         accepted = REAL_RUN(command, capture_output=True, text=True, env=environment)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
         self.assertTrue(json.loads(accepted.stdout)["found"])
+        # Override only the interpreter process boundary; real Herdr replies
+        # above and the wait entry point still select native verification.
+        probe_reply = self.root / "probe-reply.txt"
+        interpreter = self.root / "probe-python"
+        interpreter.write_text("#!" + sys.executable + "\n" +
+            "import os,sys\nfrom pathlib import Path\n" +
+            "if sys.argv[1:3]==['-m','teamlead'] and 'probe-report' in sys.argv:\n" +
+            " print(Path(" + repr(str(probe_reply)) + ").read_text()); raise SystemExit(0)\n" +
+            "os.execv(" + repr(sys.executable) + ", [" + repr(sys.executable) + "] + sys.argv[1:])\n")
+        interpreter.chmod(0o755)
+        probe_environment = {**environment, "PY_BIN": str(interpreter)}
+        for reply in ('not json', '{"found":"yes"}', '{"found":"true"}', '{"found":null}', '{"found":1}',
+                      '{"found":true}\nnot json', '{"found":true}\n{"found":false}'):
+            probe_reply.write_text(reply)
+            with self.subTest(probe_reply=reply):
+                invalid = REAL_RUN(command, capture_output=True, text=True, env=probe_environment)
+                self.assertEqual(invalid.returncode, 2, invalid.stderr)
+                self.assertEqual(invalid.stdout, "")
+                self.assertIn("native report-source result", invalid.stderr)
+        for found, expected in ((True, 0), (False, 4)):
+            probe_reply.write_text(json.dumps({"found": found}))
+            with self.subTest(found=found):
+                valid = REAL_RUN(command, capture_output=True, text=True, env=probe_environment)
+                self.assertEqual(valid.returncode, expected, valid.stderr)
+                self.assertEqual(json.loads(valid.stdout)["found"], found)
         evidence = Path(proof["session_dir"]) / "delivery.json"
         before = evidence.read_bytes()
         rows = [json.loads(line) for line in body.splitlines()]
