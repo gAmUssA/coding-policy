@@ -20,60 +20,13 @@ import unittest
 from teamlead.errors import ParseError
 from teamlead.herdr import HerdrClient
 from teamlead.parsers import headroom_pct, parse_claude_usage, parse_usage
+from tests.claude_usage_fixtures import (
+    LIVE_INLINE,
+    OLD_STACKED_WITH_PROMO as OLD_STACKED,
+    WRAPPED_AFTER_RESETS_WORD,
+)
 
 from tests.test_measure import BY_NAME, measure_agent, runner_with
-
-# The captured newer `/usage` pane: reset inline after U+00B7, bar on its own
-# row, `N% used` after the bar, weekly timezones wrapped onto the next line.
-LIVE_INLINE = """\
-   Current session · Resets 5pm (America/New_York)
-   ██▋
-
-   5% used
-
-   Current week (all models) · Resets Nov 2 at 10am
-   (America/New_York)
-   ████████████████████▋
-
-   39% used
-
-   Current week (Fable) · Resets Nov 2 at 10am
-   (America/New_York)
-   ███████████████████
-
-   36% used
-"""
-
-# The older stacked layout: header alone, then `N% used`, then `Resets`.
-OLD_STACKED = """\
-   Settings  Status   Config   Usage   Stats
-   Current session
-   ████                                               8% used
-   Resets 12:49am (Europe/Oslo)
-   Current week (all models)
-   █                                                  2% used
-   Resets Sep 5 at 11:59pm (Europe/Oslo)
-   +50% weekly limits promo through Sep 13 · clau.de/cc-50-promo
-   Current week (Fable)
-   ██████████████████████████████████████████████   100% used
-   Resets Sep 5 at 11:59pm (Europe/Oslo)
-"""
-
-# The live dialog word-wrapped at 35 columns. The weekly header breaks after
-# `Resets`, so the reset text starts the next line.
-WRAPPED_AFTER_RESETS_WORD = """\
-   Current session · Resets 5pm
-   (America/New_York)
-   ██▋
-
-   5% used
-
-   Current week (all models) · Resets
-   Nov 2 at 10am (America/New_York)
-   ████████████████████▋
-
-   39% used
-"""
 
 
 class LiveLayoutTest(unittest.TestCase):

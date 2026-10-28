@@ -25,6 +25,7 @@ from teamlead.parsers import (
     parse_grok_usage,
     parse_usage,
 )
+from tests.claude_usage_fixtures import LIVE_INLINE as CLAUDE_INLINE_RESETS
 
 CLAUDE_SAMPLE = """\
    Settings  Status   Config   Usage   Stats
@@ -54,28 +55,6 @@ CLAUDE_FABLE_EXHAUSTED = """\
    Current week (Fable)
    ██████████████████████████████████████████████   100% used
    Resets Oct 20 at 9am (Europe/Oslo)
-"""
-
-# Verbatim `/usage` pane, lines as captured: the reset rides on the header
-# after a middle dot, the bar is its own row, and `N% used` follows. Weekly
-# timezones that do not fit wrap onto the next line.
-CLAUDE_INLINE_RESETS = """\
-   Current session · Resets 5pm (America/New_York)
-   ██▋
-
-   5% used
-
-   Current week (all models) · Resets Nov 2 at 10am
-   (America/New_York)
-   ████████████████████▋
-
-   39% used
-
-   Current week (Fable) · Resets Nov 2 at 10am
-   (America/New_York)
-   ███████████████████
-
-   36% used
 """
 
 # Narrow-pane wrap: the header ends at the separator and `Resets` starts
@@ -179,9 +158,9 @@ class ClaudeParserTest(unittest.TestCase):
         self.assertIsNone(windows["Current session"]["resets"])
         self.assertIsNone(windows["Current week (all models)"]["resets"])
 
-    def test_header_without_a_percentage_is_dropped(self):
-        # The name records the old contract. A header that closes with no
-        # percentage is a pane that cut the dialog, so the read fails.
+    def test_header_without_a_percentage_is_rejected(self):
+        # A header that closes with no percentage is a pane that cut the
+        # dialog, so the read fails instead of dropping that window.
         text = "Current session\nCurrent week (all models)\n  █ 2% used\n"
         with self.assertRaises(ParseError) as caught:
             parse_claude_usage(text)
