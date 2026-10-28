@@ -92,7 +92,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 
 ## Development
 
-Python tooling requires Python 3.11+ and `uv`. The Python suites use the standard library; no dependency lock file is needed for these commands.
+Python tooling requires Python 3.11+ and `uv`. `scripts/run-tests.sh` also runs each Python suite through that `uv run` form, and the tests and publish workflows install a pinned `uv` and run the command below. The Python suites use the standard library; no dependency lock file is needed for these commands.
 
 ```
 bash scripts/run-diagnostics.sh   # shellcheck + pyright at zero findings
@@ -106,8 +106,7 @@ The direct-Python exception covers `hooks/hooks.json` invoking `hooks/codex-sess
 
 Remaining entry-point migration, under `rules/dependency-management.md` Python Execution:
 
-- `.github/workflows/tests.yml` and `.github/workflows/publish.yml` run `bash scripts/run-tests.sh` without installing `uv`; migrate them first, in a CI-scoped PR that installs a pinned `uv` and runs the documented `uv run` command
-- `skills/herdr-teamlead/teamlead.sh` and `skills/herdr-teamlead/prune-worktrees.sh` launch `python3` directly; migrate them after the workflow migration lands
+- `skills/herdr-teamlead/teamlead.sh` and `skills/herdr-teamlead/prune-worktrees.sh` launch `python3` directly
 
 Every PR that changes shipped content adds a changelog fragment, `changelog.d/<name>.md`, carrying its semver `bump` and its CHANGELOG entry (format: [changelog.d/README.md](changelog.d/README.md)). A PR never edits a manifest `version` or adds a `## <version>` heading; `scripts/check-changelog-fragment.sh` enforces both in CI:
 

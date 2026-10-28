@@ -1,0 +1,71 @@
+name: PR Code Review (Claude, subscription)
+
+# Reviews every same-repo pull request for code quality and bugs with the
+# Claude CLI authenticated by a Claude subscription (no API key). This is the
+# claude-quality review lane (docs/adr/0010-review-lanes.md): advisory during
+# its trial, so it always posts a COMMENT whose body opens with the lane
+# marker. .github/claude-review/review.py owns the posting contract.
+#
+# Security posture matches review-codex.yml: same-repo PRs require write
+# access, forks are excluded and get no secret. The model runs with read-only
+# source tools, no GitHub credential, no settings, hooks or MCP servers, in a
+# throwaway clone. check-isolation.py proves that against the pinned CLI
+# before the subscription token is used, and review.py refuses to post output
+# carrying credential material.
+#
+# One-time operator setup (needs a browser login, cannot be automated):
+#   1. On a trusted machine run `claude setup-token` and copy the token.
+#   2. Store it as the repo secret CLAUDE_CODE_OAUTH_TOKEN (re-run whenever
+#      the review fails on rejected authentication):
+#        gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo github.com/<owner>/<repo>
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork PRs cannot read secrets, so the review only runs for same-repo PRs.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Python entry points run through uv (rules/dependency-management.md
+      # Python Execution); the scripts are standard-library only.
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.1"
+
+      # renovate: datasource=npm depName=@anthropic-ai/claude-code
+      - name: Install Claude CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.311
+
+      - name: Verify real CLI context isolation
+        run: uv run --no-project --no-python-downloads --python '>=3.11' .github/claude-review/check-isolation.py
+
+      - name: Review code quality and bugs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REVIEW_OWNER: ${{ github.repository_owner }}
+          REVIEW_REPO: ${{ github.event.repository.name }}
+          REVIEW_PR: ${{ github.event.pull_request.number }}
+          REVIEW_BASE: ${{ github.event.pull_request.base.ref }}
+        run: uv run --no-project --no-python-downloads --python '>=3.11' .github/claude-review/review.py "$REVIEW_OWNER" "$REVIEW_REPO" "$REVIEW_PR" "$REVIEW_BASE"

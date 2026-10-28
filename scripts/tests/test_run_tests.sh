@@ -55,12 +55,34 @@ add_sh_body() {
 # entry-point guard rules/file-hygiene.md requires. Discovery matched
 # `test_*.sh` only, so every Python suite in the repo was orphaned —
 # present, passing when run by hand, never executed by CI.
+# A Python suite exiting 0 is a real one-test unittest module, since the
+# runner requires unittest's "Ran <N> tests" line; any other exit code is a
+# bare sys.exit.
 add_py_suite() {
   local base="$1" name="$2" exit_code="$3"
   local dir="$base/skills/$name/tests"
   mkdir -p "$dir"
-  printf 'import sys\nif __name__ == "__main__":\n    sys.exit(%s)\n' \
-    "$exit_code" > "$dir/test_$name.py"
+  if [[ "$exit_code" == 0 ]]; then
+    printf 'import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\nif __name__ == "__main__":\n    unittest.main()\n' \
+      > "$dir/test_$name.py"
+  else
+    printf 'import sys\nif __name__ == "__main__":\n    sys.exit(%s)\n' \
+      "$exit_code" > "$dir/test_$name.py"
+  fi
+}
+
+# Writes a Python suite that exits 0: with no tests at all, or without
+# running unittest.
+add_py_vacuous_suite() {
+  local base="$1" name="$2" kind="$3"
+  local dir="$base/skills/$name/tests"
+  mkdir -p "$dir"
+  if [[ "$kind" == empty ]]; then
+    printf 'import sys, unittest\nif __name__ == "__main__":\n    result = unittest.main(exit=False).result\n    sys.exit(0)\n' \
+      > "$dir/test_$name.py"
+  else
+    printf 'print("no unittest here")\n' > "$dir/test_$name.py"
+  fi
 }
 
 # Runs the runner; sets OUT (stdout), ERR (stderr), CODE (exit).
@@ -255,15 +277,15 @@ fi
 rm -rf "$base"
 
 # --- a missing interpreter is a SETUP error (2), not a test failure (1) ---
-# Dispatching to an absent python3 gives the suite exit 127. Counting that
+# Dispatching to an absent uv gives the suite exit 127. Counting that
 # as a failing suite reports red tests for a runner that never ran them,
 # sending whoever reads CI to debug a test that never executed.
 base="$(make_base)"; add_py_suite "$base" pyalpha 0
 errf="$(mktemp)"
-# Override PY_BIN rather than emptying PATH — the harness needs bash, find,
+# Override UV_BIN rather than emptying PATH — the harness needs bash, find,
 # and mktemp on PATH to run at all, so nuking it tests the shebang, not the
 # dispatcher.
-OUT="$(PY_BIN=definitely-not-a-real-python3 "$RUNNER" "$base" 2>"$errf")"; CODE=$?
+OUT="$(UV_BIN=definitely-not-a-real-uv "$RUNNER" "$base" 2>"$errf")"; CODE=$?
 ERR="$(cat "$errf")"; rm -f "$errf"
 if [[ "$CODE" == 2 ]] \
   && [[ "$(jq -r .suites <<<"$OUT")" == 0 ]] \
@@ -276,6 +298,22 @@ rm -rf "$base"
 
 # Fixture bodies are single-quoted: `$TEST_SUMMARY_TOKEN` expands inside the
 # fixture, to the token the runner exported for that suite.
+
+# --- a Python suite that exits 0 having run zero tests fails the run ---
+# Python 3.11's unittest exits 0 on zero tests, so the exit code alone
+# would accept a vacuous suite.
+for kind in empty no-unittest; do
+  base="$(make_base)"; add_py_vacuous_suite "$base" pyvacuous "$kind"; add_py_suite "$base" pyreal 0
+  invoke "$base"
+  if [[ "$CODE" == 1 ]] \
+    && [[ "$(jq -r .passed <<<"$OUT")" == 1 ]] \
+    && jq -e '.failures | length == 1 and any(test("test_pyvacuous.py$"))' <<<"$OUT" >/dev/null; then
+    pass "vacuous Python suite ($kind) -> counted as a failure; a real one passes"
+  else
+    fail "vacuous Python suite ($kind): code=$CODE out=$OUT err=$ERR"
+  fi
+  rm -rf "$base"
+done
 
 # --- a shell suite that exits 0 having run zero cases fails the run (#26) ---
 # Each harness counts its own failures and exits on that count alone, so a

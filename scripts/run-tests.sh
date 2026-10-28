@@ -9,7 +9,7 @@
 # failing suite blocks the merge and the release.
 #
 # Discovers <base>/**/tests/test_*.sh and <base>/**/tests/test_*.py, and
-# runs each in its own process (`bash file` / `python3 file`) so one suite's
+# runs each in its own process (`bash file` / `uv run ... file`) so one suite's
 # `set`/`cd`/traps/interpreter state can't leak into the next. Discovery
 # covers BOTH languages deliberately: a `.sh`-only
 # glob silently orphaned every Python suite in the repo — they looked
@@ -29,8 +29,9 @@
 # saves it and unsets it before running anything, so a harness it runs prints
 # an empty token and a nested runner hands out tokens of its own. Neither
 # kind of nested summary can stand in for the suite's own (#31), wherever it
-# sits in the output. A Python suite needs no line: unittest
-# exits non-zero on "NO TESTS RAN".
+# sits in the output. A Python suite needs no line of its own: a unittest
+# suite exiting 0 passes only when unittest's final "Ran <N> test(s)" line
+# reports N > 0 (Python 3.11 exits 0 on zero tests).
 #
 # Output contract (rules/script-delegation.md — structured stdout):
 #   stdout: one JSON object, the run summary —
@@ -53,12 +54,18 @@ set -euo pipefail
 # `rules/file-hygiene.md` requires — so the runner only picks the
 # interpreter and reads the exit code.
 #
-# Interpreters are overridable so a runner with a differently-named binary
-# (python3.11, a venv shim) can point at it without editing this file, and
-# so the missing-interpreter path is testable without breaking PATH for the
-# harness itself.
+# Python suites run through uv (rules/dependency-management.md Python
+# Execution): `uv run --no-project --no-python-downloads --python
+# "$PY_REQUIRES"` selects an existing interpreter meeting the stated
+# requirement and never downloads one. A missing uv is a setup error, never
+# a fallback to ambient python3.
+#
+# Binaries are overridable so a runner with a differently-named binary can
+# point at it without editing this file, and so the missing-interpreter path
+# is testable without breaking PATH for the harness itself.
 SH_BIN="${SH_BIN:-bash}"
-PY_BIN="${PY_BIN:-python3}"
+UV_BIN="${UV_BIN:-uv}"
+PY_REQUIRES=">=3.11"
 
 # A dispatcher fault must be distinguishable from a suite's own exit code.
 # No exit code can do that job: 2 collides with the harnesses here (they
@@ -76,7 +83,7 @@ run_suite() {
   local suite="$1" interp
   case "$suite" in
     *.sh) interp="$SH_BIN" ;;
-    *.py) interp="$PY_BIN" ;;
+    *.py) interp="$UV_BIN" ;;
     *)
       DISPATCH_FAULT_SUITE="$suite"
       echo "run-tests: no interpreter for suite type: $suite" >&2
@@ -84,7 +91,7 @@ run_suite() {
       ;;
   esac
   # Check the interpreter exists before dispatching. Without this, a runner
-  # lacking python3 gives the suite exit 127, which the caller counts as a
+  # lacking uv gives the suite exit 127, which the caller counts as a
   # FAILING TEST rather than the setup error (rc 2) this contract promises —
   # reporting a red suite where the truth is an unprovisioned runner, and
   # sending whoever reads CI to debug a test that never ran.
@@ -93,7 +100,12 @@ run_suite() {
     echo "run-tests: '${interp}' not found on PATH — cannot run ${suite}; install it on this runner (this is a setup error, not a test failure)" >&2
     return 1
   fi
-  "$interp" "$suite"
+  # No argument array: an empty "${arr[@]}" is an unbound-variable error
+  # under `set -u` on bash 3.2 (stock macOS).
+  case "$suite" in
+    *.py) "$interp" run --no-project --no-python-downloads --python "$PY_REQUIRES" "$suite" ;;
+    *) "$interp" "$suite" ;;
+  esac
 }
 
 # Judge a shell suite that exited 0 by the summary line carrying its token
@@ -117,6 +129,29 @@ summary_verdict() {
   fi
   if (( passed == 0 )); then
     echo "exited 0 but ran zero cases"
+    return 1
+  fi
+}
+
+# Judge a Python suite that exited 0 by unittest's own final
+# "Ran <N> test(s) in ..." line. Prints the reason on stdout when the suite
+# fails the contract; prints nothing when it passes. Returns 1 on a contract
+# failure. The LAST such line is unittest's own: a nested run's output
+# printed earlier never stands in for it.
+RAN_RE='^Ran ([0-9]+) tests? in '
+python_verdict() {
+  local output="$1" line ran=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ $RAN_RE ]]; then
+      ran="${BASH_REMATCH[1]}"
+    fi
+  done < "$output"
+  if [[ -z "$ran" ]]; then
+    echo "exited 0 without unittest's 'Ran <N> tests' line — end the suite with 'unittest.main()' under its entry-point guard"
+    return 1
+  fi
+  if (( ran == 0 )); then
+    echo "exited 0 but ran zero tests"
     return 1
   fi
 }
@@ -237,6 +272,9 @@ main() {
       break
     fi
     if [[ $suite_rc -eq 0 && "$s" == *.sh ]] && ! reason="$(summary_verdict "$suite_out" "$token")"; then
+      echo "  ✗ $s — $reason" >&2
+      failed+=("$s")
+    elif [[ $suite_rc -eq 0 && "$s" == *.py ]] && ! reason="$(python_verdict "$suite_out")"; then
       echo "  ✗ $s — $reason" >&2
       failed+=("$s")
     elif [[ $suite_rc -eq 0 ]]; then

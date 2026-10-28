@@ -3,7 +3,8 @@
     "scripts",
     "skills",
     "hooks",
-    "evals"
+    "evals",
+    ".github/claude-review"
   ],
   "exclude": [
     "**/node_modules",

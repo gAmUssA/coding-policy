@@ -65,8 +65,14 @@ jobs:
       - name: Run language diagnostics
         run: bash scripts/run-diagnostics.sh
 
+      # Python suites run through uv (scripts/run-tests.sh).
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.1"
+
       - name: Run unit tests
-        run: bash scripts/run-tests.sh
+        run: uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 
       - name: Assemble pending changelog fragments
         id: assemble
