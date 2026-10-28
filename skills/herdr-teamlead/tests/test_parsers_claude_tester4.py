@@ -237,8 +237,10 @@ class ArrowPositionTest(NoSilentDropCase):
         self.assert_three_windows(pane(rows))
 
     def test_down_arrow_after_a_credit_section_parses(self):
+        # The parser cannot tell this pane from 'credit between windows
+        # with the next window off-screen'.
         rows = SESSION + ALL_MODELS + FABLE + CREDIT + [paint("", DOWN)]
-        self.assert_three_windows(pane(rows))
+        self.assert_parses_or_rejects(pane(rows))
 
     def test_up_arrow_before_complete_windows_parses_or_rejects(self):
         # Rejecting is allowed: the parser cannot know which row scrolled off.

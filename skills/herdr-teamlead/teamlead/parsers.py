@@ -426,9 +426,9 @@ def _scroll_cut(up, down, label) -> NoReturn:
     if up and down:
         reason = (
             "a scroll-up indicator before the first rate-limit window and "
-            "a scroll-down indicator after {!r}, with no other section "
-            "between that window and the down indicator, so a rate-limit "
-            "window may be off-screen".format(label)
+            "a scroll-down indicator after {!r}. The rate-limit list is "
+            'only proven complete by the "What\'s contributing" section, '
+            "so a rate-limit window may be off-screen".format(label)
         )
     elif up:
         reason = (
@@ -437,9 +437,9 @@ def _scroll_cut(up, down, label) -> NoReturn:
         )
     else:
         reason = (
-            "a scroll-down indicator after {!r}, with no other section "
-            "before that indicator, so a rate-limit window may be below "
-            "the viewport".format(label)
+            "a scroll-down indicator after {!r}. The rate-limit list is "
+            'only proven complete by the "What\'s contributing" section, '
+            "so a rate-limit window may be below the viewport".format(label)
         )
     _claude_error(
         "The pane shows {}, and this read is rejected instead of dropping "
@@ -464,9 +464,11 @@ def _up_arrow_before_first(sections):
 def _down_arrow_after_last(sections, trailing_down):
     """True when a down arrow sits on or after the last rate-limit section.
 
-    A non-window section between that window and a later arrow means the
-    rest of the dialog is prose. An arrow on the window's own rows does
-    not: the rows below may be prose or another window.
+    The section titled "What's contributing to your limits usage?" is the
+    only proof the rate-limit list has ended. A title that starts with
+    "What's contributing" ends the walk, so a narrow pane that wraps the
+    title still counts. A down arrow on or after any earlier section fails
+    the read: a promo row or a credit section can sit between windows.
     """
     last = None
     for index, section in enumerate(sections):
@@ -476,10 +478,12 @@ def _down_arrow_after_last(sections, trailing_down):
         return False
     if sections[last].down_on:
         return True
-    tail = sections[last + 1 :]
-    if not tail:
-        return trailing_down
-    return tail[0].down_before
+    for section in sections[last + 1 :]:
+        if section.title.startswith("What's contributing"):
+            return False
+        if section.down_before or section.down_on:
+            return True
+    return trailing_down
 
 
 def parse_claude_usage(text):
@@ -505,10 +509,11 @@ def parse_claude_usage(text):
     that window.
 
     An up arrow on or before the first rate-limit section, or a down arrow
-    on the last one's own rows or after it with no other section in
-    between, means another window may be off-screen. The read fails and
-    names a taller pane. A down arrow that follows a non-window section,
-    as in the full dialog, does not.
+    on the last one's own rows, means another window may be off-screen.
+    The section titled "What's contributing to your limits usage?" ends
+    the rate-limit list. A down arrow on or after any other section fails
+    the read. The read fails and names a taller pane. A down arrow on or
+    after that contributing section, as in the full dialog, does not.
     """
     sections, orphan_used, trailing_down = _claude_sections(_normalise_claude_pane(text))
     windows = {}
