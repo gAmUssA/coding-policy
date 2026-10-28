@@ -10,7 +10,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from teamlead.errors import ConfigError, HerdrError, UsageError
-from teamlead.tiers import TOP_MODELS, MissingTierError, launch_flags, mechanical_allowed, parse_tiers, parse_top_models, select_tier as _select_tier, top_models_for, verify_argv, verify_worker_permissions, worker_launch_args
+from teamlead.tiers import TOP_MODELS, MissingTierError, launch_flags, mechanical_allowed, parse_tiers, parse_top_models, require_role, select_tier as _select_tier, top_models_for, verify_argv, verify_worker_permissions, worker_launch_args
 
 
 def select_tier(*args, **kwargs):
@@ -41,6 +41,33 @@ SESSION = "00000000-0000-0000-0000-000000000000"
 OTHER_SESSION = "11111111-1111-4111-8111-111111111111"
 YOLO = {"claude": "--dangerously-skip-permissions", "codex": "--dangerously-bypass-approvals-and-sandbox",
         "grok": "--always-approve"}
+
+
+class RoleEligibilityTest(unittest.TestCase):
+    def test_metered_refusal_names_declaration_and_remediation(self):
+        worker = agent()
+        for allowed in (("reviewer",), ()):
+            with self.subTest(allowed=allowed):
+                worker.allowed_roles = allowed
+                with self.assertRaises(UsageError) as caught:
+                    require_role(worker, "developer")
+                message = str(caught.exception)
+                for fragment in ("claude", "developer", "allowed_roles", repr(list(allowed)),
+                                 "Replan with an eligible worker", "edit allowed_roles in config.json"):
+                    self.assertIn(fragment, message)
+                self.assertNotIn("Use pi", message)
+        for allowed in (("developer",), None):
+            worker.allowed_roles = allowed
+            require_role(worker, "developer")
+
+    def test_pi_keeps_its_own_refusal_and_accepts_developer(self):
+        worker = SimpleNamespace(name="local", kind="pi", allowed_roles=("developer",),
+                                 capabilities={"repo-read", "command-run"})
+        require_role(worker, "developer")
+        with self.assertRaises(UsageError) as caught:
+            require_role(worker, "reviewer")
+        self.assertIn("Use pi only as developer", str(caught.exception))
+        self.assertIn("Changing allowed_roles cannot enable other pi roles", str(caught.exception))
 
 
 class TierConfigTest(unittest.TestCase):
@@ -279,10 +306,16 @@ class SelectionTest(unittest.TestCase):
     def test_the_shipped_example_is_the_cheapest_documented_template(self):
         example = json.loads((Path(__file__).resolve().parents[1] / "config.example.json").read_text())
         tiered = [worker for worker in example["agents"] if worker.get("tiers")]
-        self.assertEqual(sorted(worker["kind"] for worker in tiered), ["claude", "codex", "grok"])
+        self.assertEqual(sorted(worker["kind"] for worker in tiered), ["claude", "codex", "grok", "pi"])
         for worker in tiered:
             tiers = parse_tiers(worker["tiers"], worker["kind"])
-            probe = SimpleNamespace(name=worker["kind"], kind=worker["kind"], tiers=tiers)
+            probe = SimpleNamespace(name=worker["kind"], kind=worker["kind"], tiers=tiers,
+                                    allowed_roles=worker.get("allowed_roles"), capabilities=worker.get("capabilities", []))
+            if worker["kind"] == "pi":
+                self.assertEqual(select_tier(probe, "developer", "build")["effort"], "off")
+                self.assertEqual(select_tier(probe, "developer", fix_round=1)["round"], "fix")
+                self.assertEqual(set(tiers), {"build", "fix"})
+                continue
             with self.subTest(kind=worker["kind"]):
                 self.assertEqual(tiers["hostile_verify"]["effort"], "high")
                 self.assertEqual(select_tier(probe, "tester")["effort"], "high")

@@ -267,7 +267,7 @@ def command_still_present(pane_text, agent, command):
 
 def checkable(agent):
     """True when this agent's composer can be inspected at all."""
-    return bool(agent.composer_glyph and agent.composer_glyph.strip())
+    return agent.kind == "pi" or bool(agent.composer_glyph and agent.composer_glyph.strip())
 
 
 def read_pane(client, agent, warn=None):
@@ -352,6 +352,13 @@ def is_placeholder(text, agent):
 
 def inspect_composer(pane_text, agent, ansi=True):
     """Classify the composer row. Pure: no herdr, no keys, no decisions."""
+    if agent.kind == "pi":
+        rows = strip_ansi(pane_text).splitlines()
+        borders = [index for index, row in enumerate(rows) if re.fullmatch(r"─{8,}", row)]
+        if len(borders) < 2:
+            return Composer(False, "", False, False, ansi, None)
+        literal = "\n".join(rows[borders[-2] + 1:borders[-1]]).strip()
+        return Composer(True, literal, False, False, ansi, literal)
     literal = composer_text(pane_text, agent.composer_glyph, ignore_dim=False)
     if literal is None:
         return Composer(False, "", False, False, ansi, None)

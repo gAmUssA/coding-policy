@@ -69,9 +69,34 @@ from .parsers import headroom_pct
 #: the start and the dispatch read the lead's decision rather than retaking it
 #: (#425). Additive: a version-5 plan simply carries no mode, and its readers
 #: refuse the start rather than defaulting one.
-#: A plan is a round's instruction, not stored state -- it is produced and
-#: consumed inside one round and never migrated (rules/stateful-artifacts.md).
-PLAN_SCHEMA_VERSION = 6
+#: Saved plans are owned by teamlead; its CLI migrates file-backed plans on
+#: read and refuses future versions. See skills/herdr-teamlead/state-schema.md.
+PLAN_SCHEMA_VERSION = 7
+
+
+def upgrade_plan(payload):
+    """Validate a saved plan and return (current document, migrated).
+
+    Versions 1-6 used the same assignment map. Optional metadata stays absent
+    when it was never recorded (notably judge.mode); migration invents no
+    dispatch authorization. Version 7 adds the ineligible-agent map.
+    """
+    if not isinstance(payload, dict) or "assignments" not in payload and "schema_version" not in payload:
+        return payload, False  # Legacy, ad-hoc role -> agent instruction.
+    version = payload.get("schema_version", 1)
+    if type(version) is not int or not 1 <= version <= PLAN_SCHEMA_VERSION:
+        raise PlanError("No usable saved plan at schema_version {!r}; re-run teamlead plan with a compatible owner. The file is unchanged.".format(version), {})
+    if not isinstance(payload.get("assignments"), dict) or not payload["assignments"]:
+        raise PlanError("Saved plan assignments must be a non-empty object; re-run teamlead plan. The file is unchanged.", {})
+    if version < 7 and "ineligible_agents" in payload:
+        raise PlanError("Older plan contains version-7 ineligible_agents; restore the original plan or re-plan. The file is unchanged.", {})
+    result = dict(payload)
+    if version < 7:
+        result.update(schema_version=PLAN_SCHEMA_VERSION, ineligible_agents={})
+    skipped = result.get("ineligible_agents")
+    if not isinstance(skipped, dict) or any(not isinstance(value, dict) or any(not isinstance(value.get(key), str) or not value[key] for key in ("reason", "message")) for value in skipped.values()):
+        raise PlanError("Saved plan ineligible_agents must map names to reason/message objects; re-run teamlead plan. The file is unchanged.", {})
+    return result, version != PLAN_SCHEMA_VERSION or "schema_version" not in payload
 
 #: What one round in each seat is expected to burn, in points of the agent's
 #: remaining headroom percentage. The ORDER is what the planner acts on:
@@ -474,7 +499,32 @@ def _refuse_unaffordable_judge(judge_agent, headrooms, cost, groups, offsets=Non
         )
 
 
-def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None):
+def _empty_field_message(role, agents, judge_agent, operator_excluded, role_refusals, tier_candidates=None):
+    """Compose independent bars within the workers that can own this seat."""
+    domain = set(agents) & {judge_agent} if role == "judge" else set(agents) - {judge_agent}
+    operator_names = sorted(set(operator_excluded.get(role, [])) & domain)
+    refusals = {name: message for name, message in sorted((role_refusals or {}).get(role, {}).items())
+                if name in domain}
+    clauses = [("No agent is eligible for role {!r}." if tier_candidates is None
+                else "No tier is eligible for {!r}.").format(role)]
+    if operator_names:
+        clauses.append("--exclude bars {}. Drop an exclusion if appropriate.".format(
+            ", ".join(operator_names)))
+    clauses.extend(refusals.values())
+    if role == "judge":
+        clauses.append("Role 'judge' is pinned to worker {!r}; check that worker's judge configuration and eligibility.".format(judge_agent))
+    else:
+        if tier_candidates is not None and any(
+                name not in operator_names and name not in refusals
+                and name not in tier_candidates.get(role, {}) for name in domain):
+            # Candidate absence also covers a refused local round; do not
+            # claim it proves a missing row, or suggest unlocking pi's roles.
+            clauses.append("Configure a tier row for this round on an eligible worker, or select an eligible metered worker for the round.")
+        clauses.append("Measure another eligible worker.")
+    return " ".join(clauses), refusals
+
+
+def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_ref=None, warn=None, judge_agent=None, judge_tier=None, judge_mode=None, tier_candidates=None, rounds=None, familiarity=None, requirements=None, selection_rationale=None, roster=None, operator_exclude=None, same_family=None, local_agents=None, ineligible_agents=None, role_refusals=None):
     """Assign `roles` to the agents in `snapshot`, heaviest seat first.
 
     `counts` is `{role: {agent: times_held}}` from the state ledger; omit it
@@ -498,6 +548,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
     generated bars into `exclude`; omit it when `exclude` carries only what
     the operator asked for. `same_family` is the model-family tie-break from
     `composition.selection_constraints`; omit it to rank without one.
+    `role_refusals` maps each role to worker refusal messages from
+    `require_role`, preserving the reason for those generated exclusions.
 
     Raises PlanError when there are no roles, no agents, fewer agents than
     roles, an exclusion naming a role nobody is assigning, or a role whose
@@ -579,11 +631,8 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
 
     # Only the names the operator typed: a generated bar naming a measured
     # agent would otherwise vouch for an exclusion list that matched nobody.
-    _refuse_inert_exclusions(
-        excluded if operator_exclude is None
-        else _normalize_exclusions(operator_exclude, roles),
-        agents,
-    )
+    operator_excluded = _normalize_exclusions(exclude if operator_exclude is None else operator_exclude, roles)
+    _refuse_inert_exclusions(operator_excluded, agents)
     _refuse_degenerate_field(roles, agents, judge_agent, roster)
 
     # Expressed as exclusions so eligibility, fillability and the rationale all
@@ -606,6 +655,9 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 excluded[role] = sorted(set(excluded[role]) | {judge_agent})
     for role in roles:
         if all(name in excluded[role] for name in agents):
+            if ineligible_agents:
+                reasons = ", ".join("{!r} is {}".format(name, value["reason"]) for name, value in sorted(ineligible_agents.items()))
+                raise PlanError("Cannot fill role {!r}: {} and no other worker meets the declared requirements. Measure another eligible worker or assign fewer simultaneous roles; preserve capability and independence requirements.".format(role, reasons), {"role": role, "ineligible_agents": ineligible_agents})
             if selection_rationale:
                 raise PlanError(
                     "No agent is eligible for role {!r}. Measure another eligible worker or correct verified capability declarations; preserve independence requirements. {}".format(
@@ -613,14 +665,20 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                     {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
                      "eligibility": list(selection_rationale)},
                 )
+            message, refusals = _empty_field_message(
+                role, agents, judge_agent, operator_excluded, role_refusals)
             raise PlanError(
-                "No agent is eligible for role {!r} - --exclude bars {}, and "
-                "those are every agent in the snapshot ({}). Drop an exclusion, "
-                "or measure another agent.".format(
-                    role, ", ".join(excluded[role]), ", ".join(sorted(agents))
-                ),
-                {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents)},
+                message,
+                {"role": role, "excluded": list(excluded[role]), "agents": sorted(agents),
+                 "role_refusals": refusals},
             )
+    local_agents = {name for name in (local_agents or []) if snapshot.get("schema_version") == 5 and isinstance(agents.get(name), dict)
+        and agents[name].get("kind") == "pi" and agents[name].get("budget_mode") == "local_unmetered"
+        and not agents[name].get("skipped") and not agents[name].get("error")
+        and agents[name].get("state") in {"idle", "done"} and isinstance(agents[name].get("host_eligibility"), dict) and agents[name]["host_eligibility"].get("eligible") is True}
+    for role in roles:
+        excluded[role] = sorted(set(excluded[role]) | {name for name, record in agents.items()
+            if isinstance(record, dict) and (record.get("kind") == "pi" or record.get("budget_mode") == "local_unmetered") and (name not in local_agents or role != "developer")})
     costs = _costs_for(roles, role_costs)
     if tier_candidates is not None:
         for role in roles:
@@ -630,14 +688,18 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
                 if name not in tier_candidates.get(role, {}):
                     excluded[role] = sorted(set(excluded[role]) | {name})
             if all(name in excluded[role] for name in agents):
-                raise PlanError("No tier is eligible for {!r}. Configure a tier row for this round on an eligible worker, or check the exclusions.".format(role), {})
+                message, refusals = _empty_field_message(
+                    role, agents, judge_agent, operator_excluded, role_refusals, tier_candidates)
+                raise PlanError(message, {"role": role, "role_refusals": refusals})
 
     def candidate_cost(role, name):
+        if name in local_agents:
+            return 0.0
         tier = (tier_candidates or {}).get(role, {}).get(name) or {}
         return costs[role] * tier.get("effective_multiplier", 1.0)
 
     headrooms = {
-        name: _headroom_of(name, record, warn) for name, record in agents.items()
+        name: None if name in local_agents else _headroom_of(name, record, warn) for name, record in agents.items()
     }
     groups = _window_groups(agents)
     recorded = dict(headrooms)
@@ -675,6 +737,14 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         roles.index(role),
     ))
 
+    def rank(role, name, scoped):
+        affinity = familiarity.get(role, {}).get(name, 0) if role in (requirements or {}) and familiarity else 0
+        if name in local_agents:
+            return (0, -affinity, 0, counts.get(role, {}).get(name, 0), name)
+        affordable = scoped[name] is not None and scoped[name] - candidate_cost(role, name) >= 0
+        return (0 if affordable else 1, -affinity if affordable else 0, 1,
+                *_sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor, same_family=same_family))
+
     for index, role in enumerate(fill_order):
         cost = candidate_cost(role, judge_agent) if role == "judge" else costs[role]
         barred = excluded[role]
@@ -684,7 +754,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         scoped = seat_headrooms(role)
         ranked = sorted(
             (name for name in remaining if name not in barred),
-            key=lambda name: _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
+            key=lambda name: rank(role, name, scoped) if local_agents else _sort_key(name, scoped[name], candidate_cost(role, name), role, counts, floor,
                                       familiarity if role in (requirements or {}) else None, same_family),
         )
         # The ordering above says who SHOULD hold the seat; the matching says
@@ -713,12 +783,12 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         picks[role] = chosen
         cost = candidate_cost(role, chosen)
         rationale.append(
-            _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
+            "{} -> {} (local_unmetered; no subscription-window charge; lead verification required)".format(role, chosen) if chosen in local_agents else _explain(role, chosen, ranked, scoped, counts, cost, floor, barred)
         )
         if role in (requirements or {}) and (familiarity or {}).get(role, {}).get(chosen):
             rationale.append("{} -> {} has a prior confirmed dispatch for the same task and engagement; familiarity ranks before headroom only when this projected seat is affordable.".format(role, chosen))
         headroom = scoped[chosen]
-        if headroom is not None:
+        if headroom is not None and chosen not in local_agents:
             projected = headroom - cost
             floor = projected if floor is None else min(floor, projected)
 
@@ -734,8 +804,9 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
         group = groups.get(chosen)
         if group is not None:
             for name in headrooms:
-                if groups.get(name) == group and headrooms[name] is not None:
-                    headrooms[name] -= cost
+                remaining_headroom = headrooms[name]
+                if groups.get(name) == group and remaining_headroom is not None:
+                    headrooms[name] = remaining_headroom - cost
 
     rationale.extend(_notes(excluded, agents, warn))
     rationale.extend(selection_rationale or [])
@@ -753,6 +824,7 @@ def plan(roles, snapshot, counts=None, exclude=None, role_costs=None, snapshot_r
 
     document = {
         "schema_version": PLAN_SCHEMA_VERSION,
+        "ineligible_agents": ineligible_agents or {},
         # Keyed in the caller's order, not the fill order: --roles still shapes
         # the document even though it no longer decides which seat is heaviest.
         "assignments": {role: picks[role] for role in roles},
@@ -814,7 +886,7 @@ def _notes(excluded, agents, warn):
     skipped = sorted(
         name
         for name, record in agents.items()
-        if isinstance(record, dict) and record.get("skipped")
+        if isinstance(record, dict) and record.get("skipped") and record.get("kind") != "pi"
     )
     if skipped:
         notes.append(

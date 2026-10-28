@@ -1,0 +1,12 @@
+{
+  "command": [
+    "herdr",
+    "pane",
+    "process-info",
+    "--pane",
+    "wA:p8"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"id\":\"cli:pane:process_info\",\"result\":{\"process_info\":{\"foreground_process_group_id\":58701,\"foreground_processes\":[{\"argv0\":\"pi\",\"cwd\":\"/Users/vikgamov/projects/ai/tempus\",\"name\":\"node\",\"pid\":58701}],\"pane_id\":\"wA:p8\",\"shell_pid\":58509},\"type\":\"pane_process_info\"}}\n",
+  "stderr": ""
+}

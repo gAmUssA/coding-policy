@@ -206,9 +206,19 @@ bash "$CP/skills/herdr-teamlead/teamlead.sh" supervision-watch [--state <state-f
 ```bash
 CP=.tessl/plugins/gamussa/coding-policy; [ -d "$CP" ] || CP="$HOME/$CP"
 bash "$CP/skills/herdr-teamlead/wait-report.sh" --once \
+  [--state <state-file>] [--config <config-file>] \
   [--worktree <worker-checkout>] [--base <dispatch-base>] \
   [--since <dispatch-sent-at>] <agent-name> <report-path>
 ```
+
+Pass the dispatch's `--state` and `--config` selections. `--state` selects
+the launch receipts beside that state file; omission uses the teamlead state
+default. `--config` selects the configured worker identity; omission reads
+the default config when present. A configured pi seat requires its matching
+receipt and config for native verification. Neither flag writes config.
+The delivery JSON, exits and observation effects are documented in Step 9 of
+`skills/herdr-teamlead/references/round-dispatch.md`; the script header owns
+the complete contract.
 
 ## Step 10 — Gate the Round
 

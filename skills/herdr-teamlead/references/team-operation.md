@@ -210,7 +210,8 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
 - Count fix rounds per task after its initial implementation
 - Default each task's fix allowance to five rounds
 - Reserve the developer through initial and early-fix verification before assigning it another task or role
-- Fix rounds 1–3 retain the same developer's context when the retention preconditions hold
+- Fix rounds 1–3 retain the same metered developer's context when the retention preconditions hold
+- Pi routing, fresh-launch and independence requirements follow Optional local pi developer seats in `skills/herdr-teamlead/references/model-tiers.md`
 - Narrow exception for retaining context on a same-role fix round.
 - Preconditions (all required):
   1. The worker remains the developer for the same task
@@ -233,7 +234,7 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
   9. For a role clear, the owner binds the actual clearing assignment and archived dispatch evidence to the preceding developer
   10. For a role clear, the owner preserves known native proof and all earlier rows
   11. For a role clear, the owner reuses existing task and clear authorization or records the missing explicit decision
-- Every other early fix requires the retained-context preconditions
+- Every other metered early fix requires the retained-context preconditions
 - A required release clear or verified historical-import handoff needs no separate context-change permission
 - An authorized verified role clear needs no additional context-change permission within the existing correction scope and allowance
 - Never edit repository content while holding the release role
@@ -345,9 +346,10 @@ The Herdr team contract. `rules/agent-team-operation.md` loads in every session 
 
 ## Worker Launch Mode
 
-- Start every team worker in YOLO mode, including reviewer, tester, release, and judge
+- Start metered team workers in YOLO mode, including reviewer, tester, release, and judge
 - Apply the same mode on every relaunch
-- Verify the worker's permission flags from launch or live foreground-process argv before dispatch
+- Verify metered permission flags from launch or live foreground-process argv before dispatch
+- Verify pi through its fresh-launch receipt and live PID/pane/terminal continuity
 - Preserve the assignment classifier and the brief's authority, role, and path limits
 - YOLO mode grants no additional task authority
 - Permission flags and their validation live in `skills/herdr-teamlead/teamlead/tiers.py`

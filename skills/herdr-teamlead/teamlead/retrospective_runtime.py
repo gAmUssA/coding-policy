@@ -121,7 +121,18 @@ def _observation(client, name, kind, pane=None, *, starting=False, agent=None):
     actual_pane = live.get("pane_id")
     if not isinstance(actual_pane, str) or not actual_pane or (pane and pane != actual_pane):
         raise HerdrError("Retrospective worker changed panes or has no pane; inspect the roster and refresh its coverage.", {})
-    process = foreground_agent(client, actual_pane, kind)
+    if kind == "pi":
+        from . import pi_native
+        if agent is None:
+            raise HerdrError("pi_permission_unproven: retrospective needs the configured fresh-launch receipt.", {})
+        receipt = pi_native.read_launch(agent)
+        proof = pi_native.verify_running(client, agent, actual_pane, receipt.get("proof"))
+        # Pi exposes its process title as argv0. This observation is not a
+        # permission/model proof; the bound launch receipt above supplies it.
+        observed = pi_native.foreground(client, actual_pane)
+        process = {"pid": proof["pid"], "argv": [observed.get("argv0")]}
+    else:
+        process = foreground_agent(client, actual_pane, kind)
     readiness = live.get("agent_status", "unknown")
     if agent is not None:
         readiness, _origin = resolve_status(client, agent, readiness)
@@ -272,7 +283,7 @@ class Guard:
             expected = original["source"]["observation"]
             if observed["process"] != expected["process"] or observed["pane_id"] != expected["pane_id"]:
                 raise HerdrError("Worker process changed during its clear; refresh retrospective evidence before further input.", {})
-        elif observed["process"]["argv"] != launch_proof["argv"] or (launch_proof.get("pid") is not None and observed["process"]["pid"] != launch_proof["pid"]):
+        elif (self.agents[item["agent"]].kind != "pi" and observed["process"]["argv"] != launch_proof["argv"]) or (launch_proof.get("pid") is not None and observed["process"]["pid"] != launch_proof["pid"]):
             raise HerdrError("Worker changed after its verified launch; refresh retrospective evidence before further input.", {})
         notes.require_no_pending(self.path)
         index = notes.load(self.path)
