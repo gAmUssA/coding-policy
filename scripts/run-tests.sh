@@ -9,7 +9,7 @@
 # failing suite blocks the merge and the release.
 #
 # Discovers <base>/**/tests/test_*.sh and <base>/**/tests/test_*.py, and
-# runs each in its own process (`bash file` / `python3 file`) so one suite's
+# runs each in its own process (`bash file` / `uv run ... file`) so one suite's
 # `set`/`cd`/traps/interpreter state can't leak into the next. Discovery
 # covers BOTH languages deliberately: a `.sh`-only
 # glob silently orphaned every Python suite in the repo — they looked
@@ -53,12 +53,18 @@ set -euo pipefail
 # `rules/file-hygiene.md` requires — so the runner only picks the
 # interpreter and reads the exit code.
 #
-# Interpreters are overridable so a runner with a differently-named binary
-# (python3.11, a venv shim) can point at it without editing this file, and
-# so the missing-interpreter path is testable without breaking PATH for the
-# harness itself.
+# Python suites run through uv (rules/dependency-management.md Python
+# Execution): `uv run --no-project --no-python-downloads --python
+# "$PY_REQUIRES"` selects an existing interpreter meeting the stated
+# requirement and never downloads one. A missing uv is a setup error, never
+# a fallback to ambient python3.
+#
+# Binaries are overridable so a runner with a differently-named binary can
+# point at it without editing this file, and so the missing-interpreter path
+# is testable without breaking PATH for the harness itself.
 SH_BIN="${SH_BIN:-bash}"
-PY_BIN="${PY_BIN:-python3}"
+UV_BIN="${UV_BIN:-uv}"
+PY_REQUIRES=">=3.11"
 
 # A dispatcher fault must be distinguishable from a suite's own exit code.
 # No exit code can do that job: 2 collides with the harnesses here (they
@@ -74,9 +80,10 @@ DISPATCH_FAULT_SUITE=""
 
 run_suite() {
   local suite="$1" interp
+  local -a args
   case "$suite" in
-    *.sh) interp="$SH_BIN" ;;
-    *.py) interp="$PY_BIN" ;;
+    *.sh) interp="$SH_BIN"; args=() ;;
+    *.py) interp="$UV_BIN"; args=(run --no-project --no-python-downloads --python "$PY_REQUIRES") ;;
     *)
       DISPATCH_FAULT_SUITE="$suite"
       echo "run-tests: no interpreter for suite type: $suite" >&2
@@ -84,7 +91,7 @@ run_suite() {
       ;;
   esac
   # Check the interpreter exists before dispatching. Without this, a runner
-  # lacking python3 gives the suite exit 127, which the caller counts as a
+  # lacking uv gives the suite exit 127, which the caller counts as a
   # FAILING TEST rather than the setup error (rc 2) this contract promises —
   # reporting a red suite where the truth is an unprovisioned runner, and
   # sending whoever reads CI to debug a test that never ran.
@@ -93,7 +100,7 @@ run_suite() {
     echo "run-tests: '${interp}' not found on PATH — cannot run ${suite}; install it on this runner (this is a setup error, not a test failure)" >&2
     return 1
   fi
-  "$interp" "$suite"
+  "$interp" "${args[@]}" "$suite"
 }
 
 # Judge a shell suite that exited 0 by the summary line carrying its token

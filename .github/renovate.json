@@ -8,13 +8,15 @@
         ".github/actions/setup-diagnostics/action.yml",
         ".github/workflows/review-codex.yml",
         "skills/onboard-repo/templates/review-codex.yml.md",
-        ".github/workflows/review-claude.yml"
+        ".github/workflows/review-claude.yml",
+        ".github/workflows/tests.yml",
+        ".github/workflows/publish.yml"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+version=(?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+npm install -g pyright@(?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?[\\s\\S]*?npm install -g @openai/codex@(?<currentValue>\\S+)",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?[\\s\\S]*?npm install -g @anthropic-ai/claude-code@(?<currentValue>\\S+)",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?(?:(?!# renovate:)[\\s\\S])*?npm install -g @anthropic-ai/claude-code@(?<currentValue>\\S+)",
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+version: \"(?<currentValue>[^\"]+)\""
       ]
     }

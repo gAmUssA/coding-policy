@@ -11,7 +11,7 @@ name: Tests
 #   2. lint         — `tessl plugin lint` (manifest + skill-frontmatter +
 #      structure validation), so a bad manifest is caught here, not when it
 #      breaks publish.yml after merge.
-#   3. unit-tests   — every module's bash unit suite via scripts/run-tests.sh
+#   3. unit-tests   — every module's shell and Python suite via scripts/run-tests.sh
 #      (rules/testing-standards.md). Gated on diagnostics + lint passing.
 #   4. changelog-fragment — PR only: a change to shipped content carries a
 #      changelog.d/ fragment, and the PR edits no manifest version and adds no
@@ -55,6 +55,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Python suites run through uv (scripts/run-tests.sh).
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.1"
       - name: Run unit test suites
         run: bash scripts/run-tests.sh
 

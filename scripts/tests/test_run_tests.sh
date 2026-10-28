@@ -255,15 +255,15 @@ fi
 rm -rf "$base"
 
 # --- a missing interpreter is a SETUP error (2), not a test failure (1) ---
-# Dispatching to an absent python3 gives the suite exit 127. Counting that
+# Dispatching to an absent uv gives the suite exit 127. Counting that
 # as a failing suite reports red tests for a runner that never ran them,
 # sending whoever reads CI to debug a test that never executed.
 base="$(make_base)"; add_py_suite "$base" pyalpha 0
 errf="$(mktemp)"
-# Override PY_BIN rather than emptying PATH — the harness needs bash, find,
+# Override UV_BIN rather than emptying PATH — the harness needs bash, find,
 # and mktemp on PATH to run at all, so nuking it tests the shebang, not the
 # dispatcher.
-OUT="$(PY_BIN=definitely-not-a-real-python3 "$RUNNER" "$base" 2>"$errf")"; CODE=$?
+OUT="$(UV_BIN=definitely-not-a-real-uv "$RUNNER" "$base" 2>"$errf")"; CODE=$?
 ERR="$(cat "$errf")"; rm -f "$errf"
 if [[ "$CODE" == 2 ]] \
   && [[ "$(jq -r .suites <<<"$OUT")" == 0 ]] \
