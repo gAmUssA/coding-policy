@@ -25,6 +25,7 @@ from teamlead.parsers import (
     parse_grok_usage,
     parse_usage,
 )
+from tests.claude_usage_fixtures import LIVE_INLINE as CLAUDE_INLINE_RESETS
 
 CLAUDE_SAMPLE = """\
    Settings  Status   Config   Usage   Stats
@@ -54,6 +55,23 @@ CLAUDE_FABLE_EXHAUSTED = """\
    Current week (Fable)
    ██████████████████████████████████████████████   100% used
    Resets Oct 20 at 9am (Europe/Oslo)
+"""
+
+# Narrow-pane wrap: the header ends at the separator and `Resets` starts
+# the next line. Synthetic; no live capture of this shape exists.
+CLAUDE_NARROW_HEADER = """\
+   Current session ·
+   Resets 5pm (America/New_York)
+   ██▋
+
+   5% used
+
+   Current week (all models) ·
+   Resets Nov 2 at 10am
+   (America/New_York)
+   ████████████████████▋
+
+   39% used
 """
 
 CODEX_SAMPLE = """\
@@ -140,10 +158,15 @@ class ClaudeParserTest(unittest.TestCase):
         self.assertIsNone(windows["Current session"]["resets"])
         self.assertIsNone(windows["Current week (all models)"]["resets"])
 
-    def test_header_without_a_percentage_is_dropped(self):
+    def test_header_without_a_percentage_is_rejected(self):
+        # A header that closes with no percentage is a pane that cut the
+        # dialog, so the read fails instead of dropping that window.
         text = "Current session\nCurrent week (all models)\n  █ 2% used\n"
-        windows = parse_claude_usage(text)["windows"]
-        self.assertEqual(list(windows), ["Current week (all models)"])
+        with self.assertRaises(ParseError) as caught:
+            parse_claude_usage(text)
+        message = str(caught.exception)
+        self.assertIn("Current session", message)
+        self.assertIn("taller pane", message)
 
     def test_zero_and_hundred_percent(self):
         text = (
@@ -167,6 +190,170 @@ class ClaudeParserTest(unittest.TestCase):
     def test_dialog_not_open_raises_parse_error(self):
         with self.assertRaises(ParseError):
             parse_claude_usage("❯ \n  ~/Projects/foo  main\n")
+
+    def test_inline_reset_layout_keeps_labels_percentages_and_timezones(self):
+        windows = parse_claude_usage(CLAUDE_INLINE_RESETS)["windows"]
+        self.assertEqual(
+            list(windows),
+            ["Current session", "Current week (all models)", "Current week (Fable)"],
+        )
+        self.assertEqual(windows["Current session"]["used_pct"], 5.0)
+        self.assertEqual(windows["Current session"]["remaining_pct"], 95.0)
+        self.assertEqual(windows["Current session"]["resets"], "5pm (America/New_York)")
+        self.assertEqual(windows["Current week (all models)"]["used_pct"], 39.0)
+        self.assertEqual(windows["Current week (all models)"]["remaining_pct"], 61.0)
+        self.assertEqual(
+            windows["Current week (all models)"]["resets"],
+            "Nov 2 at 10am (America/New_York)",
+        )
+        self.assertEqual(windows["Current week (Fable)"]["used_pct"], 36.0)
+        self.assertEqual(windows["Current week (Fable)"]["remaining_pct"], 64.0)
+        self.assertEqual(
+            windows["Current week (Fable)"]["resets"],
+            "Nov 2 at 10am (America/New_York)",
+        )
+        # Account-wide windows still bind an Opus seat. The Fable week is
+        # looser than the account week in this capture, so it does not
+        # change that minimum.
+        self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
+        self.assertEqual(headroom_pct(windows, "Fable 5.1"), 61.0)
+
+    def test_narrow_header_wrap_keeps_the_reset_on_the_next_line(self):
+        windows = parse_claude_usage(CLAUDE_NARROW_HEADER)["windows"]
+        self.assertEqual(windows["Current session"]["used_pct"], 5.0)
+        self.assertEqual(windows["Current session"]["resets"], "5pm (America/New_York)")
+        self.assertEqual(windows["Current week (all models)"]["used_pct"], 39.0)
+        self.assertEqual(
+            windows["Current week (all models)"]["resets"],
+            "Nov 2 at 10am (America/New_York)",
+        )
+
+    def test_a_parenthetical_without_a_slash_is_not_a_wrapped_timezone(self):
+        text = (
+            "Current session · Resets Nov 2 at 10am\n"
+            "(promo note)\n"
+            "5% used\n"
+        )
+        window = parse_claude_usage(text)["windows"]["Current session"]
+        self.assertEqual(window["used_pct"], 5.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am")
+
+    def test_header_ending_at_resets_keeps_the_reset_on_the_next_line(self):
+        text = (
+            "Current week (all models) · Resets\n"
+            "Nov 2 at 10am (America/New_York)\n"
+            "████████████████████▋\n"
+            "39% used\n"
+        )
+        window = parse_claude_usage(text)["windows"]["Current week (all models)"]
+        self.assertEqual(window["used_pct"], 39.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (America/New_York)")
+
+    def test_a_second_percentage_under_the_same_label_is_rejected(self):
+        text = (
+            "Current session\n"
+            "5% used\n"
+            "Resets 5pm (America/New_York)\n"
+            "Current week (all\n"
+            "models) · Resets Nov 2 at 10am (America/New_York)\n"
+            "39% used\n"
+        )
+        with self.assertRaises(ParseError) as caught:
+            parse_claude_usage(text)
+        message = str(caught.exception)
+        self.assertIn("second", message)
+        self.assertIn("39% used", message)
+        self.assertIn("Current session", message)
+        self.assertIn("Current week (all", message)
+
+    def test_credit_sections_in_the_inline_layout_are_not_windows(self):
+        text = (
+            "Current session · Resets 5pm (America/New_York)\n"
+            "██▋\n"
+            "5% used\n"
+            "Current week (all models) · Resets Nov 2 at 10am\n"
+            "(America/New_York)\n"
+            "████████████████████▋\n"
+            "39% used\n"
+            "Current week (Fable) · Resets Nov 2 at 10am\n"
+            "(America/New_York)\n"
+            "███████████████████\n"
+            "36% used\n"
+            "Claude Code and Cowork credit · Resets Dec 1 (America/New_York)\n"
+            "████\n"
+            "12% used\n"
+            "Credit · Resets Dec 1 (America/New_York)\n"
+            "██\n"
+            "4% used\n"
+            "Usage credits · $5.00 / $50.00 spent · Resets December 1\n"
+            "██\n"
+            "10% used\n"
+        )
+        windows = parse_claude_usage(text)["windows"]
+        self.assertEqual(
+            {label: window["used_pct"] for label, window in windows.items()},
+            {
+                "Current session": 5.0,
+                "Current week (all models)": 39.0,
+                "Current week (Fable)": 36.0,
+            },
+        )
+        self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
+
+    def test_credit_sections_in_the_stacked_layout_are_not_windows(self):
+        text = (
+            "Current session\n"
+            "████                                               5% used\n"
+            "Resets 5pm (America/New_York)\n"
+            "Current week (all models)\n"
+            "████████████████████▋                              39% used\n"
+            "Resets Nov 2 at 10am (America/New_York)\n"
+            "Current week (Fable)\n"
+            "███████████████████                                36% used\n"
+            "Resets Nov 2 at 10am (America/New_York)\n"
+            "Claude Code and Cowork credit\n"
+            "████                                               12% used\n"
+            "Resets Dec 1 (America/New_York)\n"
+            "Credit\n"
+            "██                                                 4% used\n"
+            "Resets Dec 1 (America/New_York)\n"
+            "Usage credits\n"
+            "██                                                 10% used\n"
+            "$5.00 / $50.00 spent · Resets December 1\n"
+        )
+        windows = parse_claude_usage(text)["windows"]
+        self.assertEqual(
+            {label: window["used_pct"] for label, window in windows.items()},
+            {
+                "Current session": 5.0,
+                "Current week (all models)": 39.0,
+                "Current week (Fable)": 36.0,
+            },
+        )
+        self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
+
+    def test_wrapped_utc_timezone_is_kept(self):
+        text = "Current session · Resets Nov 2 at 10am\n(UTC)\n5% used\n"
+        window = parse_claude_usage(text)["windows"]["Current session"]
+        self.assertEqual(window["used_pct"], 5.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (UTC)")
+
+    def test_mid_phrase_reset_wrap_keeps_the_full_reset(self):
+        text = "Current week (all models) · Resets Nov 2\nat 10am (America/New_York)\n39% used\n"
+        window = parse_claude_usage(text)["windows"]["Current week (all models)"]
+        self.assertEqual(window["used_pct"], 39.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (America/New_York)")
+
+    def test_percent_and_reset_without_a_window_header_are_rejected(self):
+        text = (
+            "Settings  Status   Config   Usage   Stats\n"
+            "██▋\n"
+            "5% used\n"
+            "Resets 5pm (America/New_York)\n"
+        )
+        with self.assertRaises(ParseError) as caught:
+            parse_claude_usage(text)
+        self.assertIn("No usage windows found", str(caught.exception))
 
 
 class CodexParserTest(unittest.TestCase):

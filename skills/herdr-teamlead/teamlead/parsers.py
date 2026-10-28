@@ -26,18 +26,40 @@ is reasoning, not parsing.
 """
 
 import re
+from typing import NoReturn
 
 from .errors import ParseError
 
 # --- claude -----------------------------------------------------------------
 
-# A window header is a line that is exactly "Current session" or
-# "Current week (<something>)". The "(<something>)" form covers both
-# "(all models)" and a per-model line such as "(Fable)".
-_CLAUDE_HEADER_RE = re.compile(r"^(Current session|Current week \(.+\))$")
-# "████        8% used" -- the bar glyphs are decoration, only the number counts.
-_CLAUDE_USED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s+used\b")
+# A window header is "Current session" or "Current week (<something>)".
+# "(<something>)" covers "(all models)" and a per-model line such as
+# "(Fable)". The same build renders two layouts. At a pane width of 62
+# columns or more the header is alone on its line. Below 62 the reset is
+# appended after a middle dot (U+00B7):
+# "Current session · Resets 5pm (America/New_York)". A narrow pane can
+# leave the dot at the end of the line and put "Resets ..." on the next
+# one, or end the line on the word "Resets" and put the reset text on the
+# next one. The label stops at the first ")", so an inline timezone is
+# not swallowed into the label.
+_CLAUDE_HEADER_RE = re.compile(
+    r"^(?P<label>Current session|Current week \([^)]+\))"
+    r"(?: ·(?P<saw_resets>\s+Resets(?:\s+(?P<resets>.+))?)?)?$"
+)
+# "████        8% used" -- the bar glyphs are decoration, only the number
+# counts. Anchored so a prose row such as "Opus 5.5 is 20% used this week"
+# is not a window percentage.
+_CLAUDE_USED_RE = re.compile(
+    r"^[░▒▓█▏▎▍▌▋▊▉\s]*(\d+(?:\.\d+)?)\s*%\s+used\s*$"
+)
 _CLAUDE_RESETS_RE = re.compile(r"^Resets\s+(.+)$")
+# A bar row is block glyphs only. It is not reset text.
+_CLAUDE_BAR_RE = re.compile(r"^[░▒▓█▏▎▍▌▋▊▉\s]+$")
+# Timezone wrapped onto the following line: "(America/New_York)" or "(UTC)".
+# A parenthetical with a space, such as "(promo note)", is not one.
+_CLAUDE_TZ_CONT_RE = re.compile(
+    r"^\((?:[A-Z]{2,5}|[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+)\)$"
+)
 # A weekly window scoped to one model family: "Current week (Fable)". The
 # account-wide "(all models)" line is excluded by `_window_model`.
 _CLAUDE_MODEL_WINDOW_RE = re.compile(r"^Current week \((?P<model>.+)\)$")
@@ -132,47 +154,412 @@ def _window(used_pct, resets):
     }
 
 
+# Scroll indicators the dialog paints on the first and last viewport rows.
+# U+2191 and U+2193. They are signals, not part of a reset or a percentage.
+_CLAUDE_SCROLL_UP = "\u2191"
+_CLAUDE_SCROLL_DOWN = "\u2193"
+_CLAUDE_TALLER = "Read with a taller pane."
+
+
+class _ClaudeLine:
+    """One pane row after the scroll glyphs have been peeled off."""
+
+    def __init__(self, text, up, down):
+        self.text = text
+        self.up = up
+        self.down = down
+
+
+class _ClaudeSection:
+    """A title plus the percentage and reset rows that belong to it."""
+
+    def __init__(self, title, up_before, down_before, up_on, down_on):
+        self.title = title
+        self.up_before = up_before
+        self.down_before = down_before
+        self.up_on = up_on
+        self.down_on = down_on
+        self.used: list[str] = []
+        self.resets: str | None = None
+
+
+def _peel_claude_scroll(raw):
+    """Strip indent and scroll arrows from either end of one row.
+
+    Returns the remaining text and whether an up or down arrow was on it.
+    An arrow-only row comes back empty, with the arrow flags set.
+    """
+    text = raw.strip()
+    up = False
+    down = False
+    changed = True
+    while changed and text:
+        changed = False
+        end = text[0]
+        if end in (_CLAUDE_SCROLL_UP, _CLAUDE_SCROLL_DOWN):
+            up = up or end == _CLAUDE_SCROLL_UP
+            down = down or end == _CLAUDE_SCROLL_DOWN
+            text = text[1:].strip()
+            changed = True
+            continue
+        end = text[-1]
+        if end in (_CLAUDE_SCROLL_UP, _CLAUDE_SCROLL_DOWN):
+            up = up or end == _CLAUDE_SCROLL_UP
+            down = down or end == _CLAUDE_SCROLL_DOWN
+            text = text[:-1].strip()
+            changed = True
+    return text, up, down
+
+
+def _claude_reset_body(line):
+    """Return the reset text carried by `line`.
+
+    `None` means the line is not a reset. `""` means the line ends on the
+    word `Resets` and the body is still to come. The label's own parentheses,
+    as in `Current week (all models)`, are not part of the body.
+    """
+    header = _CLAUDE_HEADER_RE.match(line)
+    if header is not None:
+        if header.group("saw_resets") is None:
+            return None
+        inline = header.group("resets")
+        if inline and inline.strip():
+            return inline.strip()
+        return ""
+    titled = re.search(r" · Resets(?:\s+(\S.*?))?$", line)
+    if titled:
+        body = titled.group(1)
+        return body.strip() if body else ""
+    resets = _CLAUDE_RESETS_RE.match(line)
+    if resets:
+        return resets.group(1).strip()
+    return None
+
+
+def _claude_join(prev, curr):
+    """True when `curr` is the wrapped tail of `prev`'s reset text."""
+    if _CLAUDE_USED_RE.match(curr) or _CLAUDE_RESETS_RE.match(curr):
+        return False
+    if _CLAUDE_HEADER_RE.match(curr) or curr.startswith("Current "):
+        return False
+    body = _claude_reset_body(prev)
+    if body is None or "(" in body:
+        return False
+    if curr.startswith("(") and curr.endswith(")") and not _CLAUDE_TZ_CONT_RE.match(curr):
+        return False
+    return True
+
+
+def _claude_drop(prev, curr):
+    """True when `curr` is a parenthetical that must not become reset text.
+
+    `(promo note)` sits on its own line under an open reset. It is not a
+    timezone, and it is not a new section: the percentage that follows still
+    belongs to the window above.
+    """
+    body = _claude_reset_body(prev)
+    if body is None or "(" in body:
+        return False
+    return bool(
+        curr.startswith("(") and curr.endswith(")") and not _CLAUDE_TZ_CONT_RE.match(curr)
+    )
+
+
+def _glue_claude_lines(items):
+    """Join a wrapped reset onto the line it continues.
+
+    A header that ended on `Resets`, a time phrase split before the zone,
+    and a `(Area/City)` or `(UTC)` line are one reset. Arrow-only rows
+    between the pieces stay with that reset instead of splitting the section.
+    """
+    glued = []
+    for item in items:
+        if not item.text:
+            glued.append(item)
+            continue
+        prev_at = None
+        for index in range(len(glued) - 1, -1, -1):
+            if glued[index].text:
+                prev_at = index
+                break
+        if prev_at is None:
+            glued.append(item)
+            continue
+        prev = glued[prev_at]
+        if _claude_join(prev.text, item.text) or _claude_drop(prev.text, item.text):
+            if _claude_join(prev.text, item.text):
+                prev.text = "{} {}".format(prev.text, item.text)
+            prev.up = prev.up or item.up
+            prev.down = prev.down or item.down
+            for mid in glued[prev_at + 1 :]:
+                prev.up = prev.up or mid.up
+                prev.down = prev.down or mid.down
+            del glued[prev_at + 1 :]
+            continue
+        glued.append(item)
+    return glued
+
+
+def _normalise_claude_pane(text):
+    """Stage 1: strip chrome, drop bars and blanks, join wrapped resets."""
+    items = []
+    for raw in text.splitlines():
+        line, up, down = _peel_claude_scroll(raw)
+        if not line or _CLAUDE_BAR_RE.match(line):
+            if up or down:
+                items.append(_ClaudeLine("", up, down))
+            continue
+        items.append(_ClaudeLine(line, up, down))
+    return _glue_claude_lines(items)
+
+
+def _rate_header(line):
+    """`(label, inline resets)` when `line` is a rate-limit header, else None."""
+    match = _CLAUDE_HEADER_RE.match(line)
+    if match is None:
+        return None
+    inline = None
+    if match.group("saw_resets") is not None:
+        raw = match.group("resets")
+        inline = raw.strip() if raw and raw.strip() else None
+    return match.group("label"), inline
+
+
+def _claude_sections(items):
+    """Stage 2: group rows into sections.
+
+    A line that is neither `N% used` nor `Resets ...` starts a section.
+    Arrow-only rows between a title and its percentage stay inside the
+    section. Arrow-only rows between sections belong to the gap before the
+    next one. Returns `(sections, orphan_used, trailing_down)`.
+    """
+    sections = []
+    current = None
+    pending_up = False
+    pending_down = False
+    orphan_used = None
+    for item in items:
+        if not item.text:
+            pending_up = pending_up or item.up
+            pending_down = pending_down or item.down
+            continue
+        used = _CLAUDE_USED_RE.match(item.text)
+        resets = _CLAUDE_RESETS_RE.match(item.text)
+        if used or resets:
+            if current is None:
+                if used and orphan_used is None:
+                    orphan_used = used.group(1)
+                pending_up = False
+                pending_down = False
+                continue
+            current.up_on = current.up_on or pending_up or item.up
+            current.down_on = current.down_on or pending_down or item.down
+            pending_up = False
+            pending_down = False
+            if used:
+                current.used.append(used.group(1))
+            elif resets is not None and current.resets is None:
+                body = resets.group(1).strip()
+                current.resets = body or None
+            continue
+        if current is not None:
+            sections.append(current)
+        current = _ClaudeSection(item.text, pending_up, pending_down, item.up, item.down)
+        pending_up = False
+        pending_down = False
+    if current is not None:
+        sections.append(current)
+    return sections, orphan_used, pending_down
+
+
+def _claude_error(message) -> NoReturn:
+    raise ParseError(message, {"kind": "claude"})
+
+
+def _missing_percentage(label) -> NoReturn:
+    _claude_error(
+        "Header {!r} has no 'N% used' row before the next header "
+        "or the end of the read, so the dialog was cut and this "
+        "read is rejected instead of dropping that window. {}".format(label, _CLAUDE_TALLER)
+    )
+
+
+def _percent_before_header(used_pct) -> NoReturn:
+    _claude_error(
+        "A '{}% used' row appeared before any recognised "
+        "header, so a rate-limit window scrolled off the top "
+        "of the pane and this read is rejected instead of "
+        "dropping it. {}".format(used_pct, _CLAUDE_TALLER)
+    )
+
+
+def _lost_wrapped_header(used_pct, label, fragment) -> NoReturn:
+    if fragment:
+        wrapped = " The wrapped line {!r} did not match a rate-limit header.".format(fragment)
+    else:
+        wrapped = ""
+    _claude_error(
+        "A second '{}% used' row appeared under {!r} before the next "
+        "header, so a wrapped header was lost and this read is rejected "
+        "instead of dropping that window.{} {}".format(used_pct, label, wrapped, _CLAUDE_TALLER)
+    )
+
+
+def _wrapped_closed_early(fragment, label) -> NoReturn:
+    _claude_error(
+        "A wrapped header {!r} under {!r} closed before its "
+        "'N% used' row, so a rate-limit window was lost and "
+        "this read is rejected instead of dropping it. {}".format(fragment, label, _CLAUDE_TALLER)
+    )
+
+
+def _duplicate_label(label) -> NoReturn:
+    _claude_error(
+        "A second section titled {!r} repeats a rate-limit window "
+        "already read, so this read is rejected instead of overwriting "
+        "that window. {}".format(label, _CLAUDE_TALLER)
+    )
+
+
+def _scroll_cut(up, down, label) -> NoReturn:
+    """Raise when a scroll arrow says a rate-limit window is off-screen."""
+    if up and down:
+        reason = (
+            "a scroll-up indicator before the first rate-limit window and "
+            "a scroll-down indicator after {!r}. The rate-limit list is "
+            'only proven complete by the "What\'s contributing" section, '
+            "so a rate-limit window may be off-screen".format(label)
+        )
+    elif up:
+        reason = (
+            "a scroll-up indicator before the first rate-limit window, so "
+            "a rate-limit window may be above the viewport"
+        )
+    else:
+        reason = (
+            "a scroll-down indicator after {!r}. The rate-limit list is "
+            'only proven complete by the "What\'s contributing" section, '
+            "so a rate-limit window may be below the viewport".format(label)
+        )
+    _claude_error(
+        "The pane shows {}, and this read is rejected instead of dropping "
+        "that window. {}".format(reason, _CLAUDE_TALLER)
+    )
+
+
+def _up_arrow_before_first(sections):
+    """True when an up arrow sits on or before the first rate-limit section.
+
+    An arrow on a wrapped zone row is folded into that header, so `up_on`
+    covers it. The rows above may be prose or another window.
+    """
+    for section in sections:
+        if _rate_header(section.title) is not None:
+            return section.up_before or section.up_on
+        if section.up_before or section.up_on:
+            return True
+    return False
+
+
+def _down_arrow_after_last(sections, trailing_down):
+    """True when a down arrow sits on or after the last rate-limit section.
+
+    The section titled "What's contributing to your limits usage?" is the
+    only proof the rate-limit list has ended. A title that starts with
+    "What's contributing" ends the walk, so a narrow pane that wraps the
+    title still counts. A down arrow on or after any earlier section fails
+    the read: a promo row or a credit section can sit between windows.
+    """
+    last = None
+    for index, section in enumerate(sections):
+        if _rate_header(section.title) is not None:
+            last = index
+    if last is None:
+        return False
+    if sections[last].down_on:
+        return True
+    for section in sections[last + 1 :]:
+        if section.title.startswith("What's contributing"):
+            return False
+        if section.down_before or section.down_on:
+            return True
+    return trailing_down
+
+
 def parse_claude_usage(text):
     """Parse the full-screen `/usage` dialog Claude Code renders in its pane.
 
-    Reads the `visible` snapshot: the dialog paints over the viewport, so the
-    header/percentage/reset triples appear in reading order.
+    Reads the `visible` snapshot in two stages. Normalise strips the indent
+    and a scroll indicator (`↑` or `↓`) from either end of each row, drops
+    blank rows and bar rows, and joins a reset that wrapped: a header that
+    ended on the word `Resets`, a time phrase split before the zone, and a
+    `(Area/City)` or `(UTC)` continuation. The same build stacks the header,
+    `N% used`, and `Resets` at 62 columns or more, and below 62 prints the
+    reset on the header line.
+
+    Segment treats every remaining line that is neither `N% used` nor
+    `Resets ...` as the start of a section. A section titled `Current
+    session` or `Current week (...)` must hold exactly one `N% used` row.
+    Any other title, including a credit or usage-credit section, is ignored
+    with its rows. Zero percentages means the pane cut the window. Two means
+    a header was lost. A title that merely starts with `Current` and is
+    followed by a percentage is that lost header. An `N% used` row before
+    the first section means a window scrolled off the top. A second section
+    with a rate-limit label already stored raises instead of overwriting
+    that window.
+
+    An up arrow on or before the first rate-limit section, or a down arrow
+    on the last one's own rows, means another window may be off-screen.
+    The section titled "What's contributing to your limits usage?" ends
+    the rate-limit list. A down arrow on or after any other section fails
+    the read. The read fails and names a taller pane. A down arrow on or
+    after that contributing section, as in the full dialog, does not.
     """
+    sections, orphan_used, trailing_down = _claude_sections(_normalise_claude_pane(text))
     windows = {}
-    label = None
-    pending_used = None
-    pending_resets = None
+    previous_label = None
+    lost_fragment = None
+    seen_rate = False
 
-    def flush():
-        if label is not None and pending_used is not None:
-            windows[label] = _window(pending_used, pending_resets)
+    for section in sections:
+        matched = _rate_header(section.title)
+        if lost_fragment is not None and matched is not None:
+            _wrapped_closed_early(lost_fragment, previous_label)
+        if matched is not None:
+            label, inline = matched
+            if orphan_used is not None and not seen_rate:
+                _percent_before_header(orphan_used)
+            if not section.used:
+                _missing_percentage(label)
+            if len(section.used) > 1:
+                _lost_wrapped_header(section.used[1], label, None)
+            if label in windows:
+                _duplicate_label(label)
+            resets = inline if inline is not None else section.resets
+            windows[label] = _window(section.used[0], resets)
+            previous_label = label
+            seen_rate = True
+            lost_fragment = None
+            continue
+        if section.title.startswith("Current"):
+            fragment = section.title if lost_fragment is None else lost_fragment
+            lost_fragment = section.title
+            if section.used:
+                _lost_wrapped_header(section.used[0], previous_label, fragment)
+            continue
+        if lost_fragment is not None and section.used:
+            _lost_wrapped_header(section.used[0], previous_label, lost_fragment)
 
-    for raw in text.splitlines():
-        line = raw.strip()
-        header = _CLAUDE_HEADER_RE.match(line)
-        if header:
-            flush()
-            label = header.group(1)
-            pending_used = None
-            pending_resets = None
-            continue
-        if label is None:
-            continue
-        used = _CLAUDE_USED_RE.search(line)
-        if used and pending_used is None:
-            pending_used = used.group(1)
-            continue
-        resets = _CLAUDE_RESETS_RE.match(line)
-        if resets and pending_used is not None and pending_resets is None:
-            pending_resets = resets.group(1).strip()
-    flush()
-
+    up_before = _up_arrow_before_first(sections)
+    down_after = _down_arrow_after_last(sections, trailing_down)
+    if up_before or down_after:
+        last_label = previous_label if previous_label is not None else "the last window"
+        _scroll_cut(up_before, down_after, last_label)
     if not windows:
-        raise ParseError(
+        _claude_error(
             "No usage windows found in the claude pane text - send /usage and "
             "read with `herdr agent read <name> --source visible` while the "
-            "dialog is open.",
-            {"kind": "claude"},
+            "dialog is open."
         )
     return {"windows": windows, "credits": None, "plan": None}
 
