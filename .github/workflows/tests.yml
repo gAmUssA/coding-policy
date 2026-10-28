@@ -61,7 +61,7 @@ jobs:
           # renovate: datasource=github-releases depName=astral-sh/uv
           version: "0.13.1"
       - name: Run unit test suites
-        run: bash scripts/run-tests.sh
+        run: uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 
   changelog-fragment:
     if: github.event_name == 'pull_request'

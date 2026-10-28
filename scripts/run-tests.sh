@@ -29,8 +29,9 @@
 # saves it and unsets it before running anything, so a harness it runs prints
 # an empty token and a nested runner hands out tokens of its own. Neither
 # kind of nested summary can stand in for the suite's own (#31), wherever it
-# sits in the output. A Python suite needs no line: unittest
-# exits non-zero on "NO TESTS RAN".
+# sits in the output. A Python suite needs no line of its own: a unittest
+# suite exiting 0 passes only when unittest's final "Ran <N> test(s)" line
+# reports N > 0 (Python 3.11 exits 0 on zero tests).
 #
 # Output contract (rules/script-delegation.md — structured stdout):
 #   stdout: one JSON object, the run summary —
@@ -128,6 +129,29 @@ summary_verdict() {
   fi
   if (( passed == 0 )); then
     echo "exited 0 but ran zero cases"
+    return 1
+  fi
+}
+
+# Judge a Python suite that exited 0 by unittest's own final
+# "Ran <N> test(s) in ..." line. Prints the reason on stdout when the suite
+# fails the contract; prints nothing when it passes. Returns 1 on a contract
+# failure. The LAST such line is unittest's own: a nested run's output
+# printed earlier never stands in for it.
+RAN_RE='^Ran ([0-9]+) tests? in '
+python_verdict() {
+  local output="$1" line ran=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ $RAN_RE ]]; then
+      ran="${BASH_REMATCH[1]}"
+    fi
+  done < "$output"
+  if [[ -z "$ran" ]]; then
+    echo "exited 0 without unittest's 'Ran <N> tests' line — end the suite with 'unittest.main()' under its entry-point guard"
+    return 1
+  fi
+  if (( ran == 0 )); then
+    echo "exited 0 but ran zero tests"
     return 1
   fi
 }
@@ -248,6 +272,9 @@ main() {
       break
     fi
     if [[ $suite_rc -eq 0 && "$s" == *.sh ]] && ! reason="$(summary_verdict "$suite_out" "$token")"; then
+      echo "  ✗ $s — $reason" >&2
+      failed+=("$s")
+    elif [[ $suite_rc -eq 0 && "$s" == *.py ]] && ! reason="$(python_verdict "$suite_out")"; then
       echo "  ✗ $s — $reason" >&2
       failed+=("$s")
     elif [[ $suite_rc -eq 0 ]]; then

@@ -80,6 +80,9 @@ class ReviewTest(unittest.TestCase):
             return done(args, self.fetched + "\n")
         if args[:2] == ["git", "diff"]:
             return done(args, "diff --git a/app.py b/app.py\n+return total / len(items)\n")
+        if args[:2] == ["git", "fetch"]:
+            self.assertEqual(args[-1], HEAD)
+            return done(args)
         if args[0] == "git":
             return done(args)
         if args[:2] == ["gh", "api"]:

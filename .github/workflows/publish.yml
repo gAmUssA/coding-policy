@@ -72,7 +72,7 @@ jobs:
           version: "0.13.1"
 
       - name: Run unit tests
-        run: bash scripts/run-tests.sh
+        run: uv run --no-project --no-python-downloads --python '>=3.11' bash scripts/run-tests.sh
 
       - name: Assemble pending changelog fragments
         id: assemble

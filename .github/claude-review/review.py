@@ -195,7 +195,9 @@ def review_pr(owner: str, repo: str, pr: str, base: str) -> dict:
                        GIT_CONFIG_VALUE_0=f"Authorization: Basic {header}")
         run(["git", "clone", "--quiet", "--no-checkout", "--no-tags",
              f"https://github.com/{owner}/{repo}.git", str(source)], env=git_env)
-        run(["git", "fetch", "--quiet", "origin", f"refs/pull/{pr}/head"], cwd=source, env=git_env)
+        # Fetch the exact head the API reported: refs/pull/<n>/head can lag a
+        # fresh push and resolve to the previous commit.
+        run(["git", "fetch", "--quiet", "origin", head], cwd=source, env=git_env)
         fetched = run(["git", "rev-parse", "FETCH_HEAD"], cwd=source).strip()
         if fetched != head:
             raise ReviewError("PR head changed during fetch; re-run against the new head")
