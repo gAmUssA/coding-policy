@@ -26,6 +26,7 @@ is reasoning, not parsing.
 """
 
 import re
+from typing import NoReturn
 
 from .errors import ParseError
 
@@ -157,10 +158,7 @@ def _window(used_pct, resets):
 # U+2191 and U+2193. They are signals, not part of a reset or a percentage.
 _CLAUDE_SCROLL_UP = "\u2191"
 _CLAUDE_SCROLL_DOWN = "\u2193"
-_CLAUDE_TALLER = (
-    "Read with a taller pane, or send /usage and read with "
-    "`herdr agent read <name> --source visible` while the dialog is open."
-)
+_CLAUDE_TALLER = "Read with a taller pane."
 
 
 class _ClaudeLine:
@@ -333,7 +331,7 @@ def _claude_sections(items):
     A line that is neither `N% used` nor `Resets ...` starts a section.
     Arrow-only rows between a title and its percentage stay inside the
     section. Arrow-only rows between sections belong to the gap before the
-    next one. Returns `(sections, orphan_used, trailing_up, trailing_down)`.
+    next one. Returns `(sections, orphan_used, trailing_down)`.
     """
     sections = []
     current = None
@@ -371,14 +369,14 @@ def _claude_sections(items):
         pending_down = False
     if current is not None:
         sections.append(current)
-    return sections, orphan_used, pending_up, pending_down
+    return sections, orphan_used, pending_down
 
 
-def _claude_error(message):
+def _claude_error(message) -> NoReturn:
     raise ParseError(message, {"kind": "claude"})
 
 
-def _missing_percentage(label):
+def _missing_percentage(label) -> NoReturn:
     _claude_error(
         "Header {!r} has no 'N% used' row before the next header "
         "or the end of the read, so the dialog was cut and this "
@@ -386,7 +384,7 @@ def _missing_percentage(label):
     )
 
 
-def _percent_before_header(used_pct):
+def _percent_before_header(used_pct) -> NoReturn:
     _claude_error(
         "A '{}% used' row appeared before any recognised "
         "header, so a rate-limit window scrolled off the top "
@@ -395,7 +393,7 @@ def _percent_before_header(used_pct):
     )
 
 
-def _lost_wrapped_header(used_pct, label, fragment):
+def _lost_wrapped_header(used_pct, label, fragment) -> NoReturn:
     if fragment:
         wrapped = " The wrapped line {!r} did not match a rate-limit header.".format(fragment)
     else:
@@ -403,13 +401,11 @@ def _lost_wrapped_header(used_pct, label, fragment):
     _claude_error(
         "A second '{}% used' row appeared under {!r} before the next "
         "header, so a wrapped header was lost and this read is rejected "
-        "instead of dropping that window.{} Send /usage and read with "
-        "`herdr agent read <name> --source visible` while the dialog "
-        "is open.".format(used_pct, label, wrapped)
+        "instead of dropping that window.{} {}".format(used_pct, label, wrapped, _CLAUDE_TALLER)
     )
 
 
-def _wrapped_closed_early(fragment, label):
+def _wrapped_closed_early(fragment, label) -> NoReturn:
     _claude_error(
         "A wrapped header {!r} under {!r} closed before its "
         "'N% used' row, so a rate-limit window was lost and "
@@ -417,7 +413,15 @@ def _wrapped_closed_early(fragment, label):
     )
 
 
-def _scroll_cut(up, down, label):
+def _duplicate_label(label) -> NoReturn:
+    _claude_error(
+        "A second section titled {!r} repeats a rate-limit window "
+        "already read, so this read is rejected instead of overwriting "
+        "that window. {}".format(label, _CLAUDE_TALLER)
+    )
+
+
+def _scroll_cut(up, down, label) -> NoReturn:
     """Raise when a scroll arrow says a rate-limit window is off-screen."""
     if up and down:
         reason = (
@@ -444,21 +448,25 @@ def _scroll_cut(up, down, label):
 
 
 def _up_arrow_before_first(sections):
-    """True when an up arrow sits strictly before the first rate-limit section."""
+    """True when an up arrow sits on or before the first rate-limit section.
+
+    An arrow on a wrapped zone row is folded into that header, so `up_on`
+    covers it. The rows above may be prose or another window.
+    """
     for section in sections:
         if _rate_header(section.title) is not None:
-            return section.up_before
+            return section.up_before or section.up_on
         if section.up_before or section.up_on:
             return True
     return False
 
 
 def _down_arrow_after_last(sections, trailing_down):
-    """True when a down arrow follows the last rate-limit section directly.
+    """True when a down arrow sits on or after the last rate-limit section.
 
-    A non-window section between that window and the arrow means the rest
-    of the dialog is prose, not another rate-limit window. An arrow painted
-    on the window's own percentage row is part of the section, not after it.
+    A non-window section between that window and a later arrow means the
+    rest of the dialog is prose. An arrow on the window's own rows does
+    not: the rows below may be prose or another window.
     """
     last = None
     for index, section in enumerate(sections):
@@ -466,6 +474,8 @@ def _down_arrow_after_last(sections, trailing_down):
             last = index
     if last is None:
         return False
+    if sections[last].down_on:
+        return True
     tail = sections[last + 1 :]
     if not tail:
         return trailing_down
@@ -490,16 +500,17 @@ def parse_claude_usage(text):
     with its rows. Zero percentages means the pane cut the window. Two means
     a header was lost. A title that merely starts with `Current` and is
     followed by a percentage is that lost header. An `N% used` row before
-    the first section means a window scrolled off the top.
+    the first section means a window scrolled off the top. A second section
+    with a rate-limit label already stored raises instead of overwriting
+    that window.
 
-    An up arrow before the first rate-limit section, or a down arrow after
-    the last one with no other section in between, means another window may
-    be off-screen. The read fails and names a taller pane. A down arrow that
-    follows a non-window section, as in the full dialog, does not.
+    An up arrow on or before the first rate-limit section, or a down arrow
+    on the last one's own rows or after it with no other section in
+    between, means another window may be off-screen. The read fails and
+    names a taller pane. A down arrow that follows a non-window section,
+    as in the full dialog, does not.
     """
-    sections, orphan_used, _trailing_up, trailing_down = _claude_sections(
-        _normalise_claude_pane(text)
-    )
+    sections, orphan_used, trailing_down = _claude_sections(_normalise_claude_pane(text))
     windows = {}
     previous_label = None
     lost_fragment = None
@@ -507,12 +518,6 @@ def parse_claude_usage(text):
 
     for section in sections:
         matched = _rate_header(section.title)
-        if lost_fragment is not None and matched is None:
-            if section.used:
-                _lost_wrapped_header(section.used[0], previous_label, lost_fragment)
-            if section.title.startswith("Current"):
-                lost_fragment = section.title
-            continue
         if lost_fragment is not None and matched is not None:
             _wrapped_closed_early(lost_fragment, previous_label)
         if matched is not None:
@@ -523,6 +528,8 @@ def parse_claude_usage(text):
                 _missing_percentage(label)
             if len(section.used) > 1:
                 _lost_wrapped_header(section.used[1], label, None)
+            if label in windows:
+                _duplicate_label(label)
             resets = inline if inline is not None else section.resets
             windows[label] = _window(section.used[0], resets)
             previous_label = label
@@ -530,18 +537,19 @@ def parse_claude_usage(text):
             lost_fragment = None
             continue
         if section.title.startswith("Current"):
+            fragment = section.title if lost_fragment is None else lost_fragment
             lost_fragment = section.title
             if section.used:
-                _lost_wrapped_header(section.used[0], previous_label, section.title)
+                _lost_wrapped_header(section.used[0], previous_label, fragment)
             continue
+        if lost_fragment is not None and section.used:
+            _lost_wrapped_header(section.used[0], previous_label, lost_fragment)
 
-    if _up_arrow_before_first(sections) or _down_arrow_after_last(sections, trailing_down):
+    up_before = _up_arrow_before_first(sections)
+    down_after = _down_arrow_after_last(sections, trailing_down)
+    if up_before or down_after:
         last_label = previous_label if previous_label is not None else "the last window"
-        _scroll_cut(
-            _up_arrow_before_first(sections),
-            _down_arrow_after_last(sections, trailing_down),
-            last_label,
-        )
+        _scroll_cut(up_before, down_after, last_label)
     if not windows:
         _claude_error(
             "No usage windows found in the claude pane text - send /usage and "

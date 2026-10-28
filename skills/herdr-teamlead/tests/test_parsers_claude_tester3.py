@@ -3,8 +3,9 @@
 The contract: every rate-limit window the pane shows parses with its own
 percentage, or the read raises ParseError. A read that succeeds with a window
 missing overstates headroom for every seat that window binds. Credit
-sections, scroll indicators, and other non-window rows never fail a read
-whose windows are all shown.
+sections and other non-window rows never fail a read whose windows are all
+shown. An arrow on the first or last window's own row may fail the read,
+because that pane looks the same as one that cut a window off.
 
 The LIVE_* fixtures are `herdr agent read --source visible` captures of a
 narrow Claude Code pane, copied verbatim. Every other fixture is built in
@@ -496,7 +497,7 @@ class LivePaneTest(unittest.TestCase):
             parse_claude_usage(LIVE_FABLE_OFF_SCREEN)
 
 
-class ScrollIndicatorTest(unittest.TestCase):
+class ScrollIndicatorTest(NoSilentDropCase):
     def test_session_window_above_the_viewport_is_rejected(self):
         # Scrolled down past the whole session window: only the weekly
         # windows remain, under a scroll-up indicator.
@@ -507,16 +508,17 @@ class ScrollIndicatorTest(unittest.TestCase):
             parse_claude_usage(text)
 
     def test_arrow_on_the_last_percentage_does_not_reject_a_complete_read(self):
-        # Every window is shown; the indicator only says a non-window
-        # section continues below, sharing the row with the Fable percentage.
+        # The parser cannot tell this pane from a viewport that ends on the
+        # all-models percentage with the Fable window below it, so the read
+        # may raise ParseError or return the three windows.
         text = INLINE.rstrip("\n") + "                                          ↓\n"
-        windows = parse_claude_usage(text)["windows"]
-        self.assertEqual(used_by_label(windows), EXPECTED_USED)
+        self.assert_parses_or_rejects(text, EXPECTED_USED)
 
     def test_arrow_on_a_stacked_percentage_does_not_reject_a_complete_read(self):
+        # Same limit as the inline case: a down arrow on the last percentage
+        # is the viewport ending on the all-models percentage with Fable below.
         text = STACKED.replace("36% used", "36% used   ↓")
-        windows = parse_claude_usage(text)["windows"]
-        self.assertEqual(used_by_label(windows), EXPECTED_USED)
+        self.assert_parses_or_rejects(text, EXPECTED_USED)
 
     def test_arrow_on_a_wrapped_timezone_is_not_reset_text(self):
         text = INLINE.replace(
