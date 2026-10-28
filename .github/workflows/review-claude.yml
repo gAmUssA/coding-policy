@@ -46,12 +46,19 @@ jobs:
         with:
           node-version: "24"
 
+      # Python entry points run through uv (rules/dependency-management.md
+      # Python Execution); the scripts are standard-library only.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          # renovate: datasource=github-releases depName=astral-sh/uv
+          version: "0.13.1"
+
       # renovate: datasource=npm depName=@anthropic-ai/claude-code
       - name: Install Claude CLI
         run: npm install -g @anthropic-ai/claude-code@2.1.311
 
       - name: Verify real CLI context isolation
-        run: python3 .github/claude-review/check-isolation.py
+        run: uv run --no-project --no-python-downloads --python '>=3.11' .github/claude-review/check-isolation.py
 
       - name: Review code quality and bugs
         env:
@@ -61,4 +68,4 @@ jobs:
           REVIEW_REPO: ${{ github.event.repository.name }}
           REVIEW_PR: ${{ github.event.pull_request.number }}
           REVIEW_BASE: ${{ github.event.pull_request.base.ref }}
-        run: python3 .github/claude-review/review.py "$REVIEW_OWNER" "$REVIEW_REPO" "$REVIEW_PR" "$REVIEW_BASE"
+        run: uv run --no-project --no-python-downloads --python '>=3.11' .github/claude-review/review.py "$REVIEW_OWNER" "$REVIEW_REPO" "$REVIEW_PR" "$REVIEW_BASE"

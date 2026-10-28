@@ -1,9 +1,11 @@
 """Exercise context isolation, lane posting, failure and exact-head guarantees.
 
-Mocks sit at the process boundary only: `run` (git, gh, claude subprocesses)
-and `api` (the GitHub REST calls made through gh). The lane config comes from
-the real skills/release/review-lanes.sh, and a posted body is classified by
-that script's own jq classifier.
+Mocks sit at the process boundary only. In-process cases replace
+`subprocess.run` with a fake that plays git, gh and claude, so review.py's own
+`run`, `api`, `lane_config` and `review_pr` execute for real; `bash` calls go
+to the real skills/release/review-lanes.sh. The entry-point case runs
+`review.py OWNER REPO PR BASE` as a process with stand-in git, gh and claude
+executables on PATH. A posted body is classified by review-lanes.sh's own jq.
 """
 
 import importlib.util
@@ -11,21 +13,26 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import unittest
+import sys
+import tempfile
+import textwrap
 from typing import Any
+import unittest
 from unittest.mock import patch
 
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
-SPEC = importlib.util.spec_from_file_location("claude_review", HERE.parent / "review.py")
+REVIEW = HERE.parent / "review.py"
+SPEC = importlib.util.spec_from_file_location("claude_review", REVIEW)
 assert SPEC and SPEC.loader
 reviewer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(reviewer)
-API = reviewer.api
+REAL_RUN = subprocess.run
 HEAD = "a" * 40
 MARKER = "<!-- coding-policy:claude-quality-review:v1 -->"
 LOGIN = "github-actions[bot]"
+ENTRY_POINT_DEADLINE_SECONDS = 60
 
 
 def classify(review: dict) -> str:
@@ -33,9 +40,13 @@ def classify(review: dict) -> str:
     lanes = REPO_ROOT / "skills/release/review-lanes.sh"
     script = (f'source "{lanes}"; set +e; cfg=$(review_lanes_config); '
               'jq -r --argjson cfg "$cfg" "$(review_lanes_jq) review_lane($cfg)"')
-    result = subprocess.run(["bash", "-c", script], input=json.dumps(review), text=True,
-                            capture_output=True, check=True)
+    result = REAL_RUN(["bash", "-c", script], input=json.dumps(review), text=True,
+                      capture_output=True, check=True)
     return result.stdout.strip()
+
+
+def done(args, stdout="", returncode=0, stderr=""):
+    return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
 
 class ReviewTest(unittest.TestCase):
@@ -45,54 +56,63 @@ class ReviewTest(unittest.TestCase):
                               "ANTHROPIC_API_KEY": "api-secret", "OPENAI_API_KEY": "openai-secret"})
         self.env.start()
         self.addCleanup(self.env.stop)
-        self.posts = []
-        self.claude_calls = []
-        self.api_reads = 0
+        self.posts: list[dict] = []
+        self.claude_calls: list[tuple] = []
+        self.pr_reads = 0
         self.changed = False
         self.fork = False
         self.fetched = HEAD
-        self.lane_override = None
-        self.posted_state = None
+        self.lane_override: dict[str, Any] | None = None
+        self.posted_state: str | None = None
+        self.post_fails = False
         self.output: dict[str, Any] = {"type": "result", "subtype": "success", "is_error": False,
-                       "structured_output": {"summary": "One concrete defect.", "findings": [
-                           {"path": "app.py", "line": 2, "severity": "blocking", "message": "Empty input divides by zero."}]}}
-        self.runner = patch.object(reviewer, "run", self.run_command)
-        self.runner.start()
-        self.addCleanup(self.runner.stop)
-        self.api_patch = patch.object(reviewer, "api", self.api)
-        self.api_patch.start()
-        self.addCleanup(self.api_patch.stop)
+                                       "structured_output": {"summary": "One concrete defect.", "findings": [
+                                           {"path": "app.py", "line": 2, "severity": "blocking",
+                                            "message": "Empty input divides by zero."}]}}
+        boundary = patch.object(reviewer.subprocess, "run", self.process)
+        boundary.start()
+        self.addCleanup(boundary.stop)
 
-    def api(self, endpoint, payload=None):
-        if payload is not None:
+    def process(self, args, *, cwd=None, env=None, input=None, **_kwargs):
+        if args[:2] == ["git", "clone"]:
+            Path(args[-1]).mkdir()
+            return done(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return done(args, self.fetched + "\n")
+        if args[:2] == ["git", "diff"]:
+            return done(args, "diff --git a/app.py b/app.py\n+return total / len(items)\n")
+        if args[0] == "git":
+            return done(args)
+        if args[:2] == ["gh", "api"]:
+            return self.gh_api(args, input)
+        if args[0] == "claude":
+            self.claude_calls.append((args, env, input))
+            assert cwd is not None
+            self.assertEqual(sorted(Path(cwd).iterdir()), [])
+            return done(args, json.dumps(self.output))
+        if args[0] == "bash":
+            result = REAL_RUN(args, text=True, capture_output=True, check=True)
+            lanes = json.loads(result.stdout)
+            if self.lane_override:
+                lanes["claude-quality"].update(self.lane_override)
+            return done(args, json.dumps(lanes))
+        raise AssertionError(f"unexpected process: {args[0]}")
+
+    def gh_api(self, args, data):
+        if "--method" in args:
+            if self.post_fails:
+                return done(args, "", 1, "HTTP 422 secret-token")
+            payload = json.loads(data)
             self.posts.append(payload)
             state = self.posted_state or {"REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED",
                                           "APPROVE": "APPROVED"}[payload["event"]]
-            return {"state": state, "commit_id": payload["commit_id"], "body": payload["body"],
-                    "html_url": "https://github.com/o/r/pull/1#review", "user": {"login": LOGIN}}
-        self.api_reads += 1
-        return {"state": "open", "base": {"ref": "main"},
-                "head": {"sha": "b" * 40 if self.changed and self.api_reads > 1 else HEAD,
-                         "repo": {"full_name": "fork/r" if self.fork else "o/r"}}}
-
-    def run_command(self, args, *, cwd=None, env=None, data=None):
-        if args[:2] == ["git", "clone"]:
-            Path(args[-1]).mkdir()
-        elif args[:2] == ["git", "rev-parse"]:
-            return self.fetched + "\n"
-        elif args[:2] == ["git", "diff"]:
-            return "diff --git a/app.py b/app.py\n+return total / len(items)\n"
-        elif args[0] == "claude":
-            self.claude_calls.append((args, env, data))
-            assert cwd is not None
-            self.assertEqual(sorted(Path(cwd).iterdir()), [])
-            return json.dumps(self.output)
-        elif args[0] == "bash":
-            lanes = json.loads(subprocess.run(args, text=True, check=True, capture_output=True).stdout)
-            if self.lane_override:
-                lanes["claude-quality"].update(self.lane_override)
-            return json.dumps(lanes)
-        return ""
+            return done(args, json.dumps({"state": state, "commit_id": payload["commit_id"],
+                                          "html_url": "https://github.com/o/r/pull/1#review",
+                                          "user": {"login": LOGIN}}))
+        self.pr_reads += 1
+        head = "b" * 40 if self.changed and self.pr_reads > 1 else HEAD
+        return done(args, json.dumps({"state": "open", "base": {"ref": "main"},
+                                      "head": {"sha": head, "repo": {"full_name": "fork/r" if self.fork else "o/r"}}}))
 
     def review(self):
         return reviewer.review_pr("o", "r", "1", "main")
@@ -154,11 +174,12 @@ class ReviewTest(unittest.TestCase):
         with self.assertRaisesRegex(reviewer.ReviewError, "did not confirm"):
             self.review()
 
-    def test_post_errors_never_become_a_clean_review(self):
-        with patch.object(reviewer, "run", side_effect=reviewer.ReviewError("post failed")) as run:
-            with self.assertRaises(reviewer.ReviewError):
-                API("repos/o/r/pulls/1/reviews", {"event": "COMMENT", "commit_id": HEAD, "body": "review"})
-            self.assertEqual(run.call_count, 1)
+    def test_failed_post_never_becomes_a_clean_review(self):
+        self.post_fails = True
+        with self.assertRaises(reviewer.ReviewError) as caught:
+            self.review()
+        self.assertIn("gh failed (exit 1)", str(caught.exception))
+        self.assertNotIn("secret-token", str(caught.exception))
 
     def test_invalid_output_never_becomes_a_clean_review(self):
         for output in ({"is_error": True}, {"is_error": False, "subtype": "success"},
@@ -225,11 +246,6 @@ class FailureDiagnosticsTest(unittest.TestCase):
                     self.assertNotIn("secret-token", message)
                     self.assertNotIn("private-source", message)
 
-    def test_success_output_remains_unchanged(self):
-        result = subprocess.CompletedProcess(["claude"], 0, '{"ok":true}', "")
-        with patch.object(reviewer.subprocess, "run", return_value=result):
-            self.assertEqual(reviewer.run(["claude", "--print"]), '{"ok":true}')
-
     def test_other_command_failures_do_not_claim_a_claude_diagnosis(self):
         result = subprocess.CompletedProcess(["git"], 128, "", "authentication_error secret-token")
         with patch.object(reviewer.subprocess, "run", return_value=result):
@@ -240,11 +256,70 @@ class FailureDiagnosticsTest(unittest.TestCase):
         self.assertNotIn("secret-token", str(caught.exception))
 
 
+# One stand-in for git, gh and claude, dispatched on its own name. Its state
+# lives beside it: review.py hands claude an allowlisted environment, so the
+# stand-ins locate the log by their own path, never by an env var.
+STAND_IN = textwrap.dedent("""\
+    #!{python}
+    import json, os, sys
+    from pathlib import Path
+    here = Path(__file__).resolve().parent
+    name, args = Path(sys.argv[0]).name, sys.argv[1:]
+    head = "{head}"
+    def log(entry):
+        with open(here / "log.jsonl", "a") as handle:
+            handle.write(json.dumps(entry) + "\\n")
+    if name == "git":
+        if args[0] == "clone":
+            Path(args[-1]).mkdir()
+        elif args[0] == "rev-parse":
+            print(head)
+        elif args[0] == "diff":
+            print("diff --git a/app.py b/app.py\\n+return total / len(items)")
+    elif name == "gh":
+        if "--method" in args:
+            payload = json.load(sys.stdin)
+            log({{"post": payload}})
+            print(json.dumps({{"state": "COMMENTED", "commit_id": payload["commit_id"],
+                              "html_url": "https://github.com/o/r/pull/1#review",
+                              "user": {{"login": "github-actions[bot]"}}}}))
+        else:
+            print(json.dumps({{"state": "open", "base": {{"ref": "main"}},
+                              "head": {{"sha": head, "repo": {{"full_name": "o/r"}}}}}}))
+    elif name == "claude":
+        log({{"claude_env": sorted(os.environ)}})
+        print(json.dumps({{"type": "result", "subtype": "success", "is_error": False,
+                          "structured_output": {{"summary": "No defects found.", "findings": []}}}}))
+    """)
+
+
 class EntryPointTest(unittest.TestCase):
     def run_main(self, args, env):
-        return subprocess.run(["python3", str(HERE.parent / "review.py"), *args], text=True,
-                              capture_output=True, check=False,
-                              env={"PATH": os.environ["PATH"], **env})
+        return REAL_RUN([sys.executable, str(REVIEW), *args], text=True, capture_output=True,
+                        check=False, env={"PATH": os.environ["PATH"], **env},
+                        timeout=ENTRY_POINT_DEADLINE_SECONDS)
+
+    def test_documented_command_posts_a_marked_comment(self):
+        with tempfile.TemporaryDirectory(prefix="review-stand-ins-") as temp:
+            bin_dir = Path(temp)
+            script = bin_dir / "stand-in.py"
+            script.write_text(STAND_IN.format(python=sys.executable, head=HEAD))
+            for name in ("git", "gh", "claude"):
+                (bin_dir / name).symlink_to(script)
+            script.chmod(0o755)
+            env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                   "GH_TOKEN": "github-secret", "CLAUDE_CODE_OAUTH_TOKEN": "subscription-secret"}
+            result = self.run_main(["o", "r", "1", "main"], env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            summary = json.loads(result.stdout)
+            self.assertEqual((summary["state"], summary["head_sha"], summary["findings"]), ("posted", HEAD, 0))
+            entries = [json.loads(line) for line in (bin_dir / "log.jsonl").read_text().splitlines()]
+            posts = [entry["post"] for entry in entries if "post" in entry]
+            self.assertEqual(len(posts), 1)
+            self.assertEqual(posts[0]["event"], "COMMENT")
+            self.assertEqual(classify({"user": {"login": LOGIN}, "body": posts[0]["body"]}), "claude-quality")
+            claude_env = next(entry["claude_env"] for entry in entries if "claude_env" in entry)
+            self.assertNotIn("GH_TOKEN", claude_env)
 
     def test_missing_credentials_exit_2_naming_setup(self):
         result = self.run_main(["o", "r", "1", "main"], {})
