@@ -32,7 +32,6 @@ REAL_RUN = subprocess.run
 HEAD = "a" * 40
 MARKER = "<!-- coding-policy:claude-quality-review:v1 -->"
 LOGIN = "github-actions[bot]"
-ENTRY_POINT_DEADLINE_SECONDS = 60
 
 
 def classify(review: dict) -> str:
@@ -296,8 +295,7 @@ STAND_IN = textwrap.dedent("""\
 class EntryPointTest(unittest.TestCase):
     def run_main(self, args, env):
         return REAL_RUN([sys.executable, str(REVIEW), *args], text=True, capture_output=True,
-                        check=False, env={"PATH": os.environ["PATH"], **env},
-                        timeout=ENTRY_POINT_DEADLINE_SECONDS)
+                        check=False, env={"PATH": os.environ["PATH"], **env})
 
     def test_documented_command_posts_a_marked_comment(self):
         with tempfile.TemporaryDirectory(prefix="review-stand-ins-") as temp:

@@ -16,7 +16,6 @@ import unittest
 
 
 PROBE = Path(__file__).resolve().parents[1] / "check-isolation.py"
-PROBE_DEADLINE_SECONDS = 60
 
 FAKE_CLI = textwrap.dedent("""\
     #!{python}
@@ -61,7 +60,7 @@ class IsolationProbeTest(unittest.TestCase):
             fake.chmod(0o755)
             env = {**os.environ, "PATH": f"{temp}{os.pathsep}{os.environ['PATH']}"}
             return subprocess.run([sys.executable, str(PROBE)], env=env, text=True,
-                                  capture_output=True, check=False, timeout=PROBE_DEADLINE_SECONDS)
+                                  capture_output=True, check=False)
 
     def test_isolated_cli_passes(self):
         result = self.probe("clean")

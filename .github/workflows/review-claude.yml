@@ -48,7 +48,7 @@ jobs:
 
       # Python entry points run through uv (rules/dependency-management.md
       # Python Execution); the scripts are standard-library only.
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           # renovate: datasource=github-releases depName=astral-sh/uv
           version: "0.13.1"
