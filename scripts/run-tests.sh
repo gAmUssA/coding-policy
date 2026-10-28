@@ -80,10 +80,9 @@ DISPATCH_FAULT_SUITE=""
 
 run_suite() {
   local suite="$1" interp
-  local -a args
   case "$suite" in
-    *.sh) interp="$SH_BIN"; args=() ;;
-    *.py) interp="$UV_BIN"; args=(run --no-project --no-python-downloads --python "$PY_REQUIRES") ;;
+    *.sh) interp="$SH_BIN" ;;
+    *.py) interp="$UV_BIN" ;;
     *)
       DISPATCH_FAULT_SUITE="$suite"
       echo "run-tests: no interpreter for suite type: $suite" >&2
@@ -100,7 +99,12 @@ run_suite() {
     echo "run-tests: '${interp}' not found on PATH — cannot run ${suite}; install it on this runner (this is a setup error, not a test failure)" >&2
     return 1
   fi
-  "$interp" "${args[@]}" "$suite"
+  # No argument array: an empty "${arr[@]}" is an unbound-variable error
+  # under `set -u` on bash 3.2 (stock macOS).
+  case "$suite" in
+    *.py) "$interp" run --no-project --no-python-downloads --python "$PY_REQUIRES" "$suite" ;;
+    *) "$interp" "$suite" ;;
+  esac
 }
 
 # Judge a shell suite that exited 0 by the summary line carrying its token

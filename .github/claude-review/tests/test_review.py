@@ -83,6 +83,7 @@ class ReviewTest(unittest.TestCase):
         if args[0] == "git":
             return done(args)
         if args[:2] == ["gh", "api"]:
+            self.assertEqual(args[2:4], ["--hostname", "github.com"])
             return self.gh_api(args, input)
         if args[0] == "claude":
             self.claude_calls.append((args, env, input))
@@ -276,6 +277,7 @@ STAND_IN = textwrap.dedent("""\
         elif args[0] == "diff":
             print("diff --git a/app.py b/app.py\\n+return total / len(items)")
     elif name == "gh":
+        assert args[1:3] == ["--hostname", "github.com"], args
         if "--method" in args:
             payload = json.load(sys.stdin)
             log({{"post": payload}})
@@ -323,6 +325,7 @@ class EntryPointTest(unittest.TestCase):
         result = self.run_main(["o", "r", "1", "main"], {})
         self.assertEqual(result.returncode, 2)
         self.assertIn("claude setup-token", result.stderr)
+        self.assertIn("--repo github.com/", result.stderr)
         self.assertEqual(result.stdout, "")
 
     def test_bad_arguments_exit_2(self):

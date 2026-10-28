@@ -93,7 +93,8 @@ def run(args: list[str], *, cwd: Path | None = None,
 
 
 def api(endpoint: str, payload: dict | None = None) -> dict:
-    args = ["gh", "api", endpoint]
+    # ADR 0008: pin the host so GH_HOST can never redirect a read or a post.
+    args = ["gh", "api", "--hostname", "github.com", endpoint]
     if payload is not None:
         args += ["--method", "POST", "--input", "-"]
     value = json.loads(run(args, data=json.dumps(payload) if payload is not None else None))
@@ -234,7 +235,7 @@ def main() -> int:
     if not os.environ.get("GH_TOKEN") or not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         print("error: set GH_TOKEN to the workflow token and CLAUDE_CODE_OAUTH_TOKEN to the "
               "subscription secret (`claude setup-token`, then "
-              "`gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <owner>/<repo>`)", file=sys.stderr)
+              "`gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo github.com/<owner>/<repo>`)", file=sys.stderr)
         return 2
     try:
         print(json.dumps(review_pr(*sys.argv[1:])))
