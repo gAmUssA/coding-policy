@@ -131,13 +131,12 @@ class WrapTest(unittest.TestCase):
         self.assertEqual(window["remaining_pct"], 61.0)
 
     def test_header_wrapped_after_the_resets_word_never_drops_a_binding_window(self):
-        # A window the pane shows must either parse or fail the read; a silent
-        # omission overstates headroom for every seat it binds.
-        try:
-            windows = parse_claude_usage(WRAPPED_AFTER_RESETS_WORD)["windows"]
-        except ParseError:
-            return
-        self.assertIn("Current week (all models)", windows)
+        # The changelog names this shape as supported, so a rejection fails
+        # here too; a silent omission overstates headroom for every seat.
+        windows = parse_claude_usage(WRAPPED_AFTER_RESETS_WORD)["windows"]
+        self.assertEqual(
+            list(windows), ["Current session", "Current week (all models)"]
+        )
         self.assertEqual(windows["Current week (all models)"]["used_pct"], 39.0)
         self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
 

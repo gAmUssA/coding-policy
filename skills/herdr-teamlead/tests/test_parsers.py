@@ -180,9 +180,14 @@ class ClaudeParserTest(unittest.TestCase):
         self.assertIsNone(windows["Current week (all models)"]["resets"])
 
     def test_header_without_a_percentage_is_dropped(self):
+        # The name records the old contract. A header that closes with no
+        # percentage is a pane that cut the dialog, so the read fails.
         text = "Current session\nCurrent week (all models)\n  █ 2% used\n"
-        windows = parse_claude_usage(text)["windows"]
-        self.assertEqual(list(windows), ["Current week (all models)"])
+        with self.assertRaises(ParseError) as caught:
+            parse_claude_usage(text)
+        message = str(caught.exception)
+        self.assertIn("Current session", message)
+        self.assertIn("taller pane", message)
 
     def test_zero_and_hundred_percent(self):
         text = (
@@ -276,8 +281,77 @@ class ClaudeParserTest(unittest.TestCase):
         )
         with self.assertRaises(ParseError) as caught:
             parse_claude_usage(text)
-        self.assertIn("second", str(caught.exception))
-        self.assertIn("39% used", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("second", message)
+        self.assertIn("39% used", message)
+        self.assertIn("Current session", message)
+        self.assertIn("Current week (all", message)
+
+    def test_credit_sections_in_the_inline_layout_are_not_windows(self):
+        text = (
+            "Current session · Resets 5pm (America/New_York)\n"
+            "██▋\n"
+            "5% used\n"
+            "Current week (all models) · Resets Nov 2 at 10am\n"
+            "(America/New_York)\n"
+            "████████████████████▋\n"
+            "39% used\n"
+            "Current week (Fable) · Resets Nov 2 at 10am\n"
+            "(America/New_York)\n"
+            "███████████████████\n"
+            "36% used\n"
+            "Claude Code and Cowork credit · Resets Dec 1 (America/New_York)\n"
+            "████\n"
+            "12% used\n"
+            "Credit · Resets Dec 1 (America/New_York)\n"
+            "██\n"
+            "4% used\n"
+            "Usage credits · $5.00 / $50.00 spent · Resets December 1\n"
+            "██\n"
+            "10% used\n"
+        )
+        windows = parse_claude_usage(text)["windows"]
+        self.assertEqual(
+            {label: window["used_pct"] for label, window in windows.items()},
+            {
+                "Current session": 5.0,
+                "Current week (all models)": 39.0,
+                "Current week (Fable)": 36.0,
+            },
+        )
+        self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
+
+    def test_credit_sections_in_the_stacked_layout_are_not_windows(self):
+        text = (
+            "Current session\n"
+            "████                                               5% used\n"
+            "Resets 5pm (America/New_York)\n"
+            "Current week (all models)\n"
+            "████████████████████▋                              39% used\n"
+            "Resets Nov 2 at 10am (America/New_York)\n"
+            "Current week (Fable)\n"
+            "███████████████████                                36% used\n"
+            "Resets Nov 2 at 10am (America/New_York)\n"
+            "Claude Code and Cowork credit\n"
+            "████                                               12% used\n"
+            "Resets Dec 1 (America/New_York)\n"
+            "Credit\n"
+            "██                                                 4% used\n"
+            "Resets Dec 1 (America/New_York)\n"
+            "Usage credits\n"
+            "██                                                 10% used\n"
+            "$5.00 / $50.00 spent · Resets December 1\n"
+        )
+        windows = parse_claude_usage(text)["windows"]
+        self.assertEqual(
+            {label: window["used_pct"] for label, window in windows.items()},
+            {
+                "Current session": 5.0,
+                "Current week (all models)": 39.0,
+                "Current week (Fable)": 36.0,
+            },
+        )
+        self.assertEqual(headroom_pct(windows, "Opus 5.5"), 61.0)
 
     def test_wrapped_utc_timezone_is_kept(self):
         text = "Current session · Resets Nov 2 at 10am\n(UTC)\n5% used\n"

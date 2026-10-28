@@ -33,18 +33,24 @@ from .errors import ParseError
 
 # A window header is "Current session" or "Current week (<something>)".
 # "(<something>)" covers "(all models)" and a per-model line such as
-# "(Fable)". Newer Claude Code appends the reset on that line, after a
-# middle dot (U+00B7): "Current session · Resets 5pm (America/New_York)".
-# A narrow pane can leave the dot at the end of the line and put
-# "Resets ..." on the next one, or end the line on the word "Resets" and
-# put the reset text on the next one. The label stops at the first ")",
-# so an inline timezone is not swallowed into the label.
+# "(Fable)". The same build renders two layouts. At a pane width of 62
+# columns or more the header is alone on its line. Below 62 the reset is
+# appended after a middle dot (U+00B7):
+# "Current session · Resets 5pm (America/New_York)". A narrow pane can
+# leave the dot at the end of the line and put "Resets ..." on the next
+# one, or end the line on the word "Resets" and put the reset text on the
+# next one. The label stops at the first ")", so an inline timezone is
+# not swallowed into the label.
 _CLAUDE_HEADER_RE = re.compile(
     r"^(?P<label>Current session|Current week \([^)]+\))"
     r"(?: ·(?P<saw_resets>\s+Resets(?:\s+(?P<resets>.+))?)?)?$"
 )
-# "████        8% used" -- the bar glyphs are decoration, only the number counts.
-_CLAUDE_USED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s+used\b")
+# "████        8% used" -- the bar glyphs are decoration, only the number
+# counts. Anchored so a prose row such as "Opus 5.5 is 20% used this week"
+# is not a window percentage.
+_CLAUDE_USED_RE = re.compile(
+    r"^[░▒▓█▏▎▍▌▋▊▉\s]*(\d+(?:\.\d+)?)\s*%\s+used\s*$"
+)
 _CLAUDE_RESETS_RE = re.compile(r"^Resets\s+(.+)$")
 # A bar row is block glyphs only. It is not reset text.
 _CLAUDE_BAR_RE = re.compile(r"^[░▒▓█▏▎▍▌▋▊▉\s]+$")
@@ -150,15 +156,19 @@ def _window(used_pct, resets):
 def parse_claude_usage(text):
     """Parse the full-screen `/usage` dialog Claude Code renders in its pane.
 
-    Reads the `visible` snapshot. Older builds put the header alone, then
-    `N% used`, then `Resets ...`. Newer builds put the reset on the header
+    Reads the `visible` snapshot. The same build picks the layout from the
+    pane width. At 62 columns or wider the header is alone, then `N% used`,
+    then `Resets ...`. Below 62 the reset is on the header
     (`Current session · Resets 5pm (America/New_York)`); a timezone that
     does not fit continues as `(Area/City)` or `(UTC)` on the next line,
     the bar is its own row, and `N% used` follows the bar. A narrow pane
     may split the header so `Resets ...` starts the next line, or end the
     header on the word `Resets` and put the reset text on the next line.
     A second `N% used` under a label that already has one is rejected:
-    that row belongs to a header this parser did not recognize.
+    that row belongs to a rate-limit header this parser did not recognize.
+    Credit and usage-credit sections after the rate-limit windows are not
+    windows. A header with no percentage, or a percentage above the first
+    header, means the pane cut the dialog and the read fails.
     """
     windows = {}
     label = None
@@ -171,26 +181,77 @@ def parse_claude_usage(text):
     # True only until the next content line, so a later parenthetical in
     # the dialog is not glued onto a reset that already moved on.
     awaiting_tz = False
+    seen_header = False
+    # A `N% used` row seen before any recognised header. Raised when a
+    # header does show up, so a scrolled-off window is not dropped. A read
+    # that never has a header keeps the "no usage windows" error.
+    percent_before_header = None
+    # The first line of a rate-limit header that wrapped before it matched.
+    # Set only after the window above already has its percentage.
+    lost_fragment = None
+    saw_broken_header = False
 
     def flush():
-        if label is not None and pending_used is not None:
-            windows[label] = _window(pending_used, pending_resets)
+        if label is None:
+            return
+        if pending_used is None:
+            raise ParseError(
+                "Header {!r} has no 'N% used' row before the next header "
+                "or the end of the read, so the dialog was cut and this "
+                "read is rejected instead of dropping that window. Read "
+                "with a taller pane, or send /usage and read with "
+                "`herdr agent read <name> --source visible` while the "
+                "dialog is open.".format(label),
+                {"kind": "claude"},
+            )
+        windows[label] = _window(pending_used, pending_resets)
 
     def lost_header(used_pct):
+        if lost_fragment:
+            wrapped = " The wrapped line {!r} did not match a rate-limit header.".format(
+                lost_fragment
+            )
+        else:
+            wrapped = ""
         raise ParseError(
             "A second '{}% used' row appeared under {!r} before the next "
             "header, so a wrapped header was lost and this read is rejected "
-            "instead of dropping that window. Send /usage and read with "
+            "instead of dropping that window.{} Send /usage and read with "
             "`herdr agent read <name> --source visible` while the dialog "
-            "is open.".format(used_pct, label),
+            "is open.".format(used_pct, label, wrapped),
             {"kind": "claude"},
         )
 
     for raw in text.splitlines():
         line = raw.strip()
+        if not line:
+            continue
         header = _CLAUDE_HEADER_RE.match(line)
         if header:
+            if percent_before_header is not None and not seen_header:
+                raise ParseError(
+                    "A '{}% used' row appeared before any recognised "
+                    "header, so a rate-limit window scrolled off the top "
+                    "of the pane and this read is rejected instead of "
+                    "dropping it. Read with a taller pane, or send /usage "
+                    "and read with `herdr agent read <name> --source "
+                    "visible` while the dialog is open.".format(percent_before_header),
+                    {"kind": "claude"},
+                )
+            if saw_broken_header:
+                raise ParseError(
+                    "A wrapped header {!r} under {!r} closed before its "
+                    "'N% used' row, so a rate-limit window was lost and "
+                    "this read is rejected instead of dropping it. Read "
+                    "with a taller pane, or send /usage and read with "
+                    "`herdr agent read <name> --source visible` while the "
+                    "dialog is open.".format(lost_fragment, label),
+                    {"kind": "claude"},
+                )
             flush()
+            seen_header = True
+            saw_broken_header = False
+            lost_fragment = None
             label = header.group("label")
             pending_used = None
             inline = header.group("resets")
@@ -198,7 +259,11 @@ def parse_claude_usage(text):
             awaiting_reset_body = header.group("saw_resets") is not None and pending_resets is None
             awaiting_tz = pending_resets is not None and "(" not in pending_resets
             continue
-        if label is None or not line:
+        if label is None:
+            if not seen_header:
+                used = _CLAUDE_USED_RE.search(line)
+                if used and percent_before_header is None:
+                    percent_before_header = used.group(1)
             continue
         if awaiting_reset_body:
             if _CLAUDE_BAR_RE.match(line):
@@ -232,6 +297,26 @@ def parse_claude_usage(text):
         if resets and pending_resets is None:
             pending_resets = resets.group(1).strip() or None
             awaiting_tz = pending_resets is not None and "(" not in pending_resets
+            continue
+        if _CLAUDE_BAR_RE.match(line) or pending_used is None:
+            continue
+        # A finished rate-limit window. An unrecognised title ends it so a
+        # following credit or usage-credit percentage is not a lost window.
+        # A line starting with "Current" is a wrapped rate-limit header
+        # that failed to match, and the next percentage still fails the read.
+        if line.startswith("Current") or saw_broken_header:
+            if line.startswith("Current") and lost_fragment is None:
+                lost_fragment = line
+            saw_broken_header = True
+            continue
+        flush()
+        label = None
+        pending_used = None
+        pending_resets = None
+        awaiting_reset_body = False
+        awaiting_tz = False
+        lost_fragment = None
+        saw_broken_header = False
     flush()
 
     if not windows:
