@@ -78,8 +78,8 @@ CLAUDE_INLINE_RESETS = """\
    36% used
 """
 
-# Documented narrow-pane wrap of the same dialog: the header ends at the
-# separator and `Resets` starts the next line. Not a second live capture.
+# Narrow-pane wrap: the header ends at the separator and `Resets` starts
+# the next line. Synthetic; no live capture of this shape exists.
 CLAUDE_NARROW_HEADER = """\
    Current session ·
    Resets 5pm (America/New_York)
@@ -253,6 +253,43 @@ class ClaudeParserTest(unittest.TestCase):
         window = parse_claude_usage(text)["windows"]["Current session"]
         self.assertEqual(window["used_pct"], 5.0)
         self.assertEqual(window["resets"], "Nov 2 at 10am")
+
+    def test_header_ending_at_resets_keeps_the_reset_on_the_next_line(self):
+        text = (
+            "Current week (all models) · Resets\n"
+            "Nov 2 at 10am (America/New_York)\n"
+            "████████████████████▋\n"
+            "39% used\n"
+        )
+        window = parse_claude_usage(text)["windows"]["Current week (all models)"]
+        self.assertEqual(window["used_pct"], 39.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (America/New_York)")
+
+    def test_a_second_percentage_under_the_same_label_is_rejected(self):
+        text = (
+            "Current session\n"
+            "5% used\n"
+            "Resets 5pm (America/New_York)\n"
+            "Current week (all\n"
+            "models) · Resets Nov 2 at 10am (America/New_York)\n"
+            "39% used\n"
+        )
+        with self.assertRaises(ParseError) as caught:
+            parse_claude_usage(text)
+        self.assertIn("second", str(caught.exception))
+        self.assertIn("39% used", str(caught.exception))
+
+    def test_wrapped_utc_timezone_is_kept(self):
+        text = "Current session · Resets Nov 2 at 10am\n(UTC)\n5% used\n"
+        window = parse_claude_usage(text)["windows"]["Current session"]
+        self.assertEqual(window["used_pct"], 5.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (UTC)")
+
+    def test_mid_phrase_reset_wrap_keeps_the_full_reset(self):
+        text = "Current week (all models) · Resets Nov 2\nat 10am (America/New_York)\n39% used\n"
+        window = parse_claude_usage(text)["windows"]["Current week (all models)"]
+        self.assertEqual(window["used_pct"], 39.0)
+        self.assertEqual(window["resets"], "Nov 2 at 10am (America/New_York)")
 
     def test_percent_and_reset_without_a_window_header_are_rejected(self):
         text = (

@@ -36,18 +36,23 @@ from .errors import ParseError
 # "(Fable)". Newer Claude Code appends the reset on that line, after a
 # middle dot (U+00B7): "Current session · Resets 5pm (America/New_York)".
 # A narrow pane can leave the dot at the end of the line and put
-# "Resets ..." on the next one. The label stops at the first ")", so an
-# inline timezone is not swallowed into the label.
+# "Resets ..." on the next one, or end the line on the word "Resets" and
+# put the reset text on the next one. The label stops at the first ")",
+# so an inline timezone is not swallowed into the label.
 _CLAUDE_HEADER_RE = re.compile(
     r"^(?P<label>Current session|Current week \([^)]+\))"
-    r"(?: ·(?:\s+Resets\s+(?P<resets>.+))?)?$"
+    r"(?: ·(?P<saw_resets>\s+Resets(?:\s+(?P<resets>.+))?)?)?$"
 )
 # "████        8% used" -- the bar glyphs are decoration, only the number counts.
 _CLAUDE_USED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s+used\b")
 _CLAUDE_RESETS_RE = re.compile(r"^Resets\s+(.+)$")
-# Timezone wrapped onto the following line: "(America/New_York)".
-# A parenthetical with no slash is not a timezone continuation.
-_CLAUDE_TZ_CONT_RE = re.compile(r"^\([A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+\)$")
+# A bar row is block glyphs only. It is not reset text.
+_CLAUDE_BAR_RE = re.compile(r"^[░▒▓█▏▎▍▌▋▊▉\s]+$")
+# Timezone wrapped onto the following line: "(America/New_York)" or "(UTC)".
+# A parenthetical with a space, such as "(promo note)", is not one.
+_CLAUDE_TZ_CONT_RE = re.compile(
+    r"^\((?:[A-Z]{2,5}|[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+)\)$"
+)
 # A weekly window scoped to one model family: "Current week (Fable)". The
 # account-wide "(all models)" line is excluded by `_window_model`.
 _CLAUDE_MODEL_WINDOW_RE = re.compile(r"^Current week \((?P<model>.+)\)$")
@@ -148,21 +153,38 @@ def parse_claude_usage(text):
     Reads the `visible` snapshot. Older builds put the header alone, then
     `N% used`, then `Resets ...`. Newer builds put the reset on the header
     (`Current session · Resets 5pm (America/New_York)`); a timezone that
-    does not fit continues as `(Area/City)` on the next line, the bar is
-    its own row, and `N% used` follows the bar. A narrow pane may split the
-    header so `Resets ...` starts the next line. Both layouts are accepted.
+    does not fit continues as `(Area/City)` or `(UTC)` on the next line,
+    the bar is its own row, and `N% used` follows the bar. A narrow pane
+    may split the header so `Resets ...` starts the next line, or end the
+    header on the word `Resets` and put the reset text on the next line.
+    A second `N% used` under a label that already has one is rejected:
+    that row belongs to a header this parser did not recognize.
     """
     windows = {}
     label = None
     pending_used = None
     pending_resets = None
-    # True only until the next non-empty line, so a later parenthetical
-    # in the dialog is not glued onto a reset that already moved on.
+    # The header ended on the word "Resets"; the next content line is the
+    # reset text. Distinct from a header that ended at the middle dot,
+    # whose next line is itself a "Resets ..." line.
+    awaiting_reset_body = False
+    # True only until the next content line, so a later parenthetical in
+    # the dialog is not glued onto a reset that already moved on.
     awaiting_tz = False
 
     def flush():
         if label is not None and pending_used is not None:
             windows[label] = _window(pending_used, pending_resets)
+
+    def lost_header(used_pct):
+        raise ParseError(
+            "A second '{}% used' row appeared under {!r} before the next "
+            "header, so a wrapped header was lost and this read is rejected "
+            "instead of dropping that window. Send /usage and read with "
+            "`herdr agent read <name> --source visible` while the dialog "
+            "is open.".format(used_pct, label),
+            {"kind": "claude"},
+        )
 
     for raw in text.splitlines():
         line = raw.strip()
@@ -173,18 +195,37 @@ def parse_claude_usage(text):
             pending_used = None
             inline = header.group("resets")
             pending_resets = inline.strip() if inline and inline.strip() else None
+            awaiting_reset_body = header.group("saw_resets") is not None and pending_resets is None
             awaiting_tz = pending_resets is not None and "(" not in pending_resets
             continue
-        if label is None:
+        if label is None or not line:
             continue
-        if awaiting_tz and line:
-            if _CLAUDE_TZ_CONT_RE.match(line):
+        if awaiting_reset_body:
+            if _CLAUDE_BAR_RE.match(line):
+                continue
+            if _CLAUDE_USED_RE.search(line) is None:
+                pending_resets = line
+                awaiting_reset_body = False
+                awaiting_tz = "(" not in pending_resets
+                continue
+            awaiting_reset_body = False
+        if awaiting_tz:
+            if _CLAUDE_BAR_RE.match(line) or _CLAUDE_USED_RE.search(line):
+                awaiting_tz = False
+            elif _CLAUDE_TZ_CONT_RE.match(line):
                 pending_resets = "{} {}".format(pending_resets, line)
                 awaiting_tz = False
                 continue
-            awaiting_tz = False
+            elif line.startswith("(") and line.endswith(")"):
+                awaiting_tz = False
+            else:
+                pending_resets = "{} {}".format(pending_resets, line)
+                awaiting_tz = "(" not in line
+                continue
         used = _CLAUDE_USED_RE.search(line)
-        if used and pending_used is None:
+        if used:
+            if pending_used is not None:
+                lost_header(used.group(1))
             pending_used = used.group(1)
             continue
         resets = _CLAUDE_RESETS_RE.match(line)
