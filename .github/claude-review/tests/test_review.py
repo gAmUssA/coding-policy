@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 
@@ -52,7 +53,7 @@ class ReviewTest(unittest.TestCase):
         self.fetched = HEAD
         self.lane_override = None
         self.posted_state = None
-        self.output = {"type": "result", "subtype": "success", "is_error": False,
+        self.output: dict[str, Any] = {"type": "result", "subtype": "success", "is_error": False,
                        "structured_output": {"summary": "One concrete defect.", "findings": [
                            {"path": "app.py", "line": 2, "severity": "blocking", "message": "Empty input divides by zero."}]}}
         self.runner = patch.object(reviewer, "run", self.run_command)
@@ -83,6 +84,7 @@ class ReviewTest(unittest.TestCase):
             return "diff --git a/app.py b/app.py\n+return total / len(items)\n"
         elif args[0] == "claude":
             self.claude_calls.append((args, env, data))
+            assert cwd is not None
             self.assertEqual(sorted(Path(cwd).iterdir()), [])
             return json.dumps(self.output)
         elif args[0] == "bash":

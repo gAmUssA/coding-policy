@@ -28,12 +28,19 @@ FAKE_CLI = textwrap.dedent("""\
     if mode == "missing-tool":
         tools.remove("Grep")
     system = "review"
-    if mode == "leak":
-        with open("CLAUDE.md") as handle:
+    leaks = {{"leak": "CLAUDE.md", "leak-project": ".claude/CLAUDE.md",
+             "leak-local": "CLAUDE.local.md", "leak-rules": ".claude/rules/probe.md"}}
+    if mode in leaks:
+        with open(leaks[mode]) as handle:
             system += handle.read()
-    if mode == "hook":
-        settings = json.load(open(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json")))
+    hooks = {{"hook": os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json"),
+             "hook-project": ".claude/settings.json", "hook-local": ".claude/settings.local.json"}}
+    if mode in hooks:
+        settings = json.load(open(hooks[mode]))
         os.system(settings["hooks"]["SessionStart"][0]["hooks"][0]["command"])
+    if mode == "mcp":
+        server = json.load(open(".mcp.json"))["mcpServers"]["probe"]
+        os.system(" ".join([server["command"], *server["args"]]))
     if mode != "silent":
         body = json.dumps({{"system": system, "tools": [{{"name": name}} for name in tools]}}).encode()
         request = urllib.request.Request(os.environ["ANTHROPIC_BASE_URL"] + "/v1/messages", data=body,
@@ -66,10 +73,24 @@ class IsolationProbeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("planted instruction file", result.stderr)
 
-    def test_cli_running_a_planted_hook_fails(self):
-        result = self.probe("hook")
+    def test_cli_loading_a_planted_instruction_file_at_any_scope_fails(self):
+        for mode in ("leak-project", "leak-local", "leak-rules"):
+            with self.subTest(mode=mode):
+                result = self.probe(mode)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("planted instruction file", result.stderr)
+
+    def test_cli_running_a_planted_hook_at_any_scope_fails(self):
+        for mode in ("hook", "hook-project", "hook-local"):
+            with self.subTest(mode=mode):
+                result = self.probe(mode)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("planted hook", result.stderr)
+
+    def test_cli_launching_a_project_mcp_server_fails(self):
+        result = self.probe("mcp")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("planted hook", result.stderr)
+        self.assertIn("MCP server", result.stderr)
 
     def test_cli_exposing_an_execution_tool_fails(self):
         result = self.probe("extra-tool")

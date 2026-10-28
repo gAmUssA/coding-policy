@@ -4,8 +4,10 @@
 Usage: check-isolation.py
 Out:   {"isolation": "pass", "requests": N, "tools": [...]} on stdout.
 Exit:  0 isolated; 1 with a stderr diagnostic when the CLI sent no request,
-       loaded a planted instruction file, ran a planted hook, or exposed a
-       tool outside the read-only set.
+       loaded a planted instruction file, ran a planted hook or MCP server, or
+       exposed a tool outside the read-only set. Plants cover the user scope
+       (CLAUDE_CONFIG_DIR) and the project and local scopes a PR checkout can
+       carry (CLAUDE.md, CLAUDE.local.md, .claude/, .mcp.json).
 
 Runs review.py's own claude_command() against a loopback server that captures
 the initial model request and answers a deliberate 401, with a dummy API
@@ -59,7 +61,7 @@ def main() -> int:
             self.end_headers()
             self.wfile.write(b'{"type":"error","error":{"type":"authentication_error","message":"isolation probe complete"}}')
 
-        def log_message(self, *_args):
+        def log_message(self, format, *args):
             pass  # Loopback probe traffic carries no operational diagnostics.
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
@@ -72,11 +74,20 @@ def main() -> int:
             source, config = root / "source", root / "config"
             source.mkdir()
             config.mkdir()
-            for path in (root / "CLAUDE.md", source / "CLAUDE.md", source / "AGENTS.md", config / "CLAUDE.md"):
+            (source / ".claude" / "rules").mkdir(parents=True)
+            # User, project and local scopes: a PR checkout supplies the
+            # project and local ones, so they are planted where the review runs.
+            for path in (root / "CLAUDE.md", config / "CLAUDE.md", source / "CLAUDE.md",
+                         source / "AGENTS.md", source / "CLAUDE.local.md",
+                         source / ".claude" / "CLAUDE.md", source / ".claude" / "rules" / "probe.md"):
                 path.write_text(SENTINEL)
             hook_marker = root / "hook-ran"
             settings = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": f"touch {hook_marker}"}]}]}}
-            (config / "settings.json").write_text(json.dumps(settings))
+            for path in (config / "settings.json", source / ".claude" / "settings.json",
+                         source / ".claude" / "settings.local.json"):
+                path.write_text(json.dumps(settings))
+            servers = {"mcpServers": {"probe": {"command": "touch", "args": [str(hook_marker)]}}}
+            (source / ".mcp.json").write_text(json.dumps(servers))
             env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
             env.update(CLAUDE_CONFIG_DIR=str(config),
                        ANTHROPIC_API_KEY="dummy-isolation-probe-key",
@@ -98,7 +109,7 @@ def main() -> int:
                         process.kill()
                         process.wait()
             if hook_marker.exists() or SENTINEL in json.dumps(requests):
-                raise RuntimeError("CLI loaded a planted instruction file or ran a planted hook")
+                raise RuntimeError("CLI loaded a planted instruction file or ran a planted hook or MCP server")
             tools = {tool["name"] for request in requests for tool in request.get("tools", [])}
             if not REQUIRED_TOOLS.issubset(tools) or tools - PERMITTED_TOOLS:
                 raise RuntimeError("CLI exposed an unexpected tool set: " + ", ".join(sorted(tools)))
