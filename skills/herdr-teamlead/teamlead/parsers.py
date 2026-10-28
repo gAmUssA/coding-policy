@@ -31,13 +31,23 @@ from .errors import ParseError
 
 # --- claude -----------------------------------------------------------------
 
-# A window header is a line that is exactly "Current session" or
-# "Current week (<something>)". The "(<something>)" form covers both
-# "(all models)" and a per-model line such as "(Fable)".
-_CLAUDE_HEADER_RE = re.compile(r"^(Current session|Current week \(.+\))$")
+# A window header is "Current session" or "Current week (<something>)".
+# "(<something>)" covers "(all models)" and a per-model line such as
+# "(Fable)". Newer Claude Code appends the reset on that line, after a
+# middle dot (U+00B7): "Current session · Resets 5pm (America/New_York)".
+# A narrow pane can leave the dot at the end of the line and put
+# "Resets ..." on the next one. The label stops at the first ")", so an
+# inline timezone is not swallowed into the label.
+_CLAUDE_HEADER_RE = re.compile(
+    r"^(?P<label>Current session|Current week \([^)]+\))"
+    r"(?: ·(?:\s+Resets\s+(?P<resets>.+))?)?$"
+)
 # "████        8% used" -- the bar glyphs are decoration, only the number counts.
 _CLAUDE_USED_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s+used\b")
 _CLAUDE_RESETS_RE = re.compile(r"^Resets\s+(.+)$")
+# Timezone wrapped onto the following line: "(America/New_York)".
+# A parenthetical with no slash is not a timezone continuation.
+_CLAUDE_TZ_CONT_RE = re.compile(r"^\([A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+\)$")
 # A weekly window scoped to one model family: "Current week (Fable)". The
 # account-wide "(all models)" line is excluded by `_window_model`.
 _CLAUDE_MODEL_WINDOW_RE = re.compile(r"^Current week \((?P<model>.+)\)$")
@@ -135,13 +145,20 @@ def _window(used_pct, resets):
 def parse_claude_usage(text):
     """Parse the full-screen `/usage` dialog Claude Code renders in its pane.
 
-    Reads the `visible` snapshot: the dialog paints over the viewport, so the
-    header/percentage/reset triples appear in reading order.
+    Reads the `visible` snapshot. Older builds put the header alone, then
+    `N% used`, then `Resets ...`. Newer builds put the reset on the header
+    (`Current session · Resets 5pm (America/New_York)`); a timezone that
+    does not fit continues as `(Area/City)` on the next line, the bar is
+    its own row, and `N% used` follows the bar. A narrow pane may split the
+    header so `Resets ...` starts the next line. Both layouts are accepted.
     """
     windows = {}
     label = None
     pending_used = None
     pending_resets = None
+    # True only until the next non-empty line, so a later parenthetical
+    # in the dialog is not glued onto a reset that already moved on.
+    awaiting_tz = False
 
     def flush():
         if label is not None and pending_used is not None:
@@ -152,19 +169,28 @@ def parse_claude_usage(text):
         header = _CLAUDE_HEADER_RE.match(line)
         if header:
             flush()
-            label = header.group(1)
+            label = header.group("label")
             pending_used = None
-            pending_resets = None
+            inline = header.group("resets")
+            pending_resets = inline.strip() if inline and inline.strip() else None
+            awaiting_tz = pending_resets is not None and "(" not in pending_resets
             continue
         if label is None:
             continue
+        if awaiting_tz and line:
+            if _CLAUDE_TZ_CONT_RE.match(line):
+                pending_resets = "{} {}".format(pending_resets, line)
+                awaiting_tz = False
+                continue
+            awaiting_tz = False
         used = _CLAUDE_USED_RE.search(line)
         if used and pending_used is None:
             pending_used = used.group(1)
             continue
         resets = _CLAUDE_RESETS_RE.match(line)
-        if resets and pending_used is not None and pending_resets is None:
-            pending_resets = resets.group(1).strip()
+        if resets and pending_resets is None:
+            pending_resets = resets.group(1).strip() or None
+            awaiting_tz = pending_resets is not None and "(" not in pending_resets
     flush()
 
     if not windows:

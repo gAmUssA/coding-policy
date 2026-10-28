@@ -338,7 +338,7 @@ it would queue as a prompt and land in the middle of that agent's work.
 
 | Kind | Command | Rendering | What it prints |
 | ---- | ------- | --------- | -------------- |
-| Claude Code | `/usage` | Full-screen dialog on the alternate screen; read with `--source visible`, close with `send-keys esc` | `Current session N% used`, `Current week (all models) N% used`, plus per-model weeks |
+| Claude Code | `/usage` | Full-screen dialog on the alternate screen; read with `--source visible`, close with `send-keys esc` | `Current session`, `Current week (all models)`, and per-model weeks, each `N% used`. The reset is a following `Resets` line or inline after ` · `; a wrapped `(Area/City)` line stays part of that reset |
 | Codex | `/status` | Box in the transcript | `Weekly limit: [...] N% left (resets ...)`, `5h limit: ... N% left`; a line like `GPT-5.3-Codex-Spark limit:` starts a secondary-model section, and the lines after it belong to that model |
 | Grok | `/usage` | Two renderings — see below | `Weekly limit: N%` (used), plus `Credits: $X` |
 
