@@ -12,8 +12,9 @@
 # poll-pr-reviews.sh), CI status, and merge state. Verdicts are read per
 # review lane (review-lanes.sh): the codex-policy lane gates, plus any lane
 # whose `lanes.<lane>.gating` is true; the claude-quality lane is advisory
-# until a later ADR promotes it, so the watcher neither waits for nor gates on
-# it (docs/adr/0014-retire-copilot-lane.md). A reviewer outside every lane
+# until a later ADR promotes it, so the watcher never gates on it, and waits
+# for it only where `lanes.<lane>.expected` says its workflow ran on head
+# (docs/adr/0014-retire-copilot-lane.md). A reviewer outside every lane
 # lands in `other_reviews`: a human CHANGES_REQUESTED there gates, a bot's
 # (Copilot) never does. It does
 # NOT wait for inline comments to appear (a verdict with zero inline comments is
@@ -25,11 +26,14 @@
 #        emitted on stdout when a terminal state is reached (rc 0 or 1).
 # Exit / result matrix (branch on .watch.result):
 #   rc 0, result "ready"             — mergeable, CI success/none, the policy
-#                                      reviewer and every gating lane posted
-#                                      (so their bodies can be read), and none
-#                                      is CHANGES_REQUESTED. An advisory lane
-#                                      may be CHANGES_REQUESTED or absent and
-#                                      this still reaches ready.
+#                                      reviewer and every gating or expected
+#                                      lane posted (so their bodies can be
+#                                      read), and no gating verdict is
+#                                      CHANGES_REQUESTED. An advisory lane may
+#                                      be CHANGES_REQUESTED, or absent when not
+#                                      expected, and this still reaches ready.
+#                                      An expected lane that never posts ends
+#                                      in pending_at_budget, never ready.
 #   rc 0, result "changes_requested" — the policy reviewer's latest verdict
 #                                      (or that of any lane the snapshot marks
 #                                      `gating: true`, or any human reviewer
@@ -123,17 +127,17 @@ main() {
       exit 2
     fi
 
-    local mergeable mstatus ci codex gating_cr gating_absent human_cr
+    local mergeable mstatus ci codex gating_cr owed_absent human_cr
     mergeable=$(printf '%s' "$snapshot" | jq -r '.merge_state.mergeable')
     mstatus=$(printf '%s'   "$snapshot" | jq -r '.merge_state.status')
     ci=$(printf '%s'        "$snapshot" | jq -r '.ci.status')
     codex=$(printf '%s'     "$snapshot" | jq -r '.reviews.codex.state')
     # Per-lane gating (review-lanes.sh): any lane flagged gating that is
-    # CHANGES_REQUESTED blocks, and every gating lane must have posted before
-    # ready. Advisory lanes are reported in the snapshot and never gate. A
-    # snapshot without `lanes` reads as no extra gating lanes.
+    # CHANGES_REQUESTED blocks, and every gating or expected lane must have
+    # posted before ready. Advisory lanes never gate. A snapshot without
+    # `lanes` reads as no extra gating lanes.
     gating_cr=$(printf '%s'     "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "CHANGES_REQUESTED")] | length > 0')
-    gating_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "none")] | length > 0')
+    owed_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select((.gating == true or .expected == true) and .state == "none")] | length > 0')
     # A human reviewer's CHANGES_REQUESTED gates until resolved through review
     # (rules/ci-safety.md Never Skip Tests), on any commit: GitHub keeps it
     # active across pushes. A bot outside every lane never gates.
@@ -164,7 +168,7 @@ main() {
     if [[ "$mergeable" == "MERGEABLE" \
        && ( "$ci" == "success" || "$ci" == "none" ) \
        && "$codex" != "none" \
-       && "$gating_absent" == "false" ]]; then
+       && "$owed_absent" == "false" ]]; then
       emit_and_exit "ready" "$attempts" "$elapsed" "$snapshot" 0
     fi
 

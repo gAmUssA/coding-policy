@@ -491,10 +491,10 @@ run "e2e: a human CHANGES_REQUESTED gates" test_e2e_human_block_gates
 
 # A lane flagged gating in the snapshot gates; the same verdict on an advisory
 # lane does not. This is the switch ADR 0010's promotion flips.
-lanes_snap() { # <claude-state> <claude-gating>
-  snap MERGEABLE CLEAN success COMMENTED | jq -c --arg s "$1" --argjson g "$2" \
-    '. + {lanes: {"codex-policy": (.reviews.codex + {gating: true}),
-                  "claude-quality": {state: $s, submitted_at: null, body: null, commit_id: null, stale: false, gating: $g}}}'
+lanes_snap() { # <claude-state> <claude-gating> [claude-expected]
+  snap MERGEABLE CLEAN success COMMENTED | jq -c --arg s "$1" --argjson g "$2" --argjson e "${3:-false}" \
+    '. + {lanes: {"codex-policy": (.reviews.codex + {gating: true, expected: true}),
+                  "claude-quality": {state: $s, submitted_at: null, body: null, commit_id: null, stale: false, gating: $g, expected: $e}}}'
 }
 
 test_advisory_claude_block_does_not_gate() {
@@ -539,6 +539,30 @@ test_gating_lane_absent_is_not_ready() {
   assert_eq "result" "pending_at_budget" "$(result_of "$out")"
 }
 run "a gating lane with no verdict is not ready" test_gating_lane_absent_is_not_ready
+
+# An advisory lane whose workflow ran on head owes a verdict: the watcher
+# waits for it and never reaches ready without it.
+test_expected_advisory_lane_absent_is_not_ready() {
+  reset_mocks
+  queue "$(lanes_snap none false true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  assert_eq "result" "pending_at_budget" "$(result_of "$out")"
+}
+run "an expected advisory lane with no verdict is not ready" test_expected_advisory_lane_absent_is_not_ready
+
+test_expected_advisory_lane_posted_is_ready() {
+  reset_mocks
+  queue "$(lanes_snap none false true)"
+  queue "$(lanes_snap COMMENTED false true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "poll count" "2" "$(calls)"
+}
+run "an expected advisory lane is waited for, then ready" test_expected_advisory_lane_posted_is_ready
 
 echo
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"

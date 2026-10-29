@@ -57,7 +57,18 @@ t_config_shape() {
   assert_eq "claude gates"  "false" "$(jq -r '.["claude-quality"].gating' <<<"$cfg")" || return 1
   assert_eq "lane set" '["claude-quality","codex-policy"]' "$(jq -c 'keys' <<<"$cfg")" || return 1
   assert_eq "codex marker" "<!-- coding-policy:codex-policy-review:v1 -->" "$(jq -r '.["codex-policy"].marker' <<<"$cfg")" || return 1
-  assert_eq "claude marker" "<!-- coding-policy:claude-quality-review:v1 -->" "$(jq -r '.["claude-quality"].marker' <<<"$cfg")"
+  assert_eq "claude marker" "<!-- coding-policy:claude-quality-review:v1 -->" "$(jq -r '.["claude-quality"].marker' <<<"$cfg")" || return 1
+  assert_eq "codex workflow" "null" "$(jq -r '.["codex-policy"].workflow' <<<"$cfg")" || return 1
+  assert_eq "claude workflow" "PR Code Review (Claude, subscription)" "$(jq -r '.["claude-quality"].workflow' <<<"$cfg")"
+}
+
+# The Claude lane is expected by its workflow's check name; a renamed
+# workflow would silently stop the watcher waiting for it.
+t_claude_workflow_matches_the_shipped_workflow() {
+  local wf name
+  wf="$(cd "$(dirname "$SCRIPT")/../.." && pwd)/.github/workflows/review-claude.yml"
+  name=$(sed -n 's/^name: //p' "$wf") || return 1
+  assert_eq "workflow name" "$name" "$(bash "$SCRIPT" | jq -r '.["claude-quality"].workflow')"
 }
 
 t_claude_marker_under_shared_login() {
@@ -92,6 +103,7 @@ t_untrusted_login_has_no_lane() {
 
 echo "== review-lanes.sh tests =="
 run "the executable emits the lane config"            t_config_shape
+run "the Claude workflow name matches review-claude.yml" t_claude_workflow_matches_the_shipped_workflow
 run "a Claude marker under the shared login is Claude" t_claude_marker_under_shared_login
 run "a Codex marker is Codex"                          t_codex_marker
 run "an unmarked legacy review is Codex by login"      t_unmarked_legacy_is_codex

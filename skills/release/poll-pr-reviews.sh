@@ -22,10 +22,11 @@
 #                   "stale": bool, "requested": bool}
 #     },
 #     "lanes": {   // every review lane (skills/release/review-lanes.sh)
-#       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool},
-#       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool}
+#       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool, "expected": true},
+#       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool,
+#                          "expected": bool}
 #     },
-#     "other_reviews": [   // latest review per login no lane claims, oldest first
+#     "other_reviews": [   // active verdict per login no lane claims, oldest first
 #       {"login": "...", "is_bot": bool,
 #        "state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
 #        "submitted_at": "ISO-8601", "body": "text|null",
@@ -45,8 +46,17 @@
 # (rules/reviewer-feedback-reading.md); no lane gate reads it
 # (docs/adr/0014-retire-copilot-lane.md). An `other_reviews` entry is NOT
 # collapsed against head: GitHub keeps a human CHANGES_REQUESTED active
-# across pushes until it is dismissed or superseded, so `state` is the
-# login's latest verdict as posted and `stale` only says it predates head.
+# across pushes until that login APPROVES or it is dismissed, and a later
+# COMMENTED review (a thread reply is one) never clears it. `state` is that
+# active verdict: the login's newest APPROVED / CHANGES_REQUESTED / DISMISSED
+# review decides it (DISMISSED reads "none"), else COMMENTED when the login
+# only commented. `body`, `submitted_at` and `commit_id` come from the review
+# that decided it; `stale` only says that review predates head.
+#
+# A lane is `expected` when its verdict is owed on this head: the codex-policy
+# lane always; a lane with a `workflow` in review-lanes.sh when a check from
+# that workflow is pass, fail or pending on head. The watcher waits for every
+# gating or expected lane.
 # `inline_comments.other` counts top-level inline comments from every author
 # outside CODEX_COMMENT_LOGINS, each of which needs a reply before merge.
 #
@@ -224,10 +234,11 @@ toplevel_comments_by() {
         | length'
 }
 
-# Latest review per login for every review no lane claims (review-lanes.sh),
-# with the author's bot/human type. DISMISSED and PENDING collapse to "none"
-# the way LATEST_REVIEW_JQ does; `stale` marks a review bound to an older
-# commit without collapsing its state.
+# Active verdict per login for every review no lane claims (review-lanes.sh),
+# with the author's bot/human type, resolved the way GitHub resolves a
+# reviewer's state (see the header): a later COMMENTED never clears an earlier
+# CHANGES_REQUESTED. `stale` marks a review bound to an older commit without
+# collapsing its state.
 unlaned_reviews() {
   local owner="$1" repo="$2" pr="$3" head="$4" cfg
   cfg=$(review_lanes_config) \
@@ -235,11 +246,17 @@ unlaned_reviews() {
   slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
     | jq --argjson cfg "$cfg" --arg head "$head" \
         "$(review_lanes_jq)"' [.[] | select(review_lane($cfg) == null) | select((.user.login // "") != "")]
-          | group_by(.user.login) | map(max_by(.submitted_at)) | sort_by(.submitted_at)
-          | map({login: .user.login, is_bot: (.user.type == "Bot"),
-                 state: (if (.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then .state else "none" end),
-                 submitted_at, body, commit_id,
-                 stale: (.commit_id != $head)})'
+          | group_by(.user.login)
+          | map( (map(select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) | max_by(.submitted_at)) as $decisive
+                 | (map(select(.state == "COMMENTED")) | max_by(.submitted_at)) as $commented
+                 | (if $decisive != null and ($decisive.state | IN("APPROVED", "CHANGES_REQUESTED")) then $decisive
+                    elif $commented != null then $commented
+                    else ($decisive // (max_by(.submitted_at))) | .state = "none" end) as $v
+                 | {login: $v.user.login, is_bot: ($v.user.type == "Bot"),
+                    state: (if ($v.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then $v.state else "none" end),
+                    submitted_at: $v.submitted_at, body: $v.body, commit_id: $v.commit_id,
+                    stale: ($v.commit_id != $head)})
+          | sort_by(.submitted_at)'
 }
 
 # Count top-level (non-reply) inline comments authored by NONE of <login...>.
@@ -323,7 +340,7 @@ main() {
 
   # gh pr checks exits 8 when no checks are configured — distinguish that from real errors.
   local checks_json checks_raw rc=0
-  checks_raw=$(gh pr checks "$pr_number" --repo "github.com/${owner}/${repo}" --json name,bucket 2>&1) || rc=$?
+  checks_raw=$(gh pr checks "$pr_number" --repo "github.com/${owner}/${repo}" --json name,bucket,workflow 2>&1) || rc=$?
   if [[ $rc -eq 0 ]]; then
     checks_json="$checks_raw"
   # Here-string, not `echo | grep -qi`: `-q` makes grep exit at the first
@@ -417,8 +434,10 @@ main() {
       ci: {status: $ci_status, checks: $checks},
       reviews: {codex: $codex},
       lanes: {
-        "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating}),
-        "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating})
+        "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating, expected: true}),
+        "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating,
+                                       expected: ($cfg["claude-quality"].workflow as $wf
+                                         | $wf != null and any($checks[]; .workflow == $wf and (.bucket | IN("pass", "fail", "pending"))))})
       },
       other_reviews: $other_reviews,
       inline_comments: {codex: $codex_comments, other: $other_comments},

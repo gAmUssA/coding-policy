@@ -746,6 +746,55 @@ t_main_unmarked_review_is_codex_lane() {
   assert_eq "claude lane empty"      "none"      "$(jq -r '.lanes["claude-quality"].state' <<<"$out")"
 }
 
+# GitHub resolves a reviewer's state from decisive reviews only: a later
+# COMMENTED (a thread reply is one) never clears CHANGES_REQUESTED.
+human_state_after() { # <state1> <state2> -> other_reviews[0] {state, body}
+  MOCK_MERGE_STATE=clean
+  MOCK_REVIEWS_BODY='[
+    {"id":5,"user":{"login":"alice","type":"User"},"state":"'"$1"'","submitted_at":"2026-10-20T09:00:00Z","commit_id":"'"$OLD_SHA"'","body":"first"},
+    {"id":6,"user":{"login":"alice","type":"User"},"state":"'"$2"'","submitted_at":"2026-10-20T09:30:00Z","commit_id":"'"$HEAD_SHA"'","body":"second"}]'
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_REVIEWS_BODY
+  jq -c '.other_reviews | map({state, body})' <<<"$out"
+}
+
+t_human_comment_does_not_clear_changes_requested() {
+  assert_eq "active verdict" '[{"state":"CHANGES_REQUESTED","body":"first"}]' "$(human_state_after CHANGES_REQUESTED COMMENTED)"
+}
+
+t_human_approval_clears_changes_requested() {
+  assert_eq "active verdict" '[{"state":"APPROVED","body":"second"}]' "$(human_state_after CHANGES_REQUESTED APPROVED)"
+}
+
+t_human_dismissal_then_comment_reads_commented() {
+  assert_eq "active verdict" '[{"state":"COMMENTED","body":"second"}]' "$(human_state_after DISMISSED COMMENTED)"
+}
+
+claude_expected_with_checks() { # <checks-json>
+  MOCK_MERGE_STATE=clean
+  MOCK_CHECKS_BODY="$1"
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_CHECKS_BODY
+  jq -c '[.lanes["codex-policy"].expected, .lanes["claude-quality"].expected]' <<<"$out"
+}
+
+t_claude_lane_expected_when_workflow_ran() {
+  assert_eq "expected" '[true,true]' \
+    "$(claude_expected_with_checks '[{"name":"review","bucket":"pending","workflow":"PR Code Review (Claude, subscription)"}]')"
+}
+
+t_claude_lane_not_expected_without_workflow() {
+  assert_eq "expected" '[true,false]' \
+    "$(claude_expected_with_checks '[{"name":"review","bucket":"pass","workflow":"PR Policy Review (Codex, subscription)"}]')"
+}
+
+t_claude_lane_not_expected_when_skipped() {
+  assert_eq "expected" '[true,false]' \
+    "$(claude_expected_with_checks '[{"name":"review","bucket":"skipping","workflow":"PR Code Review (Claude, subscription)"}]')"
+}
+
 # --- driver ---
 
 echo "== poll-pr-reviews.sh tests =="
@@ -763,6 +812,12 @@ run "toplevel_comments_by returns 0 for empty comments"               t_toplevel
 run "toplevel_comments_by excludes replies and foreign logins"        t_toplevel_comments_by_excludes_replies_and_other_logins
 run "main counts Copilot comments as other"                           t_main_counts_copilot_comments_as_other
 run "main reports a human review without head collapse"               t_main_reports_human_review_unresolved_by_head
+run "a later human COMMENTED never clears CHANGES_REQUESTED"          t_human_comment_does_not_clear_changes_requested
+run "a later human APPROVED clears CHANGES_REQUESTED"                 t_human_approval_clears_changes_requested
+run "a dismissed human block reads as the later comment"              t_human_dismissal_then_comment_reads_commented
+run "the Claude lane is expected when its workflow ran on head"       t_claude_lane_expected_when_workflow_ran
+run "the Claude lane is not expected without its workflow"            t_claude_lane_not_expected_without_workflow
+run "a skipped Claude workflow does not make its lane expected"       t_claude_lane_not_expected_when_skipped
 run "toplevel_comments_by survives a non-object element (#300)"       t_toplevel_comments_by_survives_non_object_element
 run "toplevel_comments_by warns about the dropped element (#300)"     t_toplevel_comments_by_warns_on_non_object_element
 run "latest_review_by survives a non-object element (#300)"           t_latest_review_by_survives_non_object_element

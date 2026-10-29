@@ -34,8 +34,8 @@
 #                           lane name or null for the input review object
 # Usage (executed): review-lanes.sh
 # Out:   the lane config JSON on stdout:
-#   {"codex-policy":   {"marker": "...", "logins": [...], "gating": true},
-#    "claude-quality": {"marker": "...", "logins": [...], "gating": false}}
+#   {"codex-policy":   {"marker": "...", "logins": [...], "gating": true,  "workflow": null},
+#    "claude-quality": {"marker": "...", "logins": [...], "gating": false, "workflow": "..."}}
 # Exit:  0 on success; 2 with a stderr diagnostic when jq is missing.
 
 set -euo pipefail
@@ -48,6 +48,12 @@ CLAUDE_QUALITY_MARKER="<!-- coding-policy:claude-quality-review:v1 -->"
 CODEX_POLICY_LOGINS=("github-actions[bot]")
 CLAUDE_QUALITY_LOGINS=("github-actions[bot]")
 
+# The workflow whose check run on the PR head means a lane's verdict is owed
+# (`gh pr checks --json workflow`). The Claude reviewer is push-triggered but
+# only some repos run it, so its lane is expected exactly when its check
+# exists; the Codex lane is always expected and carries no workflow.
+CLAUDE_QUALITY_WORKFLOW="PR Code Review (Claude, subscription)"
+
 CODEX_POLICY_GATES=true
 CLAUDE_QUALITY_GATES=false
 
@@ -58,11 +64,12 @@ review_lanes_config() {
   jq -cn \
     --arg codex_marker "$CODEX_POLICY_MARKER" \
     --arg claude_marker "$CLAUDE_QUALITY_MARKER" \
+    --arg claude_workflow "$CLAUDE_QUALITY_WORKFLOW" \
     --argjson codex "$codex" --argjson claude "$claude" \
     --argjson codex_gates "$CODEX_POLICY_GATES" \
     --argjson claude_gates "$CLAUDE_QUALITY_GATES" \
-    '{"codex-policy":   {marker: $codex_marker,  logins: $codex,   gating: $codex_gates},
-      "claude-quality": {marker: $claude_marker, logins: $claude,  gating: $claude_gates}}'
+    '{"codex-policy":   {marker: $codex_marker,  logins: $codex,  gating: $codex_gates,  workflow: null},
+      "claude-quality": {marker: $claude_marker, logins: $claude, gating: $claude_gates, workflow: $claude_workflow}}'
 }
 
 review_lanes_jq() {
