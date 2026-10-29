@@ -1,5 +1,5 @@
 {
-  "context": "Tests whether the agent reads every review thread in full, correctly applies review severity rules (policy reviewer blocking vs. Copilot always advisory), uses the exact required reply literals for each category, defers the advisory findings rather than fixing them immediately, and notes that Copilot must be re-requested after any push.",
+  "context": "Tests whether the agent reads every review thread in full, correctly applies review severity rules (the gating policy lane is blocking; the claude-quality lane is advisory while its lane is not gating), uses the exact required reply literals for each category, defers the advisory findings rather than fixing them immediately, and plans to re-run the watcher after any push instead of requesting a reviewer.",
   "type": "weighted_checklist",
   "checklist": [
     {
@@ -8,13 +8,13 @@
       "max_score": 8
     },
     {
-      "name": "Copilot inline #1 addressed",
-      "description": "response-plan.md includes a section or entry covering the Copilot inline comment on line 84 (input validation)",
+      "name": "Claude quality inline #1 addressed",
+      "description": "response-plan.md includes a section or entry covering the Claude quality inline comment on line 84 (input validation)",
       "max_score": 8
     },
     {
-      "name": "Copilot inline #2 addressed",
-      "description": "response-plan.md includes a section or entry covering the Copilot inline comment on line 92 (docstring)",
+      "name": "Claude quality inline #2 addressed",
+      "description": "response-plan.md includes a section or entry covering the Claude quality inline comment on line 92 (docstring)",
       "max_score": 8
     },
     {
@@ -23,8 +23,8 @@
       "max_score": 10
     },
     {
-      "name": "Copilot findings classified advisory",
-      "description": "Both Copilot inline comments are classified as advisory (not blocking) in response-plan.md \u2014 Copilot findings are always advisory regardless of Copilot's review state",
+      "name": "Claude quality findings classified advisory",
+      "description": "Both Claude quality inline comments are classified as advisory (not blocking) in response-plan.md \u2014 the claude-quality lane is advisory (gating: false) regardless of how severe a finding sounds",
       "max_score": 10
     },
     {
@@ -39,7 +39,7 @@
     },
     {
       "name": "Advisory folded or deferred",
-      "description": "response-plan.md gives every Copilot advisory finding one of the two dispositions rules/review-severity.md allows: folded into the push already fixing the blocking finding (a blocking round is open), or deferred to a named follow-up issue or PR referenced from this PR. Score 0 if any advisory gets its own dedicated fix push, or is left without a disposition.",
+      "description": "response-plan.md gives every Claude quality advisory finding one of the two dispositions rules/review-severity.md allows: folded into the push already fixing the blocking finding (a blocking round is open), or deferred to a named follow-up issue or PR referenced from this PR. Score 0 if any advisory gets its own dedicated fix push, or is left without a disposition.",
       "max_score": 10
     },
     {
@@ -48,8 +48,8 @@
       "max_score": 8
     },
     {
-      "name": "Copilot re-request mentioned",
-      "description": "response-plan.md mentions that Copilot must be re-requested after pushing fixes (e.g. via request-copilot-review.sh or equivalent) because it does not re-post automatically",
+      "name": "Re-watch after push",
+      "description": "response-plan.md states that after pushing fixes the agent re-runs the watcher (watch-pr-reviews.sh or release Step 5) and reads the new verdicts, and does NOT plan to request any reviewer \u2014 both reviewers re-run on the push",
       "max_score": 10
     }
   ]

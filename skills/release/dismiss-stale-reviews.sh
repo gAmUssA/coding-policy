@@ -47,7 +47,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-lanes.sh" \
 # The bot logins whose CHANGES_REQUESTED reviews gate the merge — every login
 # a review lane can carry (review-lanes.sh). An array iterated with quoted
 # expansion, NOT a space-string: the `[bot]` suffix is a glob bracket.
-GATING_BOTS=("${CODEX_POLICY_LOGINS[@]}" "${CLAUDE_QUALITY_LOGINS[@]}" "${COPILOT_LOGINS[@]}")
+GATING_BOTS=("${CODEX_POLICY_LOGINS[@]}" "${CLAUDE_QUALITY_LOGINS[@]}")
 
 # Fixed dismissal message — a dismissal records who/why on the PR timeline.
 DISMISS_MESSAGE="Superseded by a later all-clear review from the same bot — dismissed by the release skill so the stale request stops gating the merge."
@@ -98,7 +98,7 @@ main() {
   all=$(lane_reviews "$owner" "$repo" "$pr") \
     || { echo "error: failed to fetch reviews on ${owner}/${repo}#${pr} — run 'gh auth status --hostname github.com' to verify auth, then retry" >&2; exit 1; }
 
-  for lane in codex-policy claude-quality copilot; do
+  for lane in codex-policy claude-quality; do
     reviews=$(jq --arg lane "$lane" '[.[] | select(.lane == $lane)]' <<<"$all")
 
     # No reviews in this lane yet — nothing to do.

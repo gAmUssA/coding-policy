@@ -144,9 +144,9 @@ t_already_dismissed_is_skipped() {
   assert_eq "dismissed empty" "0" "$(jq '.dismissed | length' <<<"$out")"
 }
 
-# Per-bot independence: one bot cleared (dismiss its stale CR), the other
-# still requesting changes (leave active).
-t_per_bot_independence() {
+# Copilot belongs to no review lane (docs/adr/0014-retire-copilot-lane.md):
+# its CHANGES_REQUESTED is never dismissed and never reported as gating.
+t_copilot_review_is_ignored() {
   MOCK_REVIEWS_BODY='[
     {"id":41,"state":"CHANGES_REQUESTED","commit_id":"aaa","submitted_at":"2026-01-01T00:00:00Z","user":{"login":"github-actions[bot]"}},
     {"id":42,"state":"COMMENTED","commit_id":"bbb","submitted_at":"2026-01-02T00:00:00Z","user":{"login":"github-actions[bot]"}},
@@ -156,9 +156,9 @@ t_per_bot_independence() {
   out=$(main "owner" "repo" "1") || return 1
   dismissed=$(jq -r '.dismissed | map("\(.login):\(.review_id)") | join(",")' <<<"$out")
   active=$(jq -r '.left_active | map("\(.login):\(.review_id)") | join(",")' <<<"$out")
-  assert_eq "dismissed codex stale"       "github-actions[bot]:41"                 "$dismissed" || return 1
-  assert_eq "copilot left active"         "copilot-pull-request-reviewer[bot]:43"  "$active"    || return 1
-  assert_eq "exactly one dismissal"       "1"                                      "$(dismiss_count)"
+  assert_eq "dismissed codex stale"   "github-actions[bot]:41" "$dismissed" || return 1
+  assert_eq "copilot not left active" ""                       "$active"    || return 1
+  assert_eq "exactly one dismissal"   "1"                      "$(dismiss_count)"
 }
 
 # No reviews at all -> empty envelope, exit 0.
@@ -213,8 +213,8 @@ t_login_is_glob_safe_against_cwd_files() {
   ]'
   local decoy_dir out ids
   decoy_dir=$(mktemp -d) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
-  # Files that `github-actions[bot]` and `copilot-...[bot]` would glob to.
-  { : > "${decoy_dir}/github-actionsb" && : > "${decoy_dir}/copilot-pull-request-reviewero"; } \
+  # A file that `github-actions[bot]` would glob to.
+  { : > "${decoy_dir}/github-actionsb"; } \
     || { echo "fatal: cannot write the decoy files in ${decoy_dir}" >&2; exit 2; }
   out=$(cd "$decoy_dir" && main "owner" "repo" "1") || { rm -rf "$decoy_dir"; return 1; }
   rm -rf "$decoy_dir"
@@ -295,7 +295,7 @@ echo "test_dismiss_stale_reviews.sh"
 run "stale CR then COMMENT is dismissed"        t_stale_cr_then_comment_is_dismissed
 run "latest CR is left active"                  t_latest_cr_is_left_active
 run "already-dismissed is skipped"              t_already_dismissed_is_skipped
-run "per-bot independence"                      t_per_bot_independence
+run "a Copilot review claims no lane"           t_copilot_review_is_ignored
 run "no reviews is a no-op"                     t_no_reviews_is_noop
 run "latest DISMISSED leaves earlier active CR" t_latest_dismissed_leaves_earlier_active_cr
 run "multiple stale CRs all dismissed"          t_multiple_stale_crs_all_dismissed

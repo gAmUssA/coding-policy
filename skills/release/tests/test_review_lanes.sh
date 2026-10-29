@@ -55,7 +55,7 @@ t_config_shape() {
   cfg=$(bash "$SCRIPT") || return 1
   assert_eq "codex gates"   "true"  "$(jq -r '.["codex-policy"].gating' <<<"$cfg")" || return 1
   assert_eq "claude gates"  "false" "$(jq -r '.["claude-quality"].gating' <<<"$cfg")" || return 1
-  assert_eq "copilot gates" "false" "$(jq -r '.copilot.gating' <<<"$cfg")" || return 1
+  assert_eq "lane set" '["claude-quality","codex-policy"]' "$(jq -c 'keys' <<<"$cfg")" || return 1
   assert_eq "codex marker" "<!-- coding-policy:codex-policy-review:v1 -->" "$(jq -r '.["codex-policy"].marker' <<<"$cfg")" || return 1
   assert_eq "claude marker" "<!-- coding-policy:claude-quality-review:v1 -->" "$(jq -r '.["claude-quality"].marker' <<<"$cfg")"
 }
@@ -78,8 +78,10 @@ t_quoted_marker_does_not_reclassify() {
   assert_eq "lane" "codex-policy" "$(lane_of 'github-actions[bot]' '"Policy loaded. Finding quotes <!-- coding-policy:claude-quality-review:v1 -->"')"
 }
 
-t_copilot_login() {
-  assert_eq "lane" "copilot" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"<!-- coding-policy:claude-quality-review:v1 -->"')"
+# Copilot belongs to no lane, so its reviews are ignored.
+t_copilot_login_has_no_lane() {
+  assert_eq "plain body"  "null" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"Copilot reviewed 3 files."')" || return 1
+  assert_eq "marked body" "null" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"<!-- coding-policy:claude-quality-review:v1 -->"')"
 }
 
 # A marker from a login no lane trusts claims no lane.
@@ -94,7 +96,7 @@ run "a Claude marker under the shared login is Claude" t_claude_marker_under_sha
 run "a Codex marker is Codex"                          t_codex_marker
 run "an unmarked legacy review is Codex by login"      t_unmarked_legacy_is_codex
 run "a quoted marker does not reclassify"              t_quoted_marker_does_not_reclassify
-run "the Copilot login is Copilot"                     t_copilot_login
+run "the Copilot login claims no lane"                 t_copilot_login_has_no_lane
 run "an untrusted login claims no lane"                t_untrusted_login_has_no_lane
 
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="

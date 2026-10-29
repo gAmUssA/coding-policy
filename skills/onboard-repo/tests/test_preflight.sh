@@ -53,7 +53,7 @@ mkrepo() { # <dir>
 mkmount() { # <dir> : fixture plugin mount with every template
   local t="$1/skills/onboard-repo/templates" f
   mkdir -p "$t" || die "could not create the fixture mount at $t"
-  for f in review-codex.yml.md copilot-instructions.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh; do
+  for f in review-codex.yml.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh; do
     printf '# %s\n' "$f" > "$t/$f" || die "could not write the fixture template $t/$f"
   done
 }
@@ -126,6 +126,13 @@ STUB
   printf 'x\n' > "$TMP/r6/.github/workflows/review-codex.yml" || die "could not write the fixture workflow in $TMP/r6"
   run "$TMP/r6"
   if [[ $RC -eq 1 ]] && has_failure targets-absent && grep -q -- '--override' <<<"$OUT"; then pass; else fail "target present: RC=$RC OUT=$OUT"; fi
+
+  # 6b. a consumer's existing .github/copilot-instructions.md is not a target
+  mkrepo "$TMP/r6b"
+  mkdir -p "$TMP/r6b/.github" || die "could not create $TMP/r6b/.github"
+  printf 'x\n' > "$TMP/r6b/.github/copilot-instructions.md" || die "could not write the fixture Copilot file in $TMP/r6b"
+  run "$TMP/r6b"
+  if [[ $RC -eq 0 ]] && ! has_failure targets-absent; then pass; else fail "copilot file not a target: RC=$RC OUT=$OUT"; fi
 
   # 7. override, dirty target (untracked counts as dirty)
   OUT="$(cd "$TMP/r6" && env "PATH=$STUBBIN:$PATH" CODEX_AUTH_FILE="$AUTH_OK" PLUGIN_MOUNT="$MOUNT" bash "$SCRIPT" --override 2>/dev/null)"; RC=$?

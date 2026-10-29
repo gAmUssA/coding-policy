@@ -260,7 +260,7 @@ resulting tip again before release.
 ## Why Phase 2 Runs Before the PR
 
 The registry build's PR #27 went through **12 automated review rounds** —
-policy reviewer plus Copilot — because the code reached the bots before the
+policy reviewer plus an advisory bot — because the code reached the bots before the
 team's own reviewer and tester had seen it. Each round cost a full CI cycle and
 a context reload on the developer.
 
@@ -308,8 +308,9 @@ loop is not converging. Dispatch adjudication on exactly one of three triggers:
   re-reading the rule.
 - A lead override of a blocking finding — the lead about to waive a finding a
   worker labelled blocking gets a second, independent read first.
-- A bot finding the team disagrees with — the policy reviewer or Copilot flags
-  something the developer and reviewer both think is wrong.
+- A bot finding the team disagrees with — the policy reviewer or the Claude
+  quality reviewer flags something the developer and reviewer both think is
+  wrong.
 
 All three are disputes, and a dispute is settled once. Dispatching an
 adjudication at every allowance boundary made the seat a per-round toll on the

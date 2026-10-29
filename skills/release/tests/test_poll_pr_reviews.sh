@@ -190,13 +190,13 @@ gh() { gh_pin_gate _gh_mock "$@"; }
 
 t_requested_among_matches_a_pending_bot() {
   local out
-  out=$(requested_among '["copilot-pull-request-reviewer"]' "copilot-pull-request-reviewer[bot]")
+  out=$(requested_among '["github-actions"]' "github-actions[bot]")
   assert_eq "requested" "true" "$out"
 }
 
 t_requested_among_is_false_when_nobody_asked() {
   local out
-  out=$(requested_among '[]' "copilot-pull-request-reviewer[bot]")
+  out=$(requested_among '[]' "github-actions[bot]")
   assert_eq "requested" "false" "$out"
 }
 
@@ -205,13 +205,13 @@ t_requested_among_is_false_when_nobody_asked() {
 t_fetch_requested_logins_reads_the_raw_graphql_shape() {
   local out
   MOCK_REQUESTED_RAW='{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
-    {"requestedReviewer":{"__typename":"Bot","login":"Copilot-Pull-Request-Reviewer[bot]"}},
+    {"requestedReviewer":{"__typename":"Bot","login":"GitHub-Actions[bot]"}},
     {"requestedReviewer":{"__typename":"User","login":"Some-Human"}},
     {"requestedReviewer":{"__typename":"Team","slug":"Core-Team"}},
     {"requestedReviewer":null}]}}}}}'
   out=$(fetch_requested_logins owner repo 7)
   unset MOCK_REQUESTED_RAW
-  assert_eq "logins" '["copilot-pull-request-reviewer","some-human","core-team"]' "$out"
+  assert_eq "logins" '["github-actions","some-human","core-team"]' "$out"
 }
 
 # A PR number is validated before any call: `-F` would read a file for an
@@ -232,7 +232,7 @@ t_non_integer_pr_number_is_refused_before_any_call() {
 
 t_requested_among_ignores_another_reviewer() {
   local out
-  out=$(requested_among '["some-human"]' "copilot-pull-request-reviewer[bot]")
+  out=$(requested_among '["some-human"]' "github-actions[bot]")
   assert_eq "requested" "false" "$out"
 }
 
@@ -241,18 +241,18 @@ t_main_marks_an_unrequested_lane() {
   MOCK_REQUESTED_BODY='[]'
   local out
   out=$(main owner repo 1)
-  assert_eq "copilot state"     "none"  "$(echo "$out" | jq -r '.reviews.copilot.state')" || return 1
-  assert_eq "copilot requested" "false" "$(echo "$out" | jq -r '.reviews.copilot.requested')" || return 1
-  assert_eq "copilot stale"     "false" "$(echo "$out" | jq -r '.reviews.copilot.stale')"
+  assert_eq "codex state"     "none"  "$(echo "$out" | jq -r '.reviews.codex.state')" || return 1
+  assert_eq "codex requested" "false" "$(echo "$out" | jq -r '.reviews.codex.requested')" || return 1
+  assert_eq "codex stale"     "false" "$(echo "$out" | jq -r '.reviews.codex.stale')"
 }
 
 t_main_marks_a_pending_lane_requested() {
   MOCK_MERGE_STATE=clean
-  MOCK_REQUESTED_BODY='["copilot-pull-request-reviewer"]'
+  MOCK_REQUESTED_BODY='["github-actions"]'
   local out
   out=$(main owner repo 1)
-  assert_eq "copilot state"     "none" "$(echo "$out" | jq -r '.reviews.copilot.state')" || return 1
-  assert_eq "copilot requested" "true" "$(echo "$out" | jq -r '.reviews.copilot.requested')"
+  assert_eq "codex state"     "none" "$(echo "$out" | jq -r '.reviews.codex.state')" || return 1
+  assert_eq "codex requested" "true" "$(echo "$out" | jq -r '.reviews.codex.requested')"
 }
 
 
@@ -376,32 +376,10 @@ t_toplevel_comments_by_returns_zero_for_no_comments() {
   assert_eq "comments count for empty" "0" "$count"
 }
 
-# Copilot authors its REVIEW as `copilot-pull-request-reviewer[bot]` but its
-# INLINE COMMENTS as `Copilot`. Counting comments against the review login
-# matched nothing, so `inline_comments.copilot` read 0 on every PR — vacuously
-# satisfying the release skill's Step 7 "every inline comment has a reply" gate
-# and letting a real Copilot finding merge unanswered.
-t_toplevel_comments_by_counts_copilot_login() {
-  MOCK_COMMENTS_BODY='[{"user":{"login":"Copilot"},"in_reply_to_id":null,"path":"a/b.md","body":"Real finding."}]'
-  local count
-  count=$(toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}")
-  assert_eq "Copilot-authored comment is counted" "1" "$count"
-}
-
-# The review login must stay in the comment set: a regression that swapped one
-# login for the other instead of matching both would pass the test above and
-# still lose comments on any PR where Copilot posts under the review login.
-t_toplevel_comments_by_matches_either_copilot_login() {
-  MOCK_COMMENTS_BODY='[{"user":{"login":"Copilot"},"in_reply_to_id":null},{"user":{"login":"copilot-pull-request-reviewer[bot]"},"in_reply_to_id":null}]'
-  local count
-  count=$(toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}")
-  assert_eq "both Copilot logins counted" "2" "$count"
-}
-
 t_toplevel_comments_by_excludes_replies_and_other_logins() {
-  MOCK_COMMENTS_BODY='[{"user":{"login":"Copilot"},"in_reply_to_id":null},{"user":{"login":"Copilot"},"in_reply_to_id":991},{"user":{"login":"some-human"},"in_reply_to_id":null}]'
+  MOCK_COMMENTS_BODY='[{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":991},{"user":{"login":"some-human"},"in_reply_to_id":null}]'
   local count
-  count=$(toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}")
+  count=$(toplevel_comments_by "owner" "repo" "1" "${CODEX_COMMENT_LOGINS[@]}")
   assert_eq "replies and foreign logins excluded" "1" "$count"
 }
 
@@ -411,18 +389,18 @@ t_toplevel_comments_by_excludes_replies_and_other_logins() {
 # `pending_at_budget`, which reads as "no reviewer posted" rather than "the
 # tool broke" (issue #300). Real comments around it must still be counted.
 t_toplevel_comments_by_survives_non_object_element() {
-  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"Copilot"},"in_reply_to_id":null},{"user":{"login":"Copilot"},"in_reply_to_id":null}]'
+  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null}]'
   local count
-  count=$(toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}" 2>/dev/null)
+  count=$(toplevel_comments_by "owner" "repo" "1" "${CODEX_COMMENT_LOGINS[@]}" 2>/dev/null)
   assert_eq "count survives a non-object element" "2" "$count"
 }
 
 # The drop is visible, never silent: best-effort work that continues past a
 # failure warns (rules/error-handling.md Shell Error Handling).
 t_toplevel_comments_by_warns_on_non_object_element() {
-  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"Copilot"},"in_reply_to_id":null}]'
+  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null}]'
   local err
-  err=$( { toplevel_comments_by "owner" "repo" "1" "${COPILOT_COMMENT_LOGINS[@]}" >/dev/null; } 2>&1 )
+  err=$( { toplevel_comments_by "owner" "repo" "1" "${CODEX_COMMENT_LOGINS[@]}" >/dev/null; } 2>&1 )
   case "$err" in
     *"1 non-object element"*) gh_hints_pinned "$err" ;;
     *) echo "    FAIL: expected a non-object-element warning on stderr, got: '${err}'" >&2; return 1 ;;
@@ -443,22 +421,23 @@ t_latest_review_by_survives_non_object_element() {
 # kept watch-pr-reviews.sh from stalling to budget on a degraded response.
 t_main_survives_non_object_comment_element() {
   MOCK_MERGE_STATE=clean
-  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"Copilot"},"in_reply_to_id":null}]'
-  local out copilot
+  MOCK_COMMENTS_BODY='["Not Found",{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null}]'
+  local out codex
   out=$(main "owner" "repo" "1" 2>/dev/null) || return 1
-  copilot=$(echo "$out" | jq -r '.inline_comments.copilot')
-  assert_eq "snapshot still produced, Copilot comment counted" "1" "$copilot"
+  codex=$(echo "$out" | jq -r '.inline_comments.codex')
+  assert_eq "snapshot still produced, Codex comment counted" "1" "$codex"
 }
 
 # End-to-end through main() — the path the Step 7 merge gate actually reads.
-# Codex and Copilot counts must not bleed into each other.
-t_main_counts_copilot_comments_in_snapshot() {
+# Copilot has no lane (docs/adr/0014-retire-copilot-lane.md): its comments
+# count nowhere and the snapshot carries no Copilot key.
+t_main_ignores_copilot_comments_in_snapshot() {
   MOCK_MERGE_STATE=clean
   MOCK_COMMENTS_BODY='[{"user":{"login":"Copilot"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null}]'
   local out counts
   out=$(main "owner" "repo" "1")
-  counts=$(echo "$out" | jq -r '.inline_comments | "\(.codex)|\(.copilot)"')
-  assert_eq "inline_comments {codex|copilot}" "2|1" "$counts"
+  counts=$(echo "$out" | jq -c '.inline_comments')
+  assert_eq "inline_comments" '{"codex":2}' "$counts"
 }
 
 # The resolver is variadic on login: a second policy-reviewer identity (a
@@ -727,7 +706,8 @@ t_main_reads_codex_verdict_per_lane() {
   MOCK_MERGE_STATE=clean
   MOCK_REVIEWS_BODY='[
     {"id":1,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"CHANGES_REQUESTED","submitted_at":"2026-10-20T10:00:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:codex-policy-review:v1 -->\nPolicy loaded: 30 rule files. One violation."},
-    {"id":2,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:05:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:claude-quality-review:v1 -->\nNo correctness issues found."}]'
+    {"id":2,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:05:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:claude-quality-review:v1 -->\nNo correctness issues found."},
+    {"id":4,"user":{"login":"copilot-pull-request-reviewer[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:10:00Z","commit_id":"'"$HEAD_SHA"'","body":"Copilot reviewed 3 files."}]'
   local out
   out=$(main owner repo 1)
   unset MOCK_REVIEWS_BODY
@@ -735,7 +715,8 @@ t_main_reads_codex_verdict_per_lane() {
   assert_eq "codex lane gating"   "true"              "$(jq -r '.lanes["codex-policy"].gating' <<<"$out")" || return 1
   assert_eq "claude lane state"   "COMMENTED"         "$(jq -r '.lanes["claude-quality"].state' <<<"$out")" || return 1
   assert_eq "claude lane gating"  "false"             "$(jq -r '.lanes["claude-quality"].gating' <<<"$out")" || return 1
-  assert_eq "copilot lane state"  "none"              "$(jq -r '.lanes.copilot.state' <<<"$out")"
+  assert_eq "lane set"            '["claude-quality","codex-policy"]' "$(jq -c '.lanes | keys' <<<"$out")" || return 1
+  assert_eq "review keys"         '["codex"]'         "$(jq -c '.reviews | keys' <<<"$out")"
 }
 
 t_main_unmarked_review_is_codex_lane() {
@@ -762,10 +743,8 @@ run "latest_review_by surfaces the review body text"                  t_latest_r
 run "latest_review_by ignores other logins across pages"              t_latest_review_by_filters_other_logins_across_pages
 run "toplevel_comments_by sums counts across pages (issue #83)"       t_toplevel_comments_by_sums_across_pages
 run "toplevel_comments_by returns 0 for empty comments"               t_toplevel_comments_by_returns_zero_for_no_comments
-run "toplevel_comments_by counts the 'Copilot' comment login"         t_toplevel_comments_by_counts_copilot_login
-run "toplevel_comments_by matches either Copilot login"               t_toplevel_comments_by_matches_either_copilot_login
 run "toplevel_comments_by excludes replies and foreign logins"        t_toplevel_comments_by_excludes_replies_and_other_logins
-run "main counts Copilot comments in the snapshot"                    t_main_counts_copilot_comments_in_snapshot
+run "main ignores Copilot comments in the snapshot"                   t_main_ignores_copilot_comments_in_snapshot
 run "toplevel_comments_by survives a non-object element (#300)"       t_toplevel_comments_by_survives_non_object_element
 run "toplevel_comments_by warns about the dropped element (#300)"     t_toplevel_comments_by_warns_on_non_object_element
 run "latest_review_by survives a non-object element (#300)"           t_latest_review_by_survives_non_object_element
