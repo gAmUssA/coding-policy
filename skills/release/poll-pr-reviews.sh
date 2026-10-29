@@ -30,7 +30,8 @@
 #       {"login": "...", "is_bot": bool,
 #        "state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
 #        "submitted_at": "ISO-8601", "body": "text|null",
-#        "commit_id": "<SHA>|null", "stale": bool}
+#        "commit_id": "<SHA>|null", "stale": bool,
+#        "reviews": [{state, submitted_at, body, commit_id}]}  // every review, oldest first
 #     ],
 #     "inline_comments": {"codex": N, "other": N},
 #     "merge_state": {"status": "CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...",
@@ -51,7 +52,9 @@
 # active verdict: the login's newest APPROVED / CHANGES_REQUESTED / DISMISSED
 # review decides it (DISMISSED reads "none"), else COMMENTED when the login
 # only commented. `body`, `submitted_at` and `commit_id` come from the review
-# that decided it; `stale` only says that review predates head.
+# that decided it; `stale` only says that review predates head. `reviews`
+# lists every review that login posted, oldest first, with raw GitHub states,
+# so each body can still be read (rules/reviewer-feedback-reading.md).
 #
 # A lane is `expected` when its verdict is owed on this head: the codex-policy
 # lane always; a lane with a `workflow` in review-lanes.sh when a check from
@@ -255,7 +258,8 @@ unlaned_reviews() {
                  | {login: $v.user.login, is_bot: ($v.user.type == "Bot"),
                     state: (if ($v.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then $v.state else "none" end),
                     submitted_at: $v.submitted_at, body: $v.body, commit_id: $v.commit_id,
-                    stale: ($v.commit_id != $head)})
+                    stale: ($v.commit_id != $head),
+                    reviews: (sort_by(.submitted_at) | map({state, submitted_at, body, commit_id}))})
           | sort_by(.submitted_at)'
 }
 

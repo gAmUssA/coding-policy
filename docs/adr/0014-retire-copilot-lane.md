@@ -34,8 +34,8 @@ This record supersedes 0010 and restates the decisions of it that still stand.
 ## Consequences
 
 - No review request is owed after a push; both lanes run on the `pull_request` events.
-- A consumer repo that still enables Copilot keeps receiving its reviews; the release flow neither waits for nor gates on them.
-- The watcher reaches `ready` once the policy reviewer posts. In a repo running the Claude reviewer, the agent re-reads the snapshot for the advisory body when it lands later.
+- A consumer repo that still enables Copilot keeps receiving its reviews; the release flow neither waits for nor gates on them, and reads every body through `other_reviews[].reviews[]`.
+- In a repo running the Claude reviewer, the watcher reaches `ready` only after both the policy and the Claude verdicts post on head. In a repo without it, the policy verdict alone suffices.
 - An external reader of the old snapshot shape that reads `.reviews.copilot` gets null. No such reader exists in this repo.
 - Promotion of the Claude lane follows the path 0010 set: flip `CLAUDE_QUALITY_GATES` once its blocking findings prove accurate, give the lane its own GitHub App identity first, and change the `rules/review-severity.md` advisory bullet in the same PR. While it shares `github-actions[bot]`, the Claude lane posts `COMMENT` only.
 - Inline comments are counted per login. Claude inline comments under the shared login count toward `inline_comments.codex`, which over-counts in the fail-safe direction.

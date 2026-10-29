@@ -763,6 +763,19 @@ t_human_comment_does_not_clear_changes_requested() {
   assert_eq "active verdict" '[{"state":"CHANGES_REQUESTED","body":"first"}]' "$(human_state_after CHANGES_REQUESTED COMMENTED)"
 }
 
+# Every body stays readable, not only the one that decided the verdict.
+t_human_reviews_keep_every_body() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REVIEWS_BODY='[
+    {"id":6,"user":{"login":"alice","type":"User"},"state":"COMMENTED","submitted_at":"2026-10-20T09:30:00Z","commit_id":"'"$HEAD_SHA"'","body":"second"},
+    {"id":5,"user":{"login":"alice","type":"User"},"state":"CHANGES_REQUESTED","submitted_at":"2026-10-20T09:00:00Z","commit_id":"'"$OLD_SHA"'","body":"first"}]'
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_REVIEWS_BODY
+  assert_eq "every body" '[[{"state":"CHANGES_REQUESTED","body":"first"},{"state":"COMMENTED","body":"second"}]]' \
+    "$(jq -c '.other_reviews | map(.reviews | map({state, body}))' <<<"$out")"
+}
+
 t_human_approval_clears_changes_requested() {
   assert_eq "active verdict" '[{"state":"APPROVED","body":"second"}]' "$(human_state_after CHANGES_REQUESTED APPROVED)"
 }
@@ -813,6 +826,7 @@ run "toplevel_comments_by excludes replies and foreign logins"        t_toplevel
 run "main counts Copilot comments as other"                           t_main_counts_copilot_comments_as_other
 run "main reports a human review without head collapse"               t_main_reports_human_review_unresolved_by_head
 run "a later human COMMENTED never clears CHANGES_REQUESTED"          t_human_comment_does_not_clear_changes_requested
+run "every unlaned review body stays in the snapshot"                  t_human_reviews_keep_every_body
 run "a later human APPROVED clears CHANGES_REQUESTED"                 t_human_approval_clears_changes_requested
 run "a dismissed human block reads as the later comment"              t_human_dismissal_then_comment_reads_commented
 run "the Claude lane is expected when its workflow ran on head"       t_claude_lane_expected_when_workflow_ran

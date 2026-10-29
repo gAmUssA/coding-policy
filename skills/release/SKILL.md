@@ -95,7 +95,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
 - `ready` (exit 0) — the watcher's ready predicate held (see the `skills/release/watch-pr-reviews.sh` header)
   - Verdicts are read per review lane (`skills/release/review-lanes.sh`); only a lane with `gating: true` gates
   - A lane with `expected: true` has posted before `ready`, gating or not
-  - Read every non-empty `lanes.*.body` and `other_reviews[].body` — a `COMMENTED` verdict with zero inline comments still carries a body (`rules/reviewer-feedback-reading.md`)
+  - Read every non-empty `lanes.*.body` and `other_reviews[].reviews[].body` — a `COMMENTED` verdict with zero inline comments still carries a body (`rules/reviewer-feedback-reading.md`)
   - Proceed to Step 6
 - `changes_requested` (exit 0) — the policy reviewer, a gating lane, or a human reviewer in `other_reviews` requested changes. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
@@ -104,7 +104,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
 
 ## Step 6 — Address Feedback
 
-- **Read every review in full first** — each `lanes.*.body`, each `other_reviews[].body` (Copilot, humans), and every inline comment counted in `inline_comments`, before judging any item (`rules/reviewer-feedback-reading.md`)
+- **Read every review in full first** — each `lanes.*.body`, each `other_reviews[].reviews[].body` (Copilot, humans), and every inline comment counted in `inline_comments`, before judging any item (`rules/reviewer-feedback-reading.md`)
 - **Then act by severity** (`rules/review-severity.md`): blocking — fix now; advisory — acknowledge, fold in only when a blocking round is already happening, else defer to a follow-up. Never burn a dedicated re-review round on a lone advisory
 - **CI failures**: fix every one
 - **Reply on EVERY thread** with these exact opening literals:
