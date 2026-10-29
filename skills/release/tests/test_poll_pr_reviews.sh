@@ -430,14 +430,14 @@ t_main_survives_non_object_comment_element() {
 
 # End-to-end through main() — the path the Step 7 merge gate actually reads.
 # Copilot has no lane (docs/adr/0014-retire-copilot-lane.md): its comments
-# count nowhere and the snapshot carries no Copilot key.
-t_main_ignores_copilot_comments_in_snapshot() {
+# never count as Codex's, and land in `other` so each still needs a reply.
+t_main_counts_copilot_comments_as_other() {
   MOCK_MERGE_STATE=clean
   MOCK_COMMENTS_BODY='[{"user":{"login":"Copilot"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null},{"user":{"login":"github-actions[bot]"},"in_reply_to_id":null}]'
   local out counts
   out=$(main "owner" "repo" "1")
   counts=$(echo "$out" | jq -c '.inline_comments')
-  assert_eq "inline_comments" '{"codex":2}' "$counts"
+  assert_eq "inline_comments" '{"codex":2,"other":1}' "$counts"
 }
 
 # The resolver is variadic on login: a second policy-reviewer identity (a
@@ -716,7 +716,24 @@ t_main_reads_codex_verdict_per_lane() {
   assert_eq "claude lane state"   "COMMENTED"         "$(jq -r '.lanes["claude-quality"].state' <<<"$out")" || return 1
   assert_eq "claude lane gating"  "false"             "$(jq -r '.lanes["claude-quality"].gating' <<<"$out")" || return 1
   assert_eq "lane set"            '["claude-quality","codex-policy"]' "$(jq -c '.lanes | keys' <<<"$out")" || return 1
-  assert_eq "review keys"         '["codex"]'         "$(jq -c '.reviews | keys' <<<"$out")"
+  assert_eq "review keys"         '["codex"]'         "$(jq -c '.reviews | keys' <<<"$out")" || return 1
+  assert_eq "copilot is an other review" '[{"login":"copilot-pull-request-reviewer[bot]","is_bot":true,"state":"COMMENTED","body":"Copilot reviewed 3 files."}]' \
+    "$(jq -c '.other_reviews | map({login, is_bot, state, body})' <<<"$out")"
+}
+
+# A human CHANGES_REQUESTED on an older commit stays CHANGES_REQUESTED: GitHub
+# keeps it active across pushes, so it is not collapsed against head.
+t_main_reports_human_review_unresolved_by_head() {
+  MOCK_MERGE_STATE=clean
+  MOCK_REVIEWS_BODY='[
+    {"id":5,"user":{"login":"alice","type":"User"},"state":"COMMENTED","submitted_at":"2026-10-20T09:00:00Z","commit_id":"'"$OLD_SHA"'","body":"first look"},
+    {"id":6,"user":{"login":"alice","type":"User"},"state":"CHANGES_REQUESTED","submitted_at":"2026-10-20T09:30:00Z","commit_id":"'"$OLD_SHA"'","body":"please rename"},
+    {"id":7,"user":{"login":"github-actions[bot]","type":"Bot"},"state":"COMMENTED","submitted_at":"2026-10-20T10:00:00Z","commit_id":"'"$HEAD_SHA"'","body":"<!-- coding-policy:codex-policy-review:v1 -->\nclean"}]'
+  local out
+  out=$(main owner repo 1)
+  unset MOCK_REVIEWS_BODY
+  assert_eq "human review kept" '[{"login":"alice","is_bot":false,"state":"CHANGES_REQUESTED","body":"please rename","stale":true}]' \
+    "$(jq -c '.other_reviews | map({login, is_bot, state, body, stale})' <<<"$out")"
 }
 
 t_main_unmarked_review_is_codex_lane() {
@@ -744,7 +761,8 @@ run "latest_review_by ignores other logins across pages"              t_latest_r
 run "toplevel_comments_by sums counts across pages (issue #83)"       t_toplevel_comments_by_sums_across_pages
 run "toplevel_comments_by returns 0 for empty comments"               t_toplevel_comments_by_returns_zero_for_no_comments
 run "toplevel_comments_by excludes replies and foreign logins"        t_toplevel_comments_by_excludes_replies_and_other_logins
-run "main ignores Copilot comments in the snapshot"                   t_main_ignores_copilot_comments_in_snapshot
+run "main counts Copilot comments as other"                           t_main_counts_copilot_comments_as_other
+run "main reports a human review without head collapse"               t_main_reports_human_review_unresolved_by_head
 run "toplevel_comments_by survives a non-object element (#300)"       t_toplevel_comments_by_survives_non_object_element
 run "toplevel_comments_by warns about the dropped element (#300)"     t_toplevel_comments_by_warns_on_non_object_element
 run "latest_review_by survives a non-object element (#300)"           t_latest_review_by_survives_non_object_element

@@ -92,15 +92,15 @@ skills/release/watch-pr-reviews.sh <owner> <repo> <pr-number>
 
 It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elapsed_seconds": N}`. Branch on `.watch.result`:
 
-- `ready` (exit 0) — mergeable, CI `success`/`none`, the policy reviewer and every gating lane posted, none `CHANGES_REQUESTED`. Verdicts are read per review lane (`skills/release/review-lanes.sh`); `lanes.*` reports every lane, and only a lane with `gating: true` gates. The watcher does not wait for an advisory lane. Read every non-empty `lanes.*.body` (a `COMMENTED` verdict with zero inline comments still carries a body — `rules/reviewer-feedback-reading.md`); where the repo runs the Claude reviewer and `lanes["claude-quality"].state` is still `none`, re-read the snapshot with `skills/release/poll-pr-reviews.sh <owner> <repo> <pr-number>` once its run finishes. Then proceed to Step 6.
-- `changes_requested` (exit 0) — the policy reviewer found a blocking finding. Step 6, push, re-run the watcher.
+- `ready` (exit 0) — mergeable, CI `success`/`none`, the policy reviewer and every gating lane posted, none `CHANGES_REQUESTED`. Verdicts are read per review lane (`skills/release/review-lanes.sh`); `lanes.*` reports every lane, and only a lane with `gating: true` gates. The watcher does not wait for an advisory lane. Read every non-empty `lanes.*.body` and `other_reviews[].body` (a `COMMENTED` verdict with zero inline comments still carries a body — `rules/reviewer-feedback-reading.md`); where the repo runs the Claude reviewer and `lanes["claude-quality"].state` is still `none`, re-read the snapshot with `skills/release/poll-pr-reviews.sh <owner> <repo> <pr-number>` once its run finishes. Then proceed to Step 6.
+- `changes_requested` (exit 0) — the policy reviewer, a gating lane, or a human reviewer in `other_reviews` requested changes. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
 - `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If the policy reviewer never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
 
 ## Step 6 — Address Feedback
 
-- **Read every review in full first** — each `lanes.*.body` and every inline comment, before judging any item (`rules/reviewer-feedback-reading.md`)
+- **Read every review in full first** — each `lanes.*.body`, each `other_reviews[].body` (Copilot, humans), and every inline comment counted in `inline_comments`, before judging any item (`rules/reviewer-feedback-reading.md`)
 - **Then act by severity** (`rules/review-severity.md`): blocking — fix now; advisory — acknowledge, fold in only when a blocking round is already happening, else defer to a follow-up. Never burn a dedicated re-review round on a lone advisory
 - **CI failures**: fix every one
 - **Reply on EVERY thread** with these exact opening literals:

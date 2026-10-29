@@ -1,5 +1,5 @@
 {
-  "context": "Tests whether the agent reads every review thread in full, correctly applies review severity rules (the gating policy lane is blocking; the claude-quality lane is advisory while its lane is not gating), uses the exact required reply literals for each category, defers the advisory findings rather than fixing them immediately, and plans to re-run the watcher after any push instead of requesting a reviewer.",
+  "context": "Tests whether the agent reads every review thread in full, classifies each finding by its substance (rules/review-severity.md: a fix that changes behavior is blocking, a presentation-only fix is advisory) rather than by whether its lane gates the watcher, uses the exact required reply literals for each category, defers or folds the advisory finding rather than giving it a dedicated round, and plans to re-run the watcher after any push instead of requesting a reviewer.",
   "type": "weighted_checklist",
   "checklist": [
     {
@@ -23,23 +23,23 @@
       "max_score": 10
     },
     {
-      "name": "Claude quality findings classified advisory",
-      "description": "Both Claude quality inline comments are classified as advisory (not blocking) in response-plan.md \u2014 the claude-quality lane is advisory (gating: false) regardless of how severe a finding sounds",
+      "name": "Claude quality findings classified by substance",
+      "description": "response-plan.md classifies the Claude quality inline comment on line 84 (input validation, a behavior-changing fix) as blocking and the one on line 92 (docstring, presentation only) as advisory. Severity follows the finding's substance under rules/review-severity.md, never the lane's gating flag. Score 0 if either is misclassified.",
       "max_score": 10
     },
     {
       "name": "Blocking reply literal used",
-      "description": "response-plan.md states the reply text for the policy reviewer's blocking finding opens with exactly 'Fixed in <sha>' (or the literal text 'Fixed in' followed by a SHA placeholder)",
+      "description": "response-plan.md states the reply text for every blocking finding (the policy reviewer's finding and the Claude quality line-84 input-validation comment) opens with exactly 'Fixed in <sha>' (or the literal text 'Fixed in' followed by a SHA placeholder)",
       "max_score": 14
     },
     {
       "name": "Advisory reply literal matches disposition",
-      "description": "Every advisory thread's planned reply opens with the literal skills/release/SKILL.md Step 6 prescribes for its disposition: 'Acknowledged \u2014 deferred to <follow-up ref>' for a deferred advisory, or 'Fixed in <sha>' for one folded into the blocking round. Score 0 if any advisory reply uses neither literal, or the literal contradicts the disposition the plan states.",
+      "description": "The advisory docstring thread's planned reply opens with the literal skills/release/SKILL.md Step 6 prescribes for its disposition: 'Acknowledged \u2014 deferred to <follow-up ref>' if deferred, or 'Fixed in <sha>' if folded into the blocking round. Score 0 if it uses neither literal, or the literal contradicts the disposition the plan states.",
       "max_score": 14
     },
     {
       "name": "Advisory folded or deferred",
-      "description": "response-plan.md gives every Claude quality advisory finding one of the two dispositions rules/review-severity.md allows: folded into the push already fixing the blocking finding (a blocking round is open), or deferred to a named follow-up issue or PR referenced from this PR. Score 0 if any advisory gets its own dedicated fix push, or is left without a disposition.",
+      "description": "response-plan.md gives the advisory docstring finding one of the two dispositions rules/review-severity.md allows: folded into the push already fixing the blocking findings (a blocking round is open), or deferred to a named follow-up issue or PR referenced from this PR. Score 0 if it gets its own dedicated fix push, or is left without a disposition.",
       "max_score": 10
     },
     {

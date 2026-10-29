@@ -25,7 +25,13 @@
 #       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool},
 #       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool}
 #     },
-#     "inline_comments": {"codex": N},
+#     "other_reviews": [   // latest review per login no lane claims, oldest first
+#       {"login": "...", "is_bot": bool,
+#        "state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
+#        "submitted_at": "ISO-8601", "body": "text|null",
+#        "commit_id": "<SHA>|null", "stale": bool}
+#     ],
+#     "inline_comments": {"codex": N, "other": N},
 #     "merge_state": {"status": "CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...",
 #                     "mergeable": "MERGEABLE|CONFLICTING|UNKNOWN"}
 #   }
@@ -34,8 +40,15 @@
 # review-lanes.sh), never per login: `reviews.codex` is the codex-policy lane
 # only, so a Claude-lane review posted under the same login never becomes the
 # Codex verdict. `lanes.*.gating` says which lanes gate the merge. A review
-# no lane claims (Copilot, where a consumer repo still enables it) appears
-# nowhere in the snapshot (docs/adr/0014-retire-copilot-lane.md).
+# no lane claims (a human, or Copilot where a consumer repo still enables it)
+# is reported under `other_reviews` so its body is still read
+# (rules/reviewer-feedback-reading.md); no lane gate reads it
+# (docs/adr/0014-retire-copilot-lane.md). An `other_reviews` entry is NOT
+# collapsed against head: GitHub keeps a human CHANGES_REQUESTED active
+# across pushes until it is dismissed or superseded, so `state` is the
+# login's latest verdict as posted and `stale` only says it predates head.
+# `inline_comments.other` counts top-level inline comments from every author
+# outside CODEX_COMMENT_LOGINS, each of which needs a reply before merge.
 #
 # A review's `.state` is resolved AGAINST `head_sha`: a review whose
 # `commit_id` is not the current head has not reviewed the current code, so
@@ -211,6 +224,36 @@ toplevel_comments_by() {
         | length'
 }
 
+# Latest review per login for every review no lane claims (review-lanes.sh),
+# with the author's bot/human type. DISMISSED and PENDING collapse to "none"
+# the way LATEST_REVIEW_JQ does; `stale` marks a review bound to an older
+# commit without collapsing its state.
+unlaned_reviews() {
+  local owner="$1" repo="$2" pr="$3" head="$4" cfg
+  cfg=$(review_lanes_config) \
+    || { echo "error: failed to build the review-lane config" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
+    | jq --argjson cfg "$cfg" --arg head "$head" \
+        "$(review_lanes_jq)"' [.[] | select(review_lane($cfg) == null) | select((.user.login // "") != "")]
+          | group_by(.user.login) | map(max_by(.submitted_at)) | sort_by(.submitted_at)
+          | map({login: .user.login, is_bot: (.user.type == "Bot"),
+                 state: (if (.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then .state else "none" end),
+                 submitted_at, body, commit_id,
+                 stale: (.commit_id != $head)})'
+}
+
+# Count top-level (non-reply) inline comments authored by NONE of <login...>.
+toplevel_comments_excluding() {
+  local owner="$1" repo="$2" pr="$3"; shift 3
+  local logins_json
+  logins_json=$(jq -n '$ARGS.positional' --args "$@") \
+    || { echo "error: failed to encode login list for comment count" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/comments?per_page=100" "inline comment" \
+    | jq --argjson logins "$logins_json" '
+        [.[] | select(.in_reply_to_id == null) | select((.user.login // "") | IN($logins[]) | not)]
+        | length'
+}
+
 # Also carries the PR head SHA (headRefOid) so review verdicts can be bound to
 # the commit they reviewed — folded into this call rather than a second
 # `gh pr view` so head and merge-state come from one consistent read. main
@@ -350,6 +393,11 @@ main() {
   codex_review=$(printf '%s' "$codex_review" | jq --argjson r "$codex_requested" '. + {requested: $r}')
   codex_comments=$(toplevel_comments_by "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
     || { echo "error: failed to count Codex inline comments" >&2; exit 1; }
+  local other_reviews other_comments
+  other_reviews=$(unlaned_reviews "$owner" "$repo" "$pr_number" "$head_sha") \
+    || { echo "error: failed to fetch reviews outside the review lanes" >&2; exit 1; }
+  other_comments=$(toplevel_comments_excluding "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
+    || { echo "error: failed to count inline comments from other reviewers" >&2; exit 1; }
 
   jq -n \
     --argjson pr_number "$pr_number" \
@@ -361,6 +409,8 @@ main() {
     --argjson merge_state "$merge_state" \
     --argjson claude "$claude_review" \
     --argjson cfg "$lanes_cfg" \
+    --argjson other_reviews "$other_reviews" \
+    --argjson other_comments "$other_comments" \
     '{
       pr_number: $pr_number,
       head_sha: $head_sha,
@@ -370,7 +420,8 @@ main() {
         "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating}),
         "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating})
       },
-      inline_comments: {codex: $codex_comments},
+      other_reviews: $other_reviews,
+      inline_comments: {codex: $codex_comments, other: $other_comments},
       merge_state: ($merge_state | {status, mergeable})
     }'
 }

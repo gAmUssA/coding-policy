@@ -476,6 +476,19 @@ test_e2e_copilot_block_is_ignored() {
 }
 run "e2e: a Copilot CHANGES_REQUESTED claims no lane and never gates" test_e2e_copilot_block_is_ignored
 
+# A human CHANGES_REQUESTED gates (rules/ci-safety.md Never Skip Tests), even
+# with a clean policy verdict; the e2e path runs it through the real poll.
+test_e2e_human_block_gates() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'alice' CHANGES_REQUESTED 01 'please rename' | jq -c '.user.type = "User"')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
+  assert_eq "human review" '[{"login":"alice","is_bot":false,"state":"CHANGES_REQUESTED"}]' \
+    "$(echo "$out" | jq -c '.other_reviews | map({login, is_bot, state})')"
+}
+run "e2e: a human CHANGES_REQUESTED gates" test_e2e_human_block_gates
+
 # A lane flagged gating in the snapshot gates; the same verdict on an advisory
 # lane does not. This is the switch ADR 0010's promotion flips.
 lanes_snap() { # <claude-state> <claude-gating>
