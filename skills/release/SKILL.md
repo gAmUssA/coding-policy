@@ -4,7 +4,8 @@ description: >
   Structured workflow for shipping code via GitHub pull requests: readiness checks,
   PR creation, version + CHANGELOG entry (a changelog fragment where the publish
   workflow assigns the version, a hand bump elsewhere) for publishing repos, dual-lens automated review
-  (the Codex policy reviewer for rule compliance + Copilot for correctness), watching
+  (the Codex policy reviewer for rule compliance + an advisory Claude quality lane where
+  the repo runs it), watching
   the PR to a terminal verdict, addressing feedback, merging on green without asking,
   and post-merge cleanup and publish verification. Use when the user wants to open a
   pull request, ship code, release, merge a branch, or handle post-merge cleanup.
@@ -73,16 +74,10 @@ Proceed immediately to Step 4.
 
 ## Step 4 — Reviews Fire
 
-Opening the PR, or pushing further commits, automatically triggers the policy reviewer (`.github/workflows/review-codex.yml`), which reviews the diff against the rules and posts a verdict as `github-actions[bot]`. Fork PRs are skipped (no secret access). Mechanics and the APPROVE limitation:
+Opening the PR, or pushing further commits, automatically triggers the policy reviewer (`.github/workflows/review-codex.yml`), which reviews the diff against the rules and posts a verdict as `github-actions[bot]`. A repo that runs the Claude quality reviewer (`.github/workflows/review-claude.yml`) gets an advisory correctness review on the same events. Neither needs a review request. Fork PRs are skipped (no secret access). Mechanics and the APPROVE limitation:
 
 ```text
 skills/release/REVIEW_DETAILS.md
-```
-
-**Also request Copilot.** Copilot is the complementary lane — correctness, bugs, security, test gaps. The policy reviewer gates the merge only on **blocking** findings; Copilot is always advisory (read it, never gate on it) — `rules/review-severity.md`:
-
-```bash
-skills/release/request-copilot-review.sh <owner> <repo> <pr-number>
 ```
 
 Proceed immediately to Step 5.
@@ -97,16 +92,19 @@ skills/release/watch-pr-reviews.sh <owner> <repo> <pr-number>
 
 It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elapsed_seconds": N}`. Branch on `.watch.result`:
 
-- `ready` (exit 0) — mergeable, CI `success`/`none`, both bots posted, the policy reviewer not `CHANGES_REQUESTED`. Verdicts are read per review lane (`skills/release/review-lanes.sh`); `lanes.*` reports every lane, and only a lane with `gating: true` gates. Read every non-empty `reviews.*.body` (a `COMMENTED` verdict with zero inline comments still carries a body — `rules/reviewer-feedback-reading.md`), then proceed to Step 6.
-- `changes_requested` (exit 0) — the policy reviewer found a blocking finding. Step 6, push, re-run the watcher.
+- `ready` (exit 0) — the watcher's ready predicate held (see the `skills/release/watch-pr-reviews.sh` header)
+  - Verdicts are read per review lane (`skills/release/review-lanes.sh`); only a lane with `gating: true` gates
+  - A lane with `expected: true` has posted before `ready`, gating or not
+  - Read every non-empty `lanes.*.body` and `other_reviews[].reviews[].body` — a `COMMENTED` verdict with zero inline comments still carries a body (`rules/reviewer-feedback-reading.md`)
+  - Proceed to Step 6
+- `changes_requested` (exit 0) — the policy reviewer, a gating lane, or a reviewer in `other_reviews` (human or bot) requested changes. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
-- `review_unrequested` (exit 1) — Copilot has no verdict at this head and no pending request. Request it with `skills/release/request-copilot-review.sh <owner> <repo> <pr-number>` and re-run the watcher. The policy reviewer runs on the push and never produces this result.
-- `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If the policy reviewer never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
+- `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If an expected Claude lane never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-claude.yml` and its `CLAUDE_CODE_OAUTH_TOKEN` secret. If the policy reviewer never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
 
 ## Step 6 — Address Feedback
 
-- **Read every review in full first** — each `reviews.*.body` and every inline comment, before judging any item (`rules/reviewer-feedback-reading.md`)
+- **Read every review in full first** — each `lanes.*.body`, each `other_reviews[].reviews[].body` (Copilot, humans), and every inline comment counted in `inline_comments`, before judging any item (`rules/reviewer-feedback-reading.md`)
 - **Then act by severity** (`rules/review-severity.md`): blocking — fix now; advisory — acknowledge, fold in only when a blocking round is already happening, else defer to a follow-up. Never burn a dedicated re-review round on a lone advisory
 - **CI failures**: fix every one
 - **Reply on EVERY thread** with these exact opening literals:
@@ -114,7 +112,6 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
   - Declined: `Declining — <reason with cited evidence>`
   - Advisory deferred: `Acknowledged — deferred to <follow-up ref>`
 - Push fixes to the same branch; the policy reviewer re-runs automatically
-- **Re-request Copilot after every push** via `skills/release/request-copilot-review.sh` — it does not re-post on its own
 - Repeat Step 5 until the policy reviewer carries no blocking finding and every thread has a reply
 
 ## Step 7 — Merge + Cleanup

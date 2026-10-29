@@ -19,18 +19,21 @@
 #       "codex":   {"state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
 #                   "submitted_at": "ISO-8601|null", "body": "text|null",
 #                   "commit_id": "<SHA the review is bound to>|null",
-#                   "stale": bool, "requested": bool},
-#       "copilot": {"state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
-#                   "submitted_at": "ISO-8601|null", "body": "text|null",
-#                   "commit_id": "<SHA the review is bound to>|null",
 #                   "stale": bool, "requested": bool}
 #     },
 #     "lanes": {   // every review lane (skills/release/review-lanes.sh)
-#       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool},
-#       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool},
-#       "copilot":        {<same fields as reviews.copilot>, "gating": bool}
+#       "codex-policy":   {<same fields as reviews.codex>,   "gating": bool, "expected": true},
+#       "claude-quality": {state, submitted_at, body, commit_id, stale, "gating": bool,
+#                          "expected": bool}
 #     },
-#     "inline_comments": {"codex": N, "copilot": N},
+#     "other_reviews": [   // active verdict per login no lane claims, oldest first
+#       {"login": "...", "is_bot": bool,
+#        "state": "APPROVED|CHANGES_REQUESTED|COMMENTED|none",
+#        "submitted_at": "ISO-8601", "body": "text|null",
+#        "commit_id": "<SHA>|null", "stale": bool,
+#        "reviews": [{state, submitted_at, body, commit_id}]}  // every review, oldest first
+#     ],
+#     "inline_comments": {"codex": N, "other": N},
 #     "merge_state": {"status": "CLEAN|DIRTY|BLOCKED|BEHIND|UNSTABLE|...",
 #                     "mergeable": "MERGEABLE|CONFLICTING|UNKNOWN"}
 #   }
@@ -38,7 +41,27 @@
 # Each verdict is read per review LANE (login plus body marker, see
 # review-lanes.sh), never per login: `reviews.codex` is the codex-policy lane
 # only, so a Claude-lane review posted under the same login never becomes the
-# Codex verdict. `lanes.*.gating` says which lanes gate the merge.
+# Codex verdict. `lanes.*.gating` says which lanes gate the merge. A review
+# no lane claims (a human, or Copilot where a consumer repo still enables it)
+# is reported under `other_reviews` so its body is still read
+# (rules/reviewer-feedback-reading.md); no lane gate reads it
+# (docs/adr/0014-retire-copilot-lane.md). An `other_reviews` entry is NOT
+# collapsed against head: GitHub keeps a human CHANGES_REQUESTED active
+# across pushes until that login APPROVES or it is dismissed, and a later
+# COMMENTED review (a thread reply is one) never clears it. `state` is that
+# active verdict: the login's newest APPROVED / CHANGES_REQUESTED / DISMISSED
+# review decides it (DISMISSED reads "none"), else COMMENTED when the login
+# only commented. `body`, `submitted_at` and `commit_id` come from the review
+# that decided it; `stale` only says that review predates head. `reviews`
+# lists every review that login posted, oldest first, with raw GitHub states,
+# so each body can still be read (rules/reviewer-feedback-reading.md).
+#
+# A lane is `expected` when its verdict is owed on this head: the codex-policy
+# lane always; a lane with a `workflow` in review-lanes.sh when a check from
+# that workflow is pass, fail or pending on head. The watcher waits for every
+# gating or expected lane.
+# `inline_comments.other` counts top-level inline comments from every author
+# outside CODEX_COMMENT_LOGINS, each of which needs a reply before merge.
 #
 # A review's `.state` is resolved AGAINST `head_sha`: a review whose
 # `commit_id` is not the current head has not reviewed the current code, so
@@ -52,19 +75,12 @@
 # a stale COMMENTED/APPROVED no longer false-readies unreviewed code (#186).
 #
 # `requested` reports exactly one fact: a review request for that login is still
-# pending on the PR. It separates two states a bare `state: "none"` conflates
-# for a REQUEST-TRIGGERED reviewer (Copilot): asked for and not yet answered
-# (waiting is meaningful), versus never asked (waiting cannot produce it, and a
-# reader without GitHub write scope cannot ask). A developer collecting its own
-# current-tip evidence reads that rather than sitting out a budget on a review
-# nobody requested (#369).
-#
-# It is NOT a "has this review been triggered" flag. A delivered review clears
-# its own request, so `requested` is false once `state` is set. The policy
-# reviewer is PUSH-triggered — review-codex.yml and the fleet App run on the
-# push, never on a request — so its `requested` is false on every PR, and an
-# in-flight policy review reads `state: "none", requested: false` exactly like
-# an unrequested Copilot lane. Resolve a reviewer's arrival by how it is
+# pending on the PR (#369). It is NOT a "has this review been triggered" flag.
+# A delivered review clears its own request, so `requested` is false once
+# `state` is set. The policy reviewer is PUSH-triggered — review-codex.yml runs
+# on the push, never on a request — so its `requested` is false on every PR
+# unless someone requests it by hand, and an in-flight policy review reads
+# `state: "none", requested: false`. Resolve a reviewer's arrival by how it is
 # triggered (rules/ci-safety.md Always Watch CI), never by this field alone.
 #
 # `merge_state.status == "DIRTY"` / `mergeable == "CONFLICTING"` means GitHub
@@ -74,13 +90,14 @@
 
 set -euo pipefail
 
-# Bot logins, by surface. A reviewer does NOT necessarily author its reviews
-# and its inline comments under the same login:
+# Bot logins, by surface. A reviewer does not necessarily author its reviews
+# and its inline comments under the same login, so each surface keeps its own
+# login set:
 #
-#   surface          Policy reviewer        Copilot
-#   ---------------  ---------------------  ----------------------------------
-#   review           github-actions[bot]    copilot-pull-request-reviewer[bot]
-#   inline comment   github-actions[bot]    Copilot
+#   surface          Policy reviewer
+#   ---------------  ---------------------
+#   review           github-actions[bot]
+#   inline comment   github-actions[bot]
 #
 # The policy reviewer is the review-codex.yml workflow (Codex CLI) submitting
 # with the workflow's GITHUB_TOKEN, so its author is `github-actions[bot]` in
@@ -89,12 +106,10 @@ set -euo pipefail
 # resolver; `latest_review_by` aggregates fail-safe across every login it is
 # given (each login's own latest, CHANGES_REQUESTED wins).
 #
-# Counting Copilot's comments against its REVIEW login matches nothing, so
-# `inline_comments.copilot` would read 0 on every PR — which vacuously
-# satisfies the release skill's Step 7 "every inline comment has a reply"
-# merge gate and lets a real Copilot finding merge unanswered. Comment
-# counting therefore matches a SET of logins per reviewer. A comment carries
-# exactly one author, so listing multiple logins cannot double-count.
+# Comment counting matches a SET of logins per reviewer: counting against the
+# wrong login reads 0 on every PR, which vacuously satisfies the release
+# skill's Step 7 "every inline comment has a reply" merge gate. A comment
+# carries exactly one author, so listing multiple logins cannot double-count.
 #
 # Review logins come from the lane classifier (review-lanes.sh): one login can
 # carry several lanes, so main() reads each verdict per LANE, never per login.
@@ -102,9 +117,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-lanes.sh" \
   || { echo "error: cannot source review-lanes.sh beside poll-pr-reviews.sh — reinstall the release skill so both files ship together" >&2; exit 2; }
 CODEX_REVIEW_LOGINS=("${CODEX_POLICY_LOGINS[@]}")
-COPILOT_REVIEW_LOGIN="${COPILOT_LOGINS[0]}"
 CODEX_COMMENT_LOGINS=("github-actions[bot]")
-COPILOT_COMMENT_LOGINS=("Copilot" "copilot-pull-request-reviewer[bot]")
 
 # Slurp a paginated `gh api` array into one JSON array, dropping any element
 # that is not an object. A degraded or partial response can carry a string
@@ -224,6 +237,44 @@ toplevel_comments_by() {
         | length'
 }
 
+# Active verdict per login for every review no lane claims (review-lanes.sh),
+# with the author's bot/human type, resolved the way GitHub resolves a
+# reviewer's state (see the header): a later COMMENTED never clears an earlier
+# CHANGES_REQUESTED. `stale` marks a review bound to an older commit without
+# collapsing its state.
+unlaned_reviews() {
+  local owner="$1" repo="$2" pr="$3" head="$4" cfg
+  cfg=$(review_lanes_config) \
+    || { echo "error: failed to build the review-lane config" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/reviews?per_page=100" "review" \
+    | jq --argjson cfg "$cfg" --arg head "$head" \
+        "$(review_lanes_jq)"' [.[] | select(review_lane($cfg) == null) | select((.user.login // "") != "")]
+          | group_by(.user.login)
+          | map( (map(select(.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) | max_by(.submitted_at)) as $decisive
+                 | (map(select(.state == "COMMENTED")) | max_by(.submitted_at)) as $commented
+                 | (if $decisive != null and ($decisive.state | IN("APPROVED", "CHANGES_REQUESTED")) then $decisive
+                    elif $commented != null then $commented
+                    else ($decisive // (max_by(.submitted_at))) | .state = "none" end) as $v
+                 | {login: $v.user.login, is_bot: ($v.user.type == "Bot"),
+                    state: (if ($v.state | IN("APPROVED", "CHANGES_REQUESTED", "COMMENTED")) then $v.state else "none" end),
+                    submitted_at: $v.submitted_at, body: $v.body, commit_id: $v.commit_id,
+                    stale: ($v.commit_id != $head),
+                    reviews: (sort_by(.submitted_at) | map({state, submitted_at, body, commit_id}))})
+          | sort_by(.submitted_at)'
+}
+
+# Count top-level (non-reply) inline comments authored by NONE of <login...>.
+toplevel_comments_excluding() {
+  local owner="$1" repo="$2" pr="$3"; shift 3
+  local logins_json
+  logins_json=$(jq -n '$ARGS.positional' --args "$@") \
+    || { echo "error: failed to encode login list for comment count" >&2; return 1; }
+  slurp_api_array "repos/${owner}/${repo}/pulls/${pr}/comments?per_page=100" "inline comment" \
+    | jq --argjson logins "$logins_json" '
+        [.[] | select(.in_reply_to_id == null) | select((.user.login // "") | IN($logins[]) | not)]
+        | length'
+}
+
 # Also carries the PR head SHA (headRefOid) so review verdicts can be bound to
 # the commit they reviewed — folded into this call rather than a second
 # `gh pr view` so head and merge-state come from one consistent read. main
@@ -293,7 +344,7 @@ main() {
 
   # gh pr checks exits 8 when no checks are configured — distinguish that from real errors.
   local checks_json checks_raw rc=0
-  checks_raw=$(gh pr checks "$pr_number" --repo "github.com/${owner}/${repo}" --json name,bucket 2>&1) || rc=$?
+  checks_raw=$(gh pr checks "$pr_number" --repo "github.com/${owner}/${repo}" --json name,bucket,workflow 2>&1) || rc=$?
   if [[ $rc -eq 0 ]]; then
     checks_json="$checks_raw"
   # Here-string, not `echo | grep -qi`: `-q` makes grep exit at the first
@@ -344,33 +395,30 @@ main() {
     exit 1
   fi
 
-  local requested_logins codex_requested copilot_requested
+  local requested_logins codex_requested
   requested_logins=$(fetch_requested_logins "$owner" "$repo" "$pr_number") \
     || { echo "error: failed to fetch pending review requests for ${owner}/${repo}#${pr_number} — run 'gh auth status --hostname github.com' to verify auth, then inspect the PR's reviewRequests with 'gh api --hostname github.com graphql' (the REST requested_reviewers endpoint omits bot reviewers)" >&2; exit 1; }
   codex_requested=$(requested_among "$requested_logins" "${CODEX_REVIEW_LOGINS[@]}") \
     || { echo "error: could not match the policy reviewer against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api --hostname github.com graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
-  copilot_requested=$(requested_among "$requested_logins" "$COPILOT_REVIEW_LOGIN") \
-    || { echo "error: could not match Copilot against the pending review requests on ${owner}/${repo}#${pr_number} — inspect the list with 'gh api --hostname github.com graphql' for that PR's reviewRequests, then re-run this snapshot once it returns an array of reviewer logins" >&2; exit 1; }
 
-  local codex_review copilot_review claude_review codex_comments copilot_comments lanes_cfg
+  local codex_review claude_review codex_comments lanes_cfg
   codex_review=$(latest_review_in_lane   "$owner" "$repo" "$pr_number" "codex-policy") \
     || { echo "error: failed to fetch Codex review state" >&2; exit 1; }
-  copilot_review=$(latest_review_in_lane "$owner" "$repo" "$pr_number" "copilot") \
-    || { echo "error: failed to fetch Copilot review state" >&2; exit 1; }
   claude_review=$(latest_review_in_lane  "$owner" "$repo" "$pr_number" "claude-quality") \
     || { echo "error: failed to fetch Claude review state" >&2; exit 1; }
   lanes_cfg=$(review_lanes_config) \
     || { echo "error: failed to build the review-lane config" >&2; exit 1; }
   # Resolve each verdict against head — stale reviews collapse to "none".
   codex_review=$(resolve_review_against_head   "$codex_review"   "$head_sha")
-  copilot_review=$(resolve_review_against_head "$copilot_review" "$head_sha")
   claude_review=$(resolve_review_against_head  "$claude_review"  "$head_sha")
-  codex_review=$(printf '%s' "$codex_review"     | jq --argjson r "$codex_requested"   '. + {requested: $r}')
-  copilot_review=$(printf '%s' "$copilot_review" | jq --argjson r "$copilot_requested" '. + {requested: $r}')
-  codex_comments=$(toplevel_comments_by   "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
+  codex_review=$(printf '%s' "$codex_review" | jq --argjson r "$codex_requested" '. + {requested: $r}')
+  codex_comments=$(toplevel_comments_by "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
     || { echo "error: failed to count Codex inline comments" >&2; exit 1; }
-  copilot_comments=$(toplevel_comments_by "$owner" "$repo" "$pr_number" "${COPILOT_COMMENT_LOGINS[@]}") \
-    || { echo "error: failed to count Copilot inline comments" >&2; exit 1; }
+  local other_reviews other_comments
+  other_reviews=$(unlaned_reviews "$owner" "$repo" "$pr_number" "$head_sha") \
+    || { echo "error: failed to fetch reviews outside the review lanes" >&2; exit 1; }
+  other_comments=$(toplevel_comments_excluding "$owner" "$repo" "$pr_number" "${CODEX_COMMENT_LOGINS[@]}") \
+    || { echo "error: failed to count inline comments from other reviewers" >&2; exit 1; }
 
   jq -n \
     --argjson pr_number "$pr_number" \
@@ -378,23 +426,25 @@ main() {
     --arg ci_status "$ci_status" \
     --argjson checks "$checks_json" \
     --argjson codex "$codex_review" \
-    --argjson copilot "$copilot_review" \
     --argjson codex_comments "$codex_comments" \
-    --argjson copilot_comments "$copilot_comments" \
     --argjson merge_state "$merge_state" \
     --argjson claude "$claude_review" \
     --argjson cfg "$lanes_cfg" \
+    --argjson other_reviews "$other_reviews" \
+    --argjson other_comments "$other_comments" \
     '{
       pr_number: $pr_number,
       head_sha: $head_sha,
       ci: {status: $ci_status, checks: $checks},
-      reviews: {codex: $codex, copilot: $copilot},
+      reviews: {codex: $codex},
       lanes: {
-        "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating}),
-        "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating}),
-        "copilot":        ($copilot + {gating: $cfg["copilot"].gating})
+        "codex-policy":   ($codex   + {gating: $cfg["codex-policy"].gating, expected: true}),
+        "claude-quality": ($claude  + {gating: $cfg["claude-quality"].gating,
+                                       expected: ($cfg["claude-quality"].workflow as $wf
+                                         | $wf != null and any($checks[]; .workflow == $wf and (.bucket | IN("pass", "fail", "pending"))))})
       },
-      inline_comments: {codex: $codex_comments, copilot: $copilot_comments},
+      other_reviews: $other_reviews,
+      inline_comments: {codex: $codex_comments, other: $other_comments},
       merge_state: ($merge_state | {status, mergeable})
     }'
 }

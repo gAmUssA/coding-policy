@@ -2,19 +2,16 @@
 # Outcome-based tests for watch-pr-reviews.sh.
 #
 # Covers the behaviors the watcher promises:
-#   1. Ready on first poll — mergeable, CI success, both bots posted, the policy
-#      reviewer not CHANGES_REQUESTED (Copilot may be) → "ready", exit 0.
-#   2. Deferred ready — first snapshot pending (one bot not yet posted), a
-#      later snapshot ready → polls, reaches "ready", exit 0.
-#   3. Both-bots-required — a lone codex verdict with copilot still "none"
-#      is NOT ready (proves the watcher waits for the full merge-gate set,
-#      not the first verdict to land).
+#   1. Ready on first poll — mergeable, CI success, the policy reviewer posted
+#      and not CHANGES_REQUESTED → "ready", exit 0.
+#   2. Deferred ready — first snapshot pending (policy reviewer not yet
+#      posted), a later snapshot ready → polls, reaches "ready", exit 0.
+#   3. Policy-verdict-required — mergeable and green with the policy reviewer
+#      still "none" is NOT ready.
 #   4. Zero inline comments is still ready — a clean verdict with no inline
 #      comments is complete; the watcher does not wait for comments.
 #   5. ci "none" (no checks configured) is accepted as ready.
 #   6. changes_requested — the policy reviewer's CHANGES_REQUESTED is terminal.
-#  6b. Copilot advisory — a Copilot CHANGES_REQUESTED does NOT gate; with codex
-#      approved + mergeable it is "ready" (rules/review-severity.md).
 #   7. ci_failure — a failed check is terminal.
 #   8. dirty — CONFLICTING mergeability is terminal.
 #   9. pending_at_budget — every poll pending → exit 1, snapshot preserved.
@@ -25,6 +22,8 @@
 #  14. Cancelled checks, end to end — the real poll-pr-reviews.sh behind the
 #      real entry point, with a fake `gh` on PATH: an unreplaced cancel is
 #      never ready (pending_at_budget); a cancel replaced by a pass is ready.
+#  15. Review lanes — per-lane gating; an advisory lane never gates or holds
+#      ready; a Copilot review (no lane) is ignored end to end.
 #
 # Approach mirrors test_resolve_publish_run.sh: source the script (the main()
 # guard prevents auto-run) and override `fetch_snapshot` + `sleep`. Because
@@ -125,85 +124,30 @@ queue() { for s in "$@"; do echo "$s" >> "$MOCK_QUEUE_FILE"; done; }
 calls() { wc -l < "$MOCK_CALLS_FILE" | tr -d ' '; }
 sleeps() { [[ -f "$TMPDIR_TEST/sleeps" ]] || { echo 0; return; }; wc -l < "$TMPDIR_TEST/sleeps" | tr -d ' '; }
 
-# Build a compact snapshot JSON. Args: mergeable mstatus ci codex copilot [gh_comments copilot_comments]
+# Build a compact snapshot JSON. Args: mergeable mstatus ci codex [codex_comments]
 snap() {
-  local mergeable="$1" mstatus="$2" ci="$3" codex="$4" copilot="$5"
-  local ghc="${6:-0}" cpc="${7:-0}"
-  # `requested` defaults to true: every existing case models a lane that was
-  # asked for and has not answered yet, which is what waiting is for (#369).
-  local cpr="${8:-true}"
+  local mergeable="$1" mstatus="$2" ci="$3" codex="$4"
+  local ghc="${5:-0}"
   jq -cn \
     --arg mergeable "$mergeable" --arg mstatus "$mstatus" --arg ci "$ci" \
-    --arg codex "$codex" --arg copilot "$copilot" \
-    --argjson ghc "$ghc" --argjson cpc "$cpc" --argjson cpr "$cpr" \
+    --arg codex "$codex" --argjson ghc "$ghc" \
     '{
       pr_number: 42,
       ci: {status: $ci, checks: []},
       reviews: {
-        codex:   {state: $codex,   submitted_at: null, body: null, requested: false},
-        copilot: {state: $copilot, submitted_at: null, body: null, requested: $cpr}
+        codex: {state: $codex, submitted_at: null, body: null, requested: false}
       },
-      inline_comments: {codex: $ghc, copilot: $cpc},
+      inline_comments: {codex: $ghc},
       merge_state: {status: $mstatus, mergeable: $mergeable}
     }'
 }
 
 result_of() { echo "$1" | jq -r '.watch.result // empty'; }
 
-# --- Test 0: a lane nobody requested is diagnosed at once ---------------------
-test_unrequested_copilot_is_immediate() {
-  reset_mocks
-  # Copilot has no verdict at this head AND no pending request: waiting cannot
-  # produce one, so the budget is not spent proving it (#369).
-  queue "$(snap MERGEABLE CLEAN success APPROVED none 0 0 false)"
-  # stdout and stderr apart: the JSON envelope is parsed, the diagnostic read.
-  local out err rc=0
-  err="$TMPDIR_TEST/unrequested.err"
-  out=$(main jbaruch coding-policy 42 2>"$err") || rc=$?
-  assert_eq "exit code" "1" "$rc" || return 1
-  assert_eq "result" "review_unrequested" "$(result_of "$out")" || return 1
-  assert_eq "poll count" "1" "$(calls)" || return 1
-  assert_eq "sleep count" "0" "$(sleeps)" || return 1
-  case "$(cat "$err")" in
-    *request-copilot-review.sh*) ;;
-    *) echo "    expected the diagnostic to name the request command" >&2; return 1 ;;
-  esac
-}
-run "an unrequested Copilot lane is diagnosed without waiting" test_unrequested_copilot_is_immediate
-
-# A requested-but-silent lane is what the budget exists for, and still waits.
-test_requested_copilot_still_waits() {
-  reset_mocks
-  queue "$(snap MERGEABLE CLEAN success APPROVED none 0 0 true)" \
-        "$(snap MERGEABLE CLEAN success APPROVED COMMENTED 0 0 true)"
-  local out rc=0
-  out=$(main jbaruch coding-policy 42 2>&1) || rc=$?
-  assert_eq "exit code" "0" "$rc" || return 1
-  assert_eq "result" "ready" "$(result_of "$out")" || return 1
-  assert_eq "poll count" "2" "$(calls)" || return 1
-}
-run "a requested Copilot lane still waits for its verdict" test_requested_copilot_still_waits
-
-# A snapshot from an older poll-pr-reviews.sh carries no `requested` field; the
-# watcher must keep waiting rather than read its absence as "nobody asked".
-test_missing_requested_field_still_waits() {
-  reset_mocks
-  queue "$(jq -cn '{pr_number: 42, ci: {status: "success", checks: []},
-                    reviews: {codex: {state: "APPROVED"}, copilot: {state: "none"}},
-                    inline_comments: {codex: 0, copilot: 0},
-                    merge_state: {status: "CLEAN", mergeable: "MERGEABLE"}}')" \
-        "$(snap MERGEABLE CLEAN success APPROVED COMMENTED)"
-  local out rc=0
-  out=$(main jbaruch coding-policy 42 2>&1) || rc=$?
-  assert_eq "exit code" "0" "$rc" || return 1
-  assert_eq "result" "ready" "$(result_of "$out")" || return 1
-}
-run "a snapshot without the requested field keeps waiting" test_missing_requested_field_still_waits
-
 # --- Test 1: ready on first poll ---------------------------------------------
 test_ready_first_poll() {
   reset_mocks
-  queue "$(snap MERGEABLE CLEAN success APPROVED APPROVED)"
+  queue "$(snap MERGEABLE CLEAN success APPROVED)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -217,8 +161,8 @@ run "ready on first poll — no sleep" test_ready_first_poll
 test_deferred_ready() {
   reset_mocks
   queue \
-    "$(snap MERGEABLE CLEAN success APPROVED none)" \
-    "$(snap MERGEABLE CLEAN success APPROVED APPROVED)"
+    "$(snap MERGEABLE CLEAN success none)" \
+    "$(snap MERGEABLE CLEAN success COMMENTED)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -226,24 +170,24 @@ test_deferred_ready() {
   assert_eq "poll count" "2" "$(calls)" || return 1
   assert_eq "sleep count" "1" "$(sleeps)" || return 1
 }
-run "deferred ready polls until both bots post" test_deferred_ready
+run "deferred ready polls until the policy reviewer posts" test_deferred_ready
 
-# --- Test 3: both bots required (a lone verdict is not ready) -----------------
-test_both_bots_required() {
+# --- Test 3: the policy verdict is required -----------------------------------
+test_policy_verdict_required() {
   reset_mocks
-  # Copilot never posts — mergeable + codex approved is NOT enough.
-  queue "$(snap MERGEABLE CLEAN success APPROVED none)"
+  # Mergeable and green, but the policy reviewer never posts — NOT ready.
+  queue "$(snap MERGEABLE CLEAN success none)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code (budget)" "1" "$rc" || return 1
   assert_eq "result" "pending_at_budget" "$(result_of "$out")" || return 1
 }
-run "lone codex verdict is not ready — waits for both bots" test_both_bots_required
+run "no policy verdict is not ready — waits for it" test_policy_verdict_required
 
 # --- Test 4: zero inline comments is still ready ------------------------------
 test_zero_comments_ready() {
   reset_mocks
-  queue "$(snap MERGEABLE CLEAN success COMMENTED APPROVED 0 0)"
+  queue "$(snap MERGEABLE CLEAN success COMMENTED 0)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -255,7 +199,7 @@ run "zero inline comments is a complete review — ready" test_zero_comments_rea
 # --- Test 5: ci none accepted as ready ---------------------------------------
 test_ci_none_ready() {
   reset_mocks
-  queue "$(snap MERGEABLE CLEAN none APPROVED APPROVED)"
+  queue "$(snap MERGEABLE CLEAN none APPROVED)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -266,7 +210,7 @@ run "ci 'none' (no checks) counts as ready" test_ci_none_ready
 # --- Test 6: changes_requested is terminal -----------------------------------
 test_changes_requested() {
   reset_mocks
-  queue "$(snap MERGEABLE BLOCKED success CHANGES_REQUESTED APPROVED)"
+  queue "$(snap MERGEABLE BLOCKED success CHANGES_REQUESTED)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -275,23 +219,10 @@ test_changes_requested() {
 }
 run "changes_requested is a terminal verdict" test_changes_requested
 
-# --- Test 6b: Copilot is always advisory — its CHANGES_REQUESTED does NOT gate -
-test_copilot_advisory_not_terminal() {
-  reset_mocks
-  # Copilot CHANGES_REQUESTED with codex approved + mergeable is READY, not
-  # changes_requested — only the policy reviewer gates (rules/review-severity.md).
-  queue "$(snap MERGEABLE CLEAN success APPROVED CHANGES_REQUESTED)"
-  local out rc=0
-  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
-  assert_eq "exit code" "0" "$rc" || return 1
-  assert_eq "result" "ready" "$(result_of "$out")" || return 1
-}
-run "Copilot CHANGES_REQUESTED does not gate — advisory only" test_copilot_advisory_not_terminal
-
 # --- Test 7: ci_failure is terminal ------------------------------------------
 test_ci_failure() {
   reset_mocks
-  queue "$(snap MERGEABLE UNSTABLE failure none none)"
+  queue "$(snap MERGEABLE UNSTABLE failure none)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -302,7 +233,7 @@ run "ci failure is terminal (before waiting on reviews)" test_ci_failure
 # --- Test 8: dirty is terminal -----------------------------------------------
 test_dirty() {
   reset_mocks
-  queue "$(snap CONFLICTING DIRTY none none none)"
+  queue "$(snap CONFLICTING DIRTY none none)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "0" "$rc" || return 1
@@ -314,7 +245,7 @@ run "conflicting branch surfaces as dirty" test_dirty
 # --- Test 9: pending_at_budget preserves the snapshot ------------------------
 test_pending_at_budget() {
   reset_mocks
-  queue "$(snap UNKNOWN BLOCKED pending none none)"
+  queue "$(snap UNKNOWN BLOCKED pending none)"
   local out rc=0
   out=$(main gamussa coding-policy 42 2>&1) || rc=$?
   assert_eq "exit code" "1" "$rc" || return 1
@@ -385,8 +316,9 @@ run "non-JSON snapshot exits 2" test_non_json
 # Runs `bash watch-pr-reviews.sh` as a subprocess, so the real fetch_snapshot
 # calls the real poll-pr-reviews.sh. Only `gh` is faked, at the process
 # boundary: it refuses any call not pinned to github.com and answers with the
-# `gh pr checks --json name,bucket` shape GitHub returns. Both bots posted at
-# head and the branch is mergeable, so ci.status alone decides ready.
+# `gh pr checks --json name,bucket` shape GitHub returns. The policy reviewer
+# posted at head (beside a Copilot review no lane claims) and the branch is
+# mergeable, so ci.status alone decides ready.
 # Every setup step is checked: a half-built fake would let PATH fall through
 # to the real `gh` and run these cases against GitHub.
 FAKE_BIN="$TMPDIR_TEST/bin"
@@ -482,7 +414,9 @@ run "e2e: a cancel replaced by a fail is ci_failure" test_e2e_replaced_by_fail_i
 # --- Test 15: review lanes through the real entry point (ADR 0010) ----------
 # Real-shaped GitHub review objects, every one bound to head (@HEAD@ is
 # substituted by the fake gh). The Codex reviewer and a Claude reviewer both
-# post as github-actions[bot]; only the body marker tells them apart.
+# post as github-actions[bot]; only the body marker tells them apart. The
+# Copilot reviews in these fixtures belong to no lane and must change nothing
+# (docs/adr/0014-retire-copilot-lane.md).
 CODEX_MARK='<!-- coding-policy:codex-policy-review:v1 -->'
 CLAUDE_MARK='<!-- coding-policy:claude-quality-review:v1 -->'
 PASSING_CHECKS='[{"bucket":"pass","name":"unit-tests"},{"bucket":"pass","name":"review"}]'
@@ -531,13 +465,47 @@ test_e2e_unmarked_legacy_codex_review_still_gates() {
 }
 run "e2e: an unmarked legacy Codex review still classifies as Codex" test_e2e_unmarked_legacy_codex_review_still_gates
 
+# Copilot claims no lane, but its CHANGES_REQUESTED still gates until
+# resolved through review (rules/ci-safety.md Never Skip Tests).
+test_e2e_copilot_block_gates() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'copilot-pull-request-reviewer[bot]' CHANGES_REQUESTED 01 'Copilot found a bug')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
+  assert_eq "review keys" '["codex"]' "$(echo "$out" | jq -c '.reviews | keys')" || return 1
+  assert_eq "lane keys" '["claude-quality","codex-policy"]' "$(echo "$out" | jq -c '.lanes | keys')"
+}
+run "e2e: a Copilot CHANGES_REQUESTED claims no lane but gates" test_e2e_copilot_block_gates
+
+test_e2e_copilot_comment_is_ready() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'copilot-pull-request-reviewer[bot]' COMMENTED 01 'Copilot reviewed 3 files')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")"
+}
+run "e2e: a Copilot COMMENTED review does not hold ready" test_e2e_copilot_comment_is_ready
+
+# A human CHANGES_REQUESTED gates (rules/ci-safety.md Never Skip Tests), even
+# with a clean policy verdict; the e2e path runs it through the real poll.
+test_e2e_human_block_gates() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'alice' CHANGES_REQUESTED 01 'please rename' | jq -c '.user.type = "User"')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
+  assert_eq "human review" '[{"login":"alice","is_bot":false,"state":"CHANGES_REQUESTED"}]' \
+    "$(echo "$out" | jq -c '.other_reviews | map({login, is_bot, state})')"
+}
+run "e2e: a human CHANGES_REQUESTED gates" test_e2e_human_block_gates
+
 # A lane flagged gating in the snapshot gates; the same verdict on an advisory
 # lane does not. This is the switch ADR 0010's promotion flips.
-lanes_snap() { # <claude-state> <claude-gating>
-  snap MERGEABLE CLEAN success COMMENTED COMMENTED | jq -c --arg s "$1" --argjson g "$2" \
-    '. + {lanes: {"codex-policy": (.reviews.codex + {gating: true}),
-                  "claude-quality": {state: $s, submitted_at: null, body: null, commit_id: null, stale: false, gating: $g},
-                  "copilot": (.reviews.copilot + {gating: false})}}'
+lanes_snap() { # <claude-state> <claude-gating> [claude-expected]
+  snap MERGEABLE CLEAN success COMMENTED | jq -c --arg s "$1" --argjson g "$2" --argjson e "${3:-false}" \
+    '. + {lanes: {"codex-policy": (.reviews.codex + {gating: true, expected: true}),
+                  "claude-quality": {state: $s, submitted_at: null, body: null, commit_id: null, stale: false, gating: $g, expected: $e}}}'
 }
 
 test_advisory_claude_block_does_not_gate() {
@@ -549,6 +517,19 @@ test_advisory_claude_block_does_not_gate() {
   assert_eq "result" "ready" "$(result_of "$out")"
 }
 run "an advisory Claude-lane CHANGES_REQUESTED does not gate" test_advisory_claude_block_does_not_gate
+
+# An advisory lane that never posts (a repo without the Claude reviewer) does
+# not hold the watch to budget.
+test_advisory_lane_absent_is_ready() {
+  reset_mocks
+  queue "$(lanes_snap none false)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "poll count" "1" "$(calls)"
+}
+run "an advisory lane with no verdict does not hold ready" test_advisory_lane_absent_is_ready
 
 test_gating_claude_block_gates() {
   reset_mocks
@@ -569,6 +550,30 @@ test_gating_lane_absent_is_not_ready() {
   assert_eq "result" "pending_at_budget" "$(result_of "$out")"
 }
 run "a gating lane with no verdict is not ready" test_gating_lane_absent_is_not_ready
+
+# An advisory lane whose workflow ran on head owes a verdict: the watcher
+# waits for it and never reaches ready without it.
+test_expected_advisory_lane_absent_is_not_ready() {
+  reset_mocks
+  queue "$(lanes_snap none false true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "1" "$rc" || return 1
+  assert_eq "result" "pending_at_budget" "$(result_of "$out")"
+}
+run "an expected advisory lane with no verdict is not ready" test_expected_advisory_lane_absent_is_not_ready
+
+test_expected_advisory_lane_posted_is_ready() {
+  reset_mocks
+  queue "$(lanes_snap none false true)"
+  queue "$(lanes_snap COMMENTED false true)"
+  local out rc=0
+  out=$(main gamussa coding-policy 42 2>&1) || rc=$?
+  assert_eq "exit code" "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "poll count" "2" "$(calls)"
+}
+run "an expected advisory lane is waited for, then ready" test_expected_advisory_lane_posted_is_ready
 
 echo
 echo "results: ${PASS_COUNT} pass, ${FAIL_COUNT} fail"

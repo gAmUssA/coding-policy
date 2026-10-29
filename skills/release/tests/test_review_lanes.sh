@@ -55,9 +55,20 @@ t_config_shape() {
   cfg=$(bash "$SCRIPT") || return 1
   assert_eq "codex gates"   "true"  "$(jq -r '.["codex-policy"].gating' <<<"$cfg")" || return 1
   assert_eq "claude gates"  "false" "$(jq -r '.["claude-quality"].gating' <<<"$cfg")" || return 1
-  assert_eq "copilot gates" "false" "$(jq -r '.copilot.gating' <<<"$cfg")" || return 1
+  assert_eq "lane set" '["claude-quality","codex-policy"]' "$(jq -c 'keys' <<<"$cfg")" || return 1
   assert_eq "codex marker" "<!-- coding-policy:codex-policy-review:v1 -->" "$(jq -r '.["codex-policy"].marker' <<<"$cfg")" || return 1
-  assert_eq "claude marker" "<!-- coding-policy:claude-quality-review:v1 -->" "$(jq -r '.["claude-quality"].marker' <<<"$cfg")"
+  assert_eq "claude marker" "<!-- coding-policy:claude-quality-review:v1 -->" "$(jq -r '.["claude-quality"].marker' <<<"$cfg")" || return 1
+  assert_eq "codex workflow" "null" "$(jq -r '.["codex-policy"].workflow' <<<"$cfg")" || return 1
+  assert_eq "claude workflow" "PR Code Review (Claude, subscription)" "$(jq -r '.["claude-quality"].workflow' <<<"$cfg")"
+}
+
+# The Claude lane is expected by its workflow's check name; a renamed
+# workflow would silently stop the watcher waiting for it.
+t_claude_workflow_matches_the_shipped_workflow() {
+  local wf name
+  wf="$(cd "$(dirname "$SCRIPT")/../.." && pwd)/.github/workflows/review-claude.yml"
+  name=$(sed -n 's/^name: //p' "$wf") || return 1
+  assert_eq "workflow name" "$name" "$(bash "$SCRIPT" | jq -r '.["claude-quality"].workflow')"
 }
 
 t_claude_marker_under_shared_login() {
@@ -78,8 +89,10 @@ t_quoted_marker_does_not_reclassify() {
   assert_eq "lane" "codex-policy" "$(lane_of 'github-actions[bot]' '"Policy loaded. Finding quotes <!-- coding-policy:claude-quality-review:v1 -->"')"
 }
 
-t_copilot_login() {
-  assert_eq "lane" "copilot" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"<!-- coding-policy:claude-quality-review:v1 -->"')"
+# Copilot belongs to no lane, so its reviews are ignored.
+t_copilot_login_has_no_lane() {
+  assert_eq "plain body"  "null" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"Copilot reviewed 3 files."')" || return 1
+  assert_eq "marked body" "null" "$(lane_of 'copilot-pull-request-reviewer[bot]' '"<!-- coding-policy:claude-quality-review:v1 -->"')"
 }
 
 # A marker from a login no lane trusts claims no lane.
@@ -90,11 +103,12 @@ t_untrusted_login_has_no_lane() {
 
 echo "== review-lanes.sh tests =="
 run "the executable emits the lane config"            t_config_shape
+run "the Claude workflow name matches review-claude.yml" t_claude_workflow_matches_the_shipped_workflow
 run "a Claude marker under the shared login is Claude" t_claude_marker_under_shared_login
 run "a Codex marker is Codex"                          t_codex_marker
 run "an unmarked legacy review is Codex by login"      t_unmarked_legacy_is_codex
 run "a quoted marker does not reclassify"              t_quoted_marker_does_not_reclassify
-run "the Copilot login is Copilot"                     t_copilot_login
+run "the Copilot login claims no lane"                 t_copilot_login_has_no_lane
 run "an untrusted login claims no lane"                t_untrusted_login_has_no_lane
 
 echo "== summary: ${PASS_COUNT} passed, ${FAIL_COUNT} failed =="

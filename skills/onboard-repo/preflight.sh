@@ -45,7 +45,6 @@ PLUGIN_MOUNT="${PLUGIN_MOUNT:-.tessl/plugins/gamussa/coding-policy}"
 CODEX_AUTH_FILE="${CODEX_AUTH_FILE:-$HOME/.codex/auth.json}"
 TARGETS=(
   ".github/workflows/review-codex.yml"
-  ".github/copilot-instructions.md"
   ".github/codex-review/prompt.md"
   ".github/codex-review/schema.json"
   ".github/codex-review/post-review.sh"
@@ -105,7 +104,6 @@ check_codex_auth() {
 check_templates_present() {
   local t missing=()
   for t in "${PLUGIN_MOUNT}/skills/onboard-repo/templates/review-codex.yml.md" \
-           "${PLUGIN_MOUNT}/skills/onboard-repo/templates/copilot-instructions.md" \
            "${PLUGIN_MOUNT}/skills/onboard-repo/templates/prompt.md" \
            "${PLUGIN_MOUNT}/skills/onboard-repo/templates/schema.json" \
            "${PLUGIN_MOUNT}/skills/onboard-repo/templates/post-review.sh" \

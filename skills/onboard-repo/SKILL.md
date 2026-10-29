@@ -2,8 +2,8 @@
 name: onboard-repo
 description: >
   Bootstrap a consumer repo onto gamussa/coding-policy: install the plugin at `latest`,
-  gitignore tessl's generated artifacts, scaffold the Codex policy-review workflow plus
-  the Copilot lane charter, set the CODEX_AUTH_JSON secret, then commit and ship via the
+  gitignore tessl's generated artifacts, scaffold the Codex policy-review workflow,
+  set the CODEX_AUTH_JSON secret, then commit and ship via the
   release skill. Use when the user wants to add, install, enable, scaffold, set up, wire
   up, or enroll coding-policy / an automated policy review / a PR reviewer in a repo.
   Also use to upgrade or refresh the reviewer files in a repo that already has them
@@ -50,7 +50,7 @@ bash .tessl/plugins/gamussa/coding-policy/skills/onboard-repo/scaffold.sh       
 bash .tessl/plugins/gamussa/coding-policy/skills/onboard-repo/scaffold.sh --override # upgrade
 ```
 
-Writes `.github/workflows/review-codex.yml`, `.github/copilot-instructions.md`, and `.github/codex-review/{prompt.md,schema.json,post-review.sh,mask-secrets.sh,assert-no-secret-leak.sh}` from the plugin's templates. Install mode refuses any pre-existing target; upgrade mode overwrites and restores every target if a write fails. Emits `{"state": "scaffolded|no-op", "files": [...]}`. Proceed immediately to Step 4.
+Writes `.github/workflows/review-codex.yml` and `.github/codex-review/{prompt.md,schema.json,post-review.sh,mask-secrets.sh,assert-no-secret-leak.sh}` from the plugin's templates. Install mode refuses any pre-existing target; upgrade mode overwrites and restores every target if a write fails. A pre-existing `.github/copilot-instructions.md` is not a target and stays untouched. Emits `{"state": "scaffolded|no-op", "files": [...]}`. Proceed immediately to Step 4.
 
 ## Step 4 — Set the Reviewer Secret
 

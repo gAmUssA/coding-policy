@@ -13,20 +13,21 @@
 #
 # Classification of one review object (GitHub REST shape: .user.login, .body),
 # first match wins:
-#   1. login in COPILOT_LOGINS                                   -> copilot
-#   2. body starts with CLAUDE_QUALITY_MARKER, login in
+#   1. body starts with CLAUDE_QUALITY_MARKER, login in
 #      CLAUDE_QUALITY_LOGINS                                     -> claude-quality
-#   3. body starts with CODEX_POLICY_MARKER, login in
+#   2. body starts with CODEX_POLICY_MARKER, login in
 #      CODEX_POLICY_LOGINS                                       -> codex-policy
-#   4. login in CODEX_POLICY_LOGINS (legacy, unmarked)           -> codex-policy
-#   5. anything else                                             -> null (no lane)
-# Rule 4 keeps every Codex review posted before the marker existed in the
+#   3. login in CODEX_POLICY_LOGINS (legacy, unmarked)           -> codex-policy
+#   4. anything else                                             -> null (no lane)
+# Rule 3 keeps every Codex review posted before the marker existed in the
 # Codex lane. A marker must be the body's first bytes: a marker quoted inside
 # a finding never reclassifies a review.
 #
 # Gating: a lane gates the merge when its *_GATES constant is true. The Claude
 # lane starts advisory (ADR 0010 trial); flipping CLAUDE_QUALITY_GATES is the
-# promotion. Copilot is always advisory (rules/review-severity.md).
+# promotion. A reviewer outside every lane (Copilot, where a consumer repo
+# still enables it) classifies null; no lane gate reads it, and the poll
+# snapshot reports it under other_reviews (docs/adr/0014-retire-copilot-lane.md).
 #
 # Usage (sourced): defines the constants plus
 #   review_lanes_config  -> prints the lane config JSON (below) on stdout
@@ -34,9 +35,8 @@
 #                           lane name or null for the input review object
 # Usage (executed): review-lanes.sh
 # Out:   the lane config JSON on stdout:
-#   {"codex-policy":   {"marker": "...", "logins": [...], "gating": true},
-#    "claude-quality": {"marker": "...", "logins": [...], "gating": false},
-#    "copilot":        {"marker": null,  "logins": [...], "gating": false}}
+#   {"codex-policy":   {"marker": "...", "logins": [...], "gating": true,  "workflow": null},
+#    "claude-quality": {"marker": "...", "logins": [...], "gating": false, "workflow": "..."}}
 # Exit:  0 on success; 2 with a stderr diagnostic when jq is missing.
 
 set -euo pipefail
@@ -48,27 +48,29 @@ CLAUDE_QUALITY_MARKER="<!-- coding-policy:claude-quality-review:v1 -->"
 # a glob bracket.
 CODEX_POLICY_LOGINS=("github-actions[bot]")
 CLAUDE_QUALITY_LOGINS=("github-actions[bot]")
-COPILOT_LOGINS=("copilot-pull-request-reviewer[bot]")
+
+# The workflow whose check run on the PR head means a lane's verdict is owed
+# (`gh pr checks --json workflow`). The Claude reviewer is push-triggered but
+# only some repos run it, so its lane is expected exactly when its check
+# exists; the Codex lane is always expected and carries no workflow.
+CLAUDE_QUALITY_WORKFLOW="PR Code Review (Claude, subscription)"
 
 CODEX_POLICY_GATES=true
 CLAUDE_QUALITY_GATES=false
-COPILOT_GATES=false
 
 review_lanes_config() {
-  local codex claude copilot
+  local codex claude
   codex=$(jq -n '$ARGS.positional' --args "${CODEX_POLICY_LOGINS[@]}") || return 1
   claude=$(jq -n '$ARGS.positional' --args "${CLAUDE_QUALITY_LOGINS[@]}") || return 1
-  copilot=$(jq -n '$ARGS.positional' --args "${COPILOT_LOGINS[@]}") || return 1
   jq -cn \
     --arg codex_marker "$CODEX_POLICY_MARKER" \
     --arg claude_marker "$CLAUDE_QUALITY_MARKER" \
-    --argjson codex "$codex" --argjson claude "$claude" --argjson copilot "$copilot" \
+    --arg claude_workflow "$CLAUDE_QUALITY_WORKFLOW" \
+    --argjson codex "$codex" --argjson claude "$claude" \
     --argjson codex_gates "$CODEX_POLICY_GATES" \
     --argjson claude_gates "$CLAUDE_QUALITY_GATES" \
-    --argjson copilot_gates "$COPILOT_GATES" \
-    '{"codex-policy":   {marker: $codex_marker,  logins: $codex,   gating: $codex_gates},
-      "claude-quality": {marker: $claude_marker, logins: $claude,  gating: $claude_gates},
-      "copilot":        {marker: null,           logins: $copilot, gating: $copilot_gates}}'
+    '{"codex-policy":   {marker: $codex_marker,  logins: $codex,  gating: $codex_gates,  workflow: null},
+      "claude-quality": {marker: $claude_marker, logins: $claude, gating: $claude_gates, workflow: $claude_workflow}}'
 }
 
 review_lanes_jq() {
@@ -78,8 +80,7 @@ def review_lane($cfg):
   | ((.body // "") | tostring) as $body
   | def has_login($lane): $login | IN($cfg[$lane].logins[]);
     def marked($lane): $body | startswith($cfg[$lane].marker);
-    if has_login("copilot") then "copilot"
-    elif has_login("claude-quality") and marked("claude-quality") then "claude-quality"
+    if has_login("claude-quality") and marked("claude-quality") then "claude-quality"
     elif has_login("codex-policy") and marked("codex-policy") then "codex-policy"
     elif has_login("codex-policy") then "codex-policy"
     else null end;

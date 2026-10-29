@@ -8,13 +8,15 @@
 # fabricated "N minutes in the policy" citations) crept in. This script owns
 # that loop so the cadence and give-up budget are one tuned constant, not an
 # agent choice, and it watches EXACTLY the fields the Step 7 merge gate reads:
-# both bots' LATEST review state (resolved by review lane inside
+# each gating lane's LATEST review state (resolved by review lane inside
 # poll-pr-reviews.sh), CI status, and merge state. Verdicts are read per
 # review lane (review-lanes.sh): the codex-policy lane gates, plus any lane
 # whose `lanes.<lane>.gating` is true; the claude-quality lane is advisory
-# until ADR 0010 promotes it. Copilot is always advisory
-# (rules/review-severity.md); the watcher waits for
-# Copilot to post so its body can be read, never gates on its verdict. It does
+# until a later ADR promotes it, so the watcher never gates on it, and waits
+# for it only where `lanes.<lane>.expected` says its workflow ran on head
+# (docs/adr/0014-retire-copilot-lane.md). A reviewer outside every lane
+# lands in `other_reviews`: its CHANGES_REQUESTED, human or bot (Copilot),
+# gates until resolved through review. It does
 # NOT wait for inline comments to appear (a verdict with zero inline comments is
 # a complete review) and does NOT key off any hand-picked run/comment/check id.
 #
@@ -23,30 +25,28 @@
 #          "watch": {"result": "<result>", "attempts": N, "elapsed_seconds": N}
 #        emitted on stdout when a terminal state is reached (rc 0 or 1).
 # Exit / result matrix (branch on .watch.result):
-#   rc 0, result "ready"             — mergeable, CI success/none, both bots
-#                                      posted (so their bodies can be read), and
-#                                      the policy reviewer is not
-#                                      CHANGES_REQUESTED. Copilot may be
-#                                      CHANGES_REQUESTED and this still reaches
-#                                      ready (Copilot is always advisory).
+#   rc 0, result "ready"             — mergeable, CI success/none, the policy
+#                                      reviewer and every gating or expected
+#                                      lane posted (so their bodies can be
+#                                      read), and no gating verdict is
+#                                      CHANGES_REQUESTED. An advisory lane may
+#                                      be CHANGES_REQUESTED, or absent when not
+#                                      expected, and this still reaches ready.
+#                                      An expected lane that never posts ends
+#                                      in pending_at_budget, never ready.
 #   rc 0, result "changes_requested" — the policy reviewer's latest verdict
 #                                      (or that of any lane the snapshot marks
-#                                      `gating: true`) is
+#                                      `gating: true`, or any reviewer in
+#                                      `other_reviews`) is
 #                                      CHANGES_REQUESTED (a blocking finding is
 #                                      present — advisory-only reviews post
 #                                      COMMENT, see rules/review-severity.md).
-#                                      Copilot is always advisory and never
-#                                      produces this result. Address and re-push.
+#                                      An advisory lane never produces this
+#                                      result. Address and re-push.
 #   rc 0, result "ci_failure"        — a check failed. Fix and re-push.
 #   rc 0, result "dirty"             — branch conflicts with the base; GitHub
 #                                      skipped the pull_request: workflows.
 #                                      Rebase, resolve, force-push, re-run.
-#   rc 1, result "review_unrequested" — Copilot has no verdict at this head and
-#                                      no pending request, so no wait can
-#                                      produce one. Request it
-#                                      (request-copilot-review.sh) and re-run.
-#                                      The policy reviewer runs on the push and
-#                                      never produces this result.
 #   rc 1, result "pending_at_budget" — a signal never arrived within the
 #                                      budget (a reviewer that never posted,
 #                                      CI stuck pending). Inspect which field
@@ -127,22 +127,21 @@ main() {
       exit 2
     fi
 
-    local mergeable mstatus ci codex copilot copilot_requested gating_cr gating_absent
+    local mergeable mstatus ci codex gating_cr owed_absent unlaned_cr
     mergeable=$(printf '%s' "$snapshot" | jq -r '.merge_state.mergeable')
     mstatus=$(printf '%s'   "$snapshot" | jq -r '.merge_state.status')
     ci=$(printf '%s'        "$snapshot" | jq -r '.ci.status')
     codex=$(printf '%s'     "$snapshot" | jq -r '.reviews.codex.state')
-    copilot=$(printf '%s'   "$snapshot" | jq -r '.reviews.copilot.state')
     # Per-lane gating (review-lanes.sh): any lane flagged gating that is
-    # CHANGES_REQUESTED blocks, and every gating lane must have posted before
-    # ready. Advisory lanes are reported in the snapshot and never gate. A
-    # snapshot without `lanes` reads as no extra gating lanes.
+    # CHANGES_REQUESTED blocks, and every gating or expected lane must have
+    # posted before ready. Advisory lanes never gate. A snapshot without
+    # `lanes` reads as no extra gating lanes.
     gating_cr=$(printf '%s'     "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "CHANGES_REQUESTED")] | length > 0')
-    gating_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "none")] | length > 0')
-    # `// true` would be wrong here: jq's alternative operator takes the right
-    # side for `false` as well as for null, which is exactly the value this
-    # branch exists to read. Absence alone defaults to waiting.
-    copilot_requested=$(printf '%s' "$snapshot" | jq -r '.reviews.copilot | if has("requested") then .requested else true end')
+    owed_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select((.gating == true or .expected == true) and .state == "none")] | length > 0')
+    # A CHANGES_REQUESTED outside every lane, human or bot, gates until
+    # resolved through review (rules/ci-safety.md Never Skip Tests), on any
+    # commit: GitHub keeps it active across pushes.
+    unlaned_cr=$(printf '%s'    "$snapshot" | jq -r '[(.other_reviews // [])[] | select(.state == "CHANGES_REQUESTED")] | length > 0')
 
     # Order matters: a conflicting branch or a failed check or a blocking
     # CHANGES_REQUESTED verdict is terminal-for-this-round — the agent must
@@ -155,33 +154,22 @@ main() {
     fi
     # Only the policy reviewer gates. Its CHANGES_REQUESTED means a blocking
     # finding is present (post-review.sh derives the event from per-finding
-    # severity; advisory-only reviews post COMMENT). Copilot is always advisory
-    # (rules/review-severity.md) — its verdict never produces this result; the
-    # agent still reads its body per rules/reviewer-feedback-reading.md.
-    if [[ "$codex" == "CHANGES_REQUESTED" || "$gating_cr" == "true" ]]; then
+    # severity; advisory-only reviews post COMMENT). An advisory lane's verdict
+    # never produces this result; the agent still reads its body per
+    # rules/reviewer-feedback-reading.md.
+    if [[ "$codex" == "CHANGES_REQUESTED" || "$gating_cr" == "true" || "$unlaned_cr" == "true" ]]; then
       emit_and_exit "changes_requested" "$attempts" "$elapsed" "$snapshot" 0
     fi
 
     # Ready = the exact Step 7 merge-gate field conjunction: mergeable, CI
-    # green-or-absent, and BOTH bots have posted a verdict (state left "none")
-    # so each body can be read before merge. The policy reviewer is not
-    # CHANGES_REQUESTED here — the guard above returned; Copilot never gates.
+    # green-or-absent, and the policy reviewer plus every gating lane have
+    # posted a verdict (state left "none") so each body can be read before
+    # merge. None is CHANGES_REQUESTED here — the guard above returned.
     if [[ "$mergeable" == "MERGEABLE" \
        && ( "$ci" == "success" || "$ci" == "none" ) \
        && "$codex" != "none" \
-       && "$copilot" != "none" \
-       && "$gating_absent" == "false" ]]; then
+       && "$owed_absent" == "false" ]]; then
       emit_and_exit "ready" "$attempts" "$elapsed" "$snapshot" 0
-    fi
-
-    # Copilot is request-triggered: with no posted verdict at this head and no
-    # pending request, nothing is coming and the budget would be spent proving
-    # it. Say so at once instead (rules/ci-safety.md Always Watch CI). The
-    # policy reviewer is push-triggered and never carries a pending request, so
-    # it is not read this way.
-    if [[ "$copilot" == "none" && "$copilot_requested" == "false" ]]; then
-      echo "error: Copilot has no review at this head and no pending request on ${owner}/${repo}#${pr} — run 'bash ${SCRIPT_DIR}/request-copilot-review.sh ${owner} ${repo} ${pr}' and re-run this watch; waiting cannot produce a review nobody asked for" >&2
-      emit_and_exit "review_unrequested" "$attempts" "$elapsed" "$snapshot" 1
     fi
 
     # Still pending (UNKNOWN mergeability, CI pending, or a bot yet to post).

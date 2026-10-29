@@ -35,8 +35,8 @@ pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
 cleanup() { [[ -n "${TMP:-}" ]] && { chmod -R u+w "$TMP" 2>/dev/null; ! rm -rf "$TMP" && echo "warn: could not remove $TMP" >&2; }; return 0; }
 
-TARGETS=(.github/workflows/review-codex.yml .github/copilot-instructions.md .github/codex-review/prompt.md .github/codex-review/schema.json .github/codex-review/post-review.sh .github/codex-review/mask-secrets.sh .github/codex-review/assert-no-secret-leak.sh)
-TEMPLATES=(review-codex.yml.md copilot-instructions.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh)
+TARGETS=(.github/workflows/review-codex.yml .github/codex-review/prompt.md .github/codex-review/schema.json .github/codex-review/post-review.sh .github/codex-review/mask-secrets.sh .github/codex-review/assert-no-secret-leak.sh)
+TEMPLATES=(review-codex.yml.md prompt.md schema.json post-review.sh mask-secrets.sh assert-no-secret-leak.sh)
 
 mkrepo() { git -c init.defaultBranch=main init -q "$1" && git -C "$1" -c user.email=t@t -c user.name=t commit --allow-empty -q -m init; }
 mkmount() { # <dir> <content-tag>
@@ -58,14 +58,21 @@ main() {
 
   # 1. install creates all targets, no .md shim on the workflow
   mkrepo "$TMP/r1"; run "$TMP/r1" "$MOUNT_A"
-  if [[ $RC -eq 0 ]] && jq -e '.state == "scaffolded" and (.files | length == 7) and all(.files[]; .action == "created")' <<<"$OUT" >/dev/null 2>&1 \
+  if [[ $RC -eq 0 ]] && jq -e '.state == "scaffolded" and (.files | length == 6) and all(.files[]; .action == "created")' <<<"$OUT" >/dev/null 2>&1 \
      && all_present "$TMP/r1" && [[ ! -e "$TMP/r1/.github/workflows/review-codex.yml.md" ]] \
      && grep -q 'review-codex.yml.md v1' "$TMP/r1/.github/workflows/review-codex.yml"; then pass; else fail "install: RC=$RC OUT=$OUT"; fi
 
   # 2. install refuses an existing target; nothing else written
-  mkrepo "$TMP/r2"; mkdir -p "$TMP/r2/.github"; printf 'mine\n' > "$TMP/r2/.github/copilot-instructions.md"
+  mkrepo "$TMP/r2"; mkdir -p "$TMP/r2/.github/codex-review"; printf 'mine\n' > "$TMP/r2/.github/codex-review/prompt.md"
   run "$TMP/r2" "$MOUNT_A"
-  if [[ $RC -eq 1 && -z "$OUT" && ! -e "$TMP/r2/.github/workflows/review-codex.yml" ]] && grep -q mine "$TMP/r2/.github/copilot-instructions.md"; then pass; else fail "refuse: RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 1 && -z "$OUT" && ! -e "$TMP/r2/.github/workflows/review-codex.yml" ]] && grep -q mine "$TMP/r2/.github/codex-review/prompt.md"; then pass; else fail "refuse: RC=$RC OUT=$OUT"; fi
+
+  # 2b. a consumer's existing .github/copilot-instructions.md is neither a
+  #     target nor a refusal: install succeeds and leaves it untouched.
+  mkrepo "$TMP/r2b"; mkdir -p "$TMP/r2b/.github"; printf 'mine\n' > "$TMP/r2b/.github/copilot-instructions.md"
+  run "$TMP/r2b" "$MOUNT_A"
+  if [[ $RC -eq 0 ]] && jq -e '.state == "scaffolded" and all(.files[]; .target != ".github/copilot-instructions.md")' <<<"$OUT" >/dev/null 2>&1 \
+     && [[ "$(cat "$TMP/r2b/.github/copilot-instructions.md")" == "mine" ]]; then pass; else fail "copilot file untouched: RC=$RC OUT=$OUT"; fi
 
   # 3. override overwrites with newer template content
   run "$TMP/r1" "$MOUNT_B" --override
@@ -89,7 +96,7 @@ main() {
     pass  # root ignores mode bits; the restore path cannot be provoked this way
   else
     run "$TMP/r6" "$MOUNT_B" --override
-    if [[ $RC -eq 1 ]] && grep -q 'v1' "$TMP/r6/.github/workflows/review-codex.yml" && grep -q 'v1' "$TMP/r6/.github/copilot-instructions.md"; then pass
+    if [[ $RC -eq 1 ]] && grep -q 'v1' "$TMP/r6/.github/workflows/review-codex.yml" && grep -q 'v1' "$TMP/r6/.github/codex-review/prompt.md"; then pass
     else fail "restore: RC=$RC OUT=$OUT wf=$(cat "$TMP/r6/.github/workflows/review-codex.yml")"; fi
   fi
   chmod u+w "$TMP/r6/.github/codex-review/schema.json"

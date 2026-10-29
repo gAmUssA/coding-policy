@@ -23,7 +23,6 @@ description: Review findings carry a severity — blocking gates the merge, advi
 
 - Pure prose and style: connective or em-dash placement, a presentation-only atomic-bullet split
 - CHANGELOG wording, naming taste, synonym preference
-- Copilot findings are always advisory regardless of Copilot's review state — even a Copilot `CHANGES_REQUESTED` never gates the agent's flow
 - Anything whose fix changes only presentation, not behavior
 
 ## Gating Predicate
@@ -31,10 +30,10 @@ description: Review findings carry a severity — blocking gates the merge, advi
 - Any blocking finding present → the reviewer posts `CHANGES_REQUESTED` and the merge gates
 - Only advisory findings → the reviewer posts `COMMENTED` and the merge is allowed
 - The policy reviewer's posted state already encodes this — the event is derived from per-finding severity (see the `skills/onboard-repo/templates/post-review.sh` header; consumers carry a copy at `.github/codex-review/post-review.sh`)
-- The merge watcher gates on the policy reviewer's `CHANGES_REQUESTED` alone (see `skills/release/watch-pr-reviews.sh` header)
+- The merge watcher gates on the policy reviewer's or a gating lane's `CHANGES_REQUESTED`, and on any reviewer's outside every lane (see `skills/release/watch-pr-reviews.sh` header)
 - Each verdict is read per review lane, never per login (`skills/release/review-lanes.sh`)
-- Copilot never gates
-- The Claude quality lane is advisory until `docs/adr/0010-review-lanes.md` promotes it
+- A `CHANGES_REQUESTED` outside every lane in `skills/release/review-lanes.sh`, human or bot (Copilot), gates until resolved through review (`rules/ci-safety.md` Never Skip Tests)
+- The Claude quality lane is advisory until an ADR superseding `docs/adr/0014-retire-copilot-lane.md` promotes it
 
 ## Judge-Accepted Defect Carve-Out
 

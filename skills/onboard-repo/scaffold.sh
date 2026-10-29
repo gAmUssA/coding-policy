@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Copy the policy-reviewer files from the installed plugin into the consumer:
 #   .github/workflows/review-codex.yml        — the PR-time Codex policy review
-#   .github/copilot-instructions.md           — the Copilot complementary lane
 #   .github/codex-review/prompt.md            — the reviewer prompt
 #   .github/codex-review/schema.json          — the reviewer output schema
 #   .github/codex-review/post-review.sh       — posts the verdict as a PR review
@@ -44,7 +43,6 @@ TEMPLATE_DIR="${PLUGIN_MOUNT}/skills/onboard-repo/templates"
 # "<source under TEMPLATE_DIR>:<target in the consumer repo>"
 MANIFEST=(
   "review-codex.yml.md:.github/workflows/review-codex.yml"
-  "copilot-instructions.md:.github/copilot-instructions.md"
   "prompt.md:.github/codex-review/prompt.md"
   "schema.json:.github/codex-review/schema.json"
   "post-review.sh:.github/codex-review/post-review.sh"

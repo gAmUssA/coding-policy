@@ -14,7 +14,7 @@ A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-po
 tessl install gamussa/coding-policy
 ```
 
-To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, Copilot lane, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
+To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
 
 ### Codex personal marketplace
 
@@ -45,7 +45,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 | Communication | [response-clarity](rules/response-clarity.md) | Action first, numbered steps, plain errors, one next step, no preamble |
 | Concurrency | [agent-worktree-isolation](rules/agent-worktree-isolation.md) | Git worktrees for concurrent agent work; cleanup; read-only exception |
 | Teamwork | [agent-team-operation](rules/agent-team-operation.md) | Herdr teams: the standalone/team mode switch and the worker essentials (one writer per worktree, no git on the shared checkout, report files as the worker channel). The lead's full contract — staffing, specialist triggers, judge seat, tiers, fix loops, dispatch safety, task ledger, stall detection, review partitions, retrospectives, internal review before the PR — lives in [`skills/herdr-teamlead/references/team-operation.md`](skills/herdr-teamlead/references/team-operation.md): the lead reads its core before each round and each other section at the step that needs it |
-| Review | [review-severity](rules/review-severity.md) | Blocking gates the merge, advisory never does; Copilot is always advisory |
+| Review | [review-severity](rules/review-severity.md) | Blocking gates the merge, advisory never does; a change request from a reviewer outside a review lane gates until resolved |
 | Review | [reviewer-feedback-reading](rules/reviewer-feedback-reading.md) | Read every reviewer's body before declaring merge-ready, `COMMENTED` included |
 | Scope | [external-repo-contributions](rules/external-repo-contributions.md) | Default deny on issues, PRs, comments, and reactions in repos the operator does not own |
 | Automation | [hook-action-reporting](rules/hook-action-reporting.md) | Relay `Session-start status —` hook payloads once, then act on what they name |
@@ -62,8 +62,8 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 
 | Skill | Description |
 |-------|-------------|
-| [release](skills/release/SKILL.md) | Ship a branch: readiness checks, PR, Codex policy review plus advisory Copilot review, watch to a verdict, address feedback, merge on green, cleanup, and publish confirmation for plugin repos. |
-| [onboard-repo](skills/onboard-repo/SKILL.md) | Bootstrap a consumer repo: install the plugin at `latest`, gitignore `.tessl/`, scaffold the per-repo Codex reviewer workflow and Copilot instructions, set `CODEX_AUTH_JSON`, open the PR. |
+| [release](skills/release/SKILL.md) | Ship a branch: readiness checks, PR, Codex policy review plus the advisory Claude quality lane, watch to a verdict, address feedback, merge on green, cleanup, and publish confirmation for plugin repos. |
+| [onboard-repo](skills/onboard-repo/SKILL.md) | Bootstrap a consumer repo: install the plugin at `latest`, gitignore `.tessl/`, scaffold the per-repo Codex reviewer workflow, set `CODEX_AUTH_JSON`, open the PR. |
 | [herdr-teamlead](skills/herdr-teamlead/SKILL.md) | Lead coding rounds in [Herdr](https://herdr.dev): measure headroom, select capable independent workers, compose briefs, provision worktrees, dispatch workers in verified YOLO mode, observe the fleet, and gate release on their reports. Consult UX, accessibility, investigation, architecture, security, performance and documentation specialists when the round's diff trips a trigger declared in `.herdr/triggers.json`. A persistent task ledger tracks acceptance independently of Herdr status; retrospectives, lead handoffs, and an attention queue survive worker transitions and lead resets. A pinned judge adjudicates disputes and diagnoses an exhausted fix loop into a bounded remedy; stalled workers and spent worktrees are detected from evidence and pruned. |
 | [herdr-standup](skills/herdr-standup/SKILL.md) | Daily standup with the named Herdr agents: ask each idle worker for DONE / PLAN / BLOCKED / REPORT, never interrupt a working one, show unresolved user attention first, then render a fixed-width table plus a Markdown record. |
 

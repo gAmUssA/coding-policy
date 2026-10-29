@@ -10,15 +10,19 @@
     "result": "changes_requested",
     "policy_reviewer": {
       "actor": "github-actions[bot]",
+      "lane": "codex-policy",
+      "gating": true,
       "state": "CHANGES_REQUESTED",
       "submitted_at": "2026-10-14T11:18:04Z",
       "body": "Policy review complete.\n\n## Findings\n\n### Missing input sanitization on `session_token` parameter\n\n`rules/no-secrets.md` requires that tokens sourced from user-supplied input are sanitized before storage. The `restore_session()` handler at `src/auth/session.py:84` assigns `session_token = request.params['token']` directly to the session store without any validation or sanitization. This allows a caller to inject arbitrary data into the session store.\n\n**Fix required before merge.**"
     },
-    "copilot": {
-      "actor": "Copilot",
-      "state": "CHANGES_REQUESTED",
+    "claude_quality": {
+      "actor": "github-actions[bot]",
+      "lane": "claude-quality",
+      "gating": false,
+      "state": "COMMENTED",
       "submitted_at": "2026-10-14T11:21:33Z",
-      "body": "Copilot review complete. Two findings below.",
+      "body": "<!-- coding-policy:claude-quality-review:v1 -->\nClaude quality review complete. Two findings below.",
       "inline_comments": [
         {
           "id": 881,

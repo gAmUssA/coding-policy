@@ -12,7 +12,6 @@ This plugin started as a fork-in-spirit of [jbaruch/coding-policy](https://githu
 | `.gitignore` block | Ignores `.tessl/` and the per-agent files tessl generates; `AGENTS.md` / `CLAUDE.md` stay committed |
 | `.github/workflows/review-codex.yml` | On every same-repo PR: checks out `gamussa/coding-policy@main` into `.coding-policy/`, runs the Codex CLI review against `.coding-policy/rules`, posts the verdict as `github-actions[bot]` |
 | `.github/codex-review/` | The reviewer prompt, output schema, and the post / mask / leak-guard scripts (copied from this plugin's `skills/onboard-repo/templates/`) |
-| `.github/copilot-instructions.md` | Scopes Copilot to the correctness lane |
 
 ## Secrets
 
@@ -29,3 +28,5 @@ No Tessl token is needed in a consumer: the policy is read from a public GitHub 
 ## Upgrading
 
 Re-run the skill in override mode. `scaffold.sh --override` overwrites the reviewer files from the current plugin templates and restores them if any write fails; `tessl update` refreshes the rules themselves (the `check-policy-freshness` hook reminds you once a day).
+
+Onboarding no longer writes `.github/copilot-instructions.md` (`docs/adr/0014-retire-copilot-lane.md`). An existing one stays untouched; Copilot, where a repo still enables it, is read but never waited for; its `CHANGES_REQUESTED` gates until resolved through review.
