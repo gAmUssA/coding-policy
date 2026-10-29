@@ -465,16 +465,27 @@ test_e2e_unmarked_legacy_codex_review_still_gates() {
 }
 run "e2e: an unmarked legacy Codex review still classifies as Codex" test_e2e_unmarked_legacy_codex_review_still_gates
 
-test_e2e_copilot_block_is_ignored() {
+# Copilot claims no lane, but its CHANGES_REQUESTED still gates until
+# resolved through review (rules/ci-safety.md Never Skip Tests).
+test_e2e_copilot_block_gates() {
   local reviews out rc=0
   reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'copilot-pull-request-reviewer[bot]' CHANGES_REQUESTED 01 'Copilot found a bug')]"
   out=$(watch_with_reviews "$reviews") || rc=$?
   assert_watch_rc "0" "$rc" || return 1
-  assert_eq "result" "ready" "$(result_of "$out")" || return 1
+  assert_eq "result" "changes_requested" "$(result_of "$out")" || return 1
   assert_eq "review keys" '["codex"]' "$(echo "$out" | jq -c '.reviews | keys')" || return 1
   assert_eq "lane keys" '["claude-quality","codex-policy"]' "$(echo "$out" | jq -c '.lanes | keys')"
 }
-run "e2e: a Copilot CHANGES_REQUESTED claims no lane and never gates" test_e2e_copilot_block_is_ignored
+run "e2e: a Copilot CHANGES_REQUESTED claims no lane but gates" test_e2e_copilot_block_gates
+
+test_e2e_copilot_comment_is_ready() {
+  local reviews out rc=0
+  reviews="[$(review_json 1 'github-actions[bot]' COMMENTED 00 "${CODEX_MARK}"$'\nPolicy loaded: 30 rule files. All rules pass.'),$(review_json 2 'copilot-pull-request-reviewer[bot]' COMMENTED 01 'Copilot reviewed 3 files')]"
+  out=$(watch_with_reviews "$reviews") || rc=$?
+  assert_watch_rc "0" "$rc" || return 1
+  assert_eq "result" "ready" "$(result_of "$out")"
+}
+run "e2e: a Copilot COMMENTED review does not hold ready" test_e2e_copilot_comment_is_ready
 
 # A human CHANGES_REQUESTED gates (rules/ci-safety.md Never Skip Tests), even
 # with a clean policy verdict; the e2e path runs it through the real poll.

@@ -26,7 +26,8 @@
 # Gating: a lane gates the merge when its *_GATES constant is true. The Claude
 # lane starts advisory (ADR 0010 trial); flipping CLAUDE_QUALITY_GATES is the
 # promotion. A reviewer outside every lane (Copilot, where a consumer repo
-# still enables it) classifies null and never gates (docs/adr/0014-retire-copilot-lane.md).
+# still enables it) classifies null; no lane gate reads it, and the poll
+# snapshot reports it under other_reviews (docs/adr/0014-retire-copilot-lane.md).
 #
 # Usage (sourced): defines the constants plus
 #   review_lanes_config  -> prints the lane config JSON (below) on stdout

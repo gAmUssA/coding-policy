@@ -21,4 +21,4 @@ Reference for Step 4 of the `release` skill — how the two PR reviewers are wir
 - **Lane marker:** the body opens with `<!-- coding-policy:claude-quality-review:v1 -->`, so `skills/release/review-lanes.sh` classifies it `claude-quality` although it posts as `github-actions[bot]`.
 - **Verdict:** always `COMMENT` while the lane is advisory (`docs/adr/0014-retire-copilot-lane.md`). Its body must be read (`rules/reviewer-feedback-reading.md`); it never gates the merge.
 
-Copilot is no longer requested. A Copilot review in a repo that still enables it belongs to no lane and never gates (`rules/review-severity.md`).
+Copilot is no longer requested. A Copilot review in a repo that still enables it belongs to no lane: its body is read through `other_reviews`, and its `CHANGES_REQUESTED` gates until resolved through review (`rules/review-severity.md`).

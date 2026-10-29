@@ -15,8 +15,8 @@
 # until a later ADR promotes it, so the watcher never gates on it, and waits
 # for it only where `lanes.<lane>.expected` says its workflow ran on head
 # (docs/adr/0014-retire-copilot-lane.md). A reviewer outside every lane
-# lands in `other_reviews`: a human CHANGES_REQUESTED there gates, a bot's
-# (Copilot) never does. It does
+# lands in `other_reviews`: its CHANGES_REQUESTED, human or bot (Copilot),
+# gates until resolved through review. It does
 # NOT wait for inline comments to appear (a verdict with zero inline comments is
 # a complete review) and does NOT key off any hand-picked run/comment/check id.
 #
@@ -36,8 +36,8 @@
 #                                      in pending_at_budget, never ready.
 #   rc 0, result "changes_requested" — the policy reviewer's latest verdict
 #                                      (or that of any lane the snapshot marks
-#                                      `gating: true`, or any human reviewer
-#                                      in `other_reviews`) is
+#                                      `gating: true`, or any reviewer in
+#                                      `other_reviews`) is
 #                                      CHANGES_REQUESTED (a blocking finding is
 #                                      present — advisory-only reviews post
 #                                      COMMENT, see rules/review-severity.md).
@@ -127,7 +127,7 @@ main() {
       exit 2
     fi
 
-    local mergeable mstatus ci codex gating_cr owed_absent human_cr
+    local mergeable mstatus ci codex gating_cr owed_absent unlaned_cr
     mergeable=$(printf '%s' "$snapshot" | jq -r '.merge_state.mergeable')
     mstatus=$(printf '%s'   "$snapshot" | jq -r '.merge_state.status')
     ci=$(printf '%s'        "$snapshot" | jq -r '.ci.status')
@@ -138,10 +138,10 @@ main() {
     # `lanes` reads as no extra gating lanes.
     gating_cr=$(printf '%s'     "$snapshot" | jq -r '[(.lanes // {})[] | select(.gating == true and .state == "CHANGES_REQUESTED")] | length > 0')
     owed_absent=$(printf '%s' "$snapshot" | jq -r '[(.lanes // {})[] | select((.gating == true or .expected == true) and .state == "none")] | length > 0')
-    # A human reviewer's CHANGES_REQUESTED gates until resolved through review
-    # (rules/ci-safety.md Never Skip Tests), on any commit: GitHub keeps it
-    # active across pushes. A bot outside every lane never gates.
-    human_cr=$(printf '%s'      "$snapshot" | jq -r '[(.other_reviews // [])[] | select(.is_bot == false and .state == "CHANGES_REQUESTED")] | length > 0')
+    # A CHANGES_REQUESTED outside every lane, human or bot, gates until
+    # resolved through review (rules/ci-safety.md Never Skip Tests), on any
+    # commit: GitHub keeps it active across pushes.
+    unlaned_cr=$(printf '%s'    "$snapshot" | jq -r '[(.other_reviews // [])[] | select(.state == "CHANGES_REQUESTED")] | length > 0')
 
     # Order matters: a conflicting branch or a failed check or a blocking
     # CHANGES_REQUESTED verdict is terminal-for-this-round — the agent must
@@ -157,7 +157,7 @@ main() {
     # severity; advisory-only reviews post COMMENT). An advisory lane's verdict
     # never produces this result; the agent still reads its body per
     # rules/reviewer-feedback-reading.md.
-    if [[ "$codex" == "CHANGES_REQUESTED" || "$gating_cr" == "true" || "$human_cr" == "true" ]]; then
+    if [[ "$codex" == "CHANGES_REQUESTED" || "$gating_cr" == "true" || "$unlaned_cr" == "true" ]]; then
       emit_and_exit "changes_requested" "$attempts" "$elapsed" "$snapshot" 0
     fi
 

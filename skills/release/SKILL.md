@@ -97,7 +97,7 @@ It returns the full snapshot plus `"watch": {"result": ..., "attempts": N, "elap
   - A lane with `expected: true` has posted before `ready`, gating or not
   - Read every non-empty `lanes.*.body` and `other_reviews[].reviews[].body` — a `COMMENTED` verdict with zero inline comments still carries a body (`rules/reviewer-feedback-reading.md`)
   - Proceed to Step 6
-- `changes_requested` (exit 0) — the policy reviewer, a gating lane, or a human reviewer in `other_reviews` requested changes. Step 6, push, re-run the watcher.
+- `changes_requested` (exit 0) — the policy reviewer, a gating lane, or a reviewer in `other_reviews` (human or bot) requested changes. Step 6, push, re-run the watcher.
 - `ci_failure` (exit 0) — a check failed. Fix it (Step 6), push, re-run the watcher.
 - `dirty` (exit 0) — the branch conflicts with the base and GitHub skipped the `pull_request:` workflows. Rebase, resolve, force-push, re-run the watcher.
 - `pending_at_budget` (exit 1) — a signal never arrived. Inspect which field is still `none`/`pending` in the snapshot. If an expected Claude lane never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-claude.yml` and its `CLAUDE_CODE_OAUTH_TOKEN` secret. If the policy reviewer never posted, check `gh run list --repo github.com/<owner>/<repo> --workflow review-codex.yml` — a missing or expired `CODEX_AUTH_JSON` secret is the usual cause (`gh secret set CODEX_AUTH_JSON --repo github.com/<owner>/<repo> < ~/.codex/auth.json`). Re-run the watcher once the cause is understood.
