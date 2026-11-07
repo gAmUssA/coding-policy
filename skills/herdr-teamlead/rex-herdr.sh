@@ -5,28 +5,25 @@
 #
 # Contract:
 #   argv  : the Herdr subset listed in skills/herdr-teamlead/teamlead/rex_herdr.py,
-#           forwarded verbatim to `python3 -m teamlead.rex_herdr`.
+#           forwarded verbatim to `uv run … python -m teamlead.rex_herdr`.
 #   stdout: `{"result": ...}` JSON, or raw pane text for `agent read`/`pane read`.
 #   stderr: `{"error":{"code","message"}}` on a Rex-side failure; a diagnostic
 #           from this launcher otherwise.
-#   exit  : 0 success; 1 Rex-side failure or a missing/too-old interpreter;
-#           2 usage error.
-#   env   : REX_SESSION (required), TEAMLEAD_REX_BIN (default `rex`), PY_BIN
-#           (default python3). PYTHONPATH is prefixed, never replaced.
+#   exit  : 0 success; 1 Rex-side failure or a missing `uv`; 2 usage error.
+#   env   : REX_SESSION (required), TEAMLEAD_REX_BIN (default `rex`), UV_BIN
+#           (default uv). The module runs through `uv run` per
+#           rules/dependency-management.md Python Execution, standard library
+#           only, Python 3.11+. PYTHONPATH is prefixed, never replaced.
 set -euo pipefail
 
-PY_BIN="${PY_BIN:-python3}"
+UV_BIN="${UV_BIN:-uv}"
 
 main() {
   local skill_dir
   skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-  if ! command -v "$PY_BIN" >/dev/null 2>&1; then
-    echo "rex-herdr: '${PY_BIN}' not found on PATH — install Python 3.11+ (\`brew install python@3.11\`) or point PY_BIN at the interpreter" >&2
-    return 1
-  fi
-  if ! "$PY_BIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-    echo "rex-herdr: '${PY_BIN}' is not Python 3.11+ — install Python 3.11+ (\`brew install python@3.11\`) or point PY_BIN at a compatible interpreter" >&2
+  if ! command -v "$UV_BIN" >/dev/null 2>&1; then
+    echo "rex-herdr: '${UV_BIN}' not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/) or point UV_BIN at it" >&2
     return 1
   fi
   if [[ ! -f "${skill_dir}/teamlead/rex_herdr.py" ]]; then
@@ -35,7 +32,7 @@ main() {
   fi
 
   export PYTHONPATH="${skill_dir}${PYTHONPATH:+:${PYTHONPATH}}"
-  exec "$PY_BIN" -m teamlead.rex_herdr "$@"
+  exec "$UV_BIN" run --no-project --no-python-downloads --python '>=3.11' python -m teamlead.rex_herdr "$@"
 }
 
 # Entry-point guard (rules/file-hygiene.md Standalone Scripts).
