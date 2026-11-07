@@ -88,8 +88,8 @@ class FakeRex:
     def __call__(self, argv):
         self.calls.append(list(argv))
         if argv[0] == "ps":
-            args = self.ps.get(argv[-1])
-            return FakeCompleted(0 if args else 1, (args or "") + "\n", "")
+            line = self.ps.get(argv[-1])
+            return FakeCompleted(0 if line else 1, (line or "") + "\n", "")
         if self.fail:
             return FakeCompleted(1, "", self.fail)
         verb = argv[1]
@@ -165,6 +165,13 @@ class AgentListTest(unittest.TestCase):
         agents = {a["pane_id"]: a for a in result(run(FakeRex(), "agent", "list")[1])["agents"]}
         self.assertEqual((agents[CODEX]["agent"], agents[CODEX]["agent_status"]), ("codex", "working"))
 
+    def test_codex_under_node_is_found_from_its_command_line_before_it_reports(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][1]["records"] = {}
+        rex = FakeRex(snapshot, ps={"201": "200 node /opt/homebrew/bin/codex"})
+        agents = {a["pane_id"]: a for a in result(run(rex, "agent", "list")[1])["agents"]}
+        self.assertEqual((agents[CODEX]["agent"], agents[CODEX]["agent_status"]), ("codex", "unknown"))
+
     def test_agent_without_program_status_reads_unknown(self):
         agents = {a["pane_id"]: a for a in result(run(FakeRex(), "agent", "list")[1])["agents"]}
         self.assertEqual((agents[OPENCODE]["agent"], agents[OPENCODE]["agent_status"]), ("opencode", "unknown"))
@@ -227,6 +234,12 @@ class ReadTest(unittest.TestCase):
         capture = [c for c in rex.calls if c[1] == "capture"][0]
         self.assertEqual(capture[2:], ["-s", SESSION, "-b", CLAUDE, "--unwrap", "--format", "vt"])
 
+    def test_failed_read_emits_no_text_and_the_error_envelope(self):
+        for argv in (("agent", "read", "ghost"), ("pane", "read", "block:nope")):
+            code, out, err = run(FakeRex(screens={CLAUDE: "x"}), *argv)
+            self.assertEqual((code, out), (1, ""), argv)
+            self.assertIn(error_code(err), ("agent_not_found", "pane_not_found"))
+
     def test_unknown_source_is_a_usage_error(self):
         self.assertEqual(run(FakeRex(), "pane", "read", CLAUDE, "--source", "everything")[0], 2)
 
@@ -276,6 +289,7 @@ class StartTest(unittest.TestCase):
     def launch(rex):
         b = rex.current()["blocks"][2]
         b["process"] = agent_process(300, 301, "/Users/u/.local/bin/claude", "2.1.319")
+        b["records"] = [record("claude-code", "idle", 301)]
 
     def test_types_the_command_names_the_pane_and_returns_the_agent(self):
         rex = FakeRex(on_send=self.launch)
@@ -299,6 +313,15 @@ class StartTest(unittest.TestCase):
         rex = FakeRex()
         code, _, err = run(rex, "agent", "start", "w2", "--kind", "claude", "--pane", CLAUDE)
         self.assertEqual((code, error_code(err), rex.writes), (1, "pane_busy", []))
+
+    def test_agent_without_a_ready_prompt_times_out(self):
+        def trust_dialog(rex):
+            # Claude Code reports no status while its trust dialog is up.
+            rex.current()["blocks"][2]["process"] = agent_process(300, 301, "/Users/u/.local/bin/claude", "2.1.319")
+
+        code, _, err = run(FakeRex(on_send=trust_dialog), "agent", "start", "w2", "--kind", "claude", "--pane", SHELL, "--timeout", "1000")
+        self.assertEqual((code, error_code(err)), (1, "timeout"))
+        self.assertIn("startup dialog", json.loads(err)["error"]["message"])
 
     def test_agent_that_never_appears_times_out(self):
         code, _, err = run(FakeRex(), "agent", "start", "w2", "--kind", "claude", "--pane", SHELL, "--timeout", "1000")
@@ -342,14 +365,23 @@ class PaneTest(unittest.TestCase):
         code, _, err = run(FakeRex(), "pane", "get", "block:nope")
         self.assertEqual((code, error_code(err)), (1, "pane_not_found"))
 
-    def test_process_info_for_a_bare_shell(self):
+    def test_process_info_for_a_bare_shell_lists_the_shell(self):
         out = run(FakeRex(), "pane", "process-info", "--pane", SHELL)[1]
-        self.assertEqual(result(out)["process_info"], {"pane_id": SHELL, "shell_pid": 300, "foreground_processes": []})
+        self.assertEqual(result(out)["process_info"], {"pane_id": SHELL, "shell_pid": 300,
+                                                       "foreground_processes": [{"pid": 300, "name": "zsh"}]})
 
-    def test_process_info_names_the_agent_kind_and_its_argv(self):
-        out = run(FakeRex(ps={"201": "node /opt/homebrew/bin/codex --yolo"}), "pane", "process-info", "--pane", CODEX)[1]
+    def test_process_info_names_the_agent_its_argv_and_its_parent_shell(self):
+        # Rex's `child` (199) can be a login wrapper, not the shell; the agent's parent is the shell.
+        snapshot = team_snapshot()
+        snapshot["blocks"][1]["process"]["child"]["pid"] = 199
+        out = run(FakeRex(snapshot, ps={"201": "200 node /opt/homebrew/bin/codex --yolo"}), "pane", "process-info", "--pane", CODEX)[1]
         self.assertEqual(result(out)["process_info"], {"pane_id": CODEX, "shell_pid": 200, "foreground_processes": [
             {"pid": 201, "name": "codex", "argv": ["node", "/opt/homebrew/bin/codex", "--yolo"]}]})
+
+    def test_unquotable_process_arguments_do_not_crash(self):
+        code, out, err = run(FakeRex(ps={"101": "100 claude --append-system-prompt don't"}), "pane", "process-info", "--pane", CLAUDE)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(result(out)["process_info"]["foreground_processes"], [{"pid": 101, "name": "claude"}])
 
     def test_send_text_and_keys(self):
         rex = FakeRex()

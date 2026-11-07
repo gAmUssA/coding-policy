@@ -45,6 +45,7 @@ KIND_BINARIES = {"claude": "claude", "codex": "codex", "grok": "grok", "opencode
 #: Program status states, translated to Herdr's lifecycle vocabulary.
 STATUS_STATES = {"idle": "idle", "working": "working", "blocked": "blocked", "done": "done", "error": "done"}
 SETTLED_STATES = ("idle", "done", "blocked")
+READY_STATES = ("idle", "done")
 SHELLS = {"zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "nu"}
 #: Herdr's agent-name grammar. `shell` is Rex's default block label, so it
 #: never names an agent.
@@ -147,6 +148,12 @@ class Rex:
         value = self.lua(SNAPSHOT_LUA)
         if not isinstance(value, dict):
             raise AdapterError("rex_failed", "rex returned no session snapshot for {} — check REX_SESSION".format(self.session))
+        # A program Rex names only by its interpreter (Codex runs as `node`)
+        # is identified from its full command line before it reports status.
+        for block in terminals(value):
+            fg = foreground(block)
+            if fg and not holds_only_shell(block) and agent_kind(block) is None and fg.get("pid"):
+                block["fg_argv"] = self.process(fg["pid"])["argv"]
         return value
 
     def capture(self, block_id, unwrap=False, vt=False):
@@ -173,14 +180,20 @@ class Rex:
     def set_session_label(self, label):
         self.lua("return {{rex.session.set_label{{label = {}}}}}".format(lua_value(label)))
 
-    def process_args(self, pid):
+    def process(self, pid):
+        """`{"ppid", "argv"}` for `pid` from `ps`; either is None when unreadable."""
         try:
-            completed = self.runner(["ps", "-o", "args=", "-p", str(pid)])
+            completed = self.runner(["ps", "-o", "ppid=", "-o", "args=", "-p", str(pid)])
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            return None
-        if completed.returncode != 0:
-            return None
-        return shlex.split(completed.stdout.strip()) or None
+            return {"ppid": None, "argv": None}
+        fields = completed.stdout.strip().split(None, 1) if completed.returncode == 0 else []
+        ppid = int(fields[0]) if fields and fields[0].isdigit() else None
+        try:
+            # `ps` prints arguments unquoted, so an unmatched quote is possible.
+            argv = shlex.split(fields[1]) if len(fields) == 2 else None
+        except ValueError:
+            argv = None
+        return {"ppid": ppid, "argv": argv or None}
 
 
 def root_record(block):
@@ -213,7 +226,8 @@ def agent_kind(block):
     record = root_record(block)
     if record and record.get("app") in APP_KINDS and (record.get("owner") or {}).get("pid") == fg.get("pid"):
         return APP_KINDS[record["app"]], record
-    for candidate in (fg.get("name"), basename(fg.get("argv0"))):
+    argv = block.get("fg_argv") or []
+    for candidate in (fg.get("name"), basename(fg.get("argv0")), *(basename(a) for a in argv[:2])):
         if candidate in KIND_BINARIES:
             return candidate, None
     return None
@@ -449,10 +463,10 @@ class Adapter:
         def started():
             current = find_pane(self.rex.snapshot(), pane)
             info = agent_info({"session_id": self.rex.session}, current)
-            return info if info and info["agent"] == kind else None
+            return info if info and info["agent"] == kind and info["agent_status"] in READY_STATES else None
 
         timeout = opts.int_value("--timeout", DEFAULT_START_TIMEOUT_MS)
-        info = self.poll(started, timeout, "{} did not start in pane {} within {} ms".format(kind, pane, timeout))
+        info = self.poll(started, timeout, "{} did not reach a ready prompt in pane {} within {} ms — answer any startup dialog in that pane, then retry".format(kind, pane, timeout))
         return {"type": "agent_started", "agent": info, "argv": argv}
 
     # -- pane --------------------------------------------------------------
@@ -527,16 +541,18 @@ class Adapter:
             raise UsageError("usage: pane process-info --pane <pane_id>")
         snapshot = self.rex.snapshot()
         block = find_pane(snapshot, pane)
-        process = block.get("process") or {}
-        fg, child = foreground(block) or {}, process.get("child") or {}
+        fg = foreground(block) or {}
+        # Herdr lists the shell itself as the foreground process of an idle
+        # pane, and reports the same shell PID while a program runs under it.
         if holds_only_shell(block):
-            return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": fg.get("pid"), "foreground_processes": []}}
+            entry = {"pid": fg.get("pid"), "name": fg.get("name") or basename(fg.get("argv0"))}
+            return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": fg.get("pid"), "foreground_processes": [entry]}}
         found = agent_kind(block)
         entry = {"pid": fg.get("pid"), "name": found[0] if found else (fg.get("name") or basename(fg.get("argv0")))}
-        argv = self.rex.process_args(fg.get("pid")) if fg.get("pid") else None
-        if argv:
-            entry["argv"] = argv
-        return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": child.get("pid"), "foreground_processes": [entry]}}
+        detail = self.rex.process(fg["pid"]) if fg.get("pid") else {"ppid": None, "argv": None}
+        if detail["argv"]:
+            entry["argv"] = detail["argv"]
+        return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": detail["ppid"], "foreground_processes": [entry]}}
 
     def pane_rename(self, args):
         opts = Options(args, (), ("--clear",))
