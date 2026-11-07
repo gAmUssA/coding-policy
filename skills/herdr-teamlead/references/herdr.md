@@ -428,21 +428,22 @@ by hand", never as "it has no headroom".
 
 ## Running on Rex
 
-`skills/herdr-teamlead/rex-herdr.sh` answers the Herdr commands this skill
-runs, in Herdr's JSON, over a Rex session (ADR
-`docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md`). Inside a Rex
-terminal, set `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` to the absolute path of that
-script under the installed plugin root.
+Preview: transport only. `skills/herdr-teamlead/rex-herdr.sh` answers the Herdr
+commands this skill runs, in Herdr's JSON, over the Rex session in
+`REX_SESSION` (ADR `docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md`).
+Pointing `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` at it does not start a team
+round: the mode switch is still `HERDR_ENV`, and the lead's pane and workspace
+identity still come from Herdr. Until a Rex team mode lands, a Rex terminal is
+standalone mode under `rules/agent-team-operation.md`.
 
 - A pane id is a Rex block id (`block:<uuid>`); the workspace is the session
-  in `REX_SESSION`. Workers must run in that session.
+  in `REX_SESSION`.
 - An agent name is the block's label. `shell` is Rex's default label and never
   names an agent.
-- `agent_status` comes from the agent's own OSC 7501 program status, not the
-  screen. Claude Code, Codex and Grok report it; OpenCode and Pi read
-  `unknown` and are not dispatched.
+- `agent_status` comes from the agent's own OSC 7501 program status. Claude
+  Code, Codex and Grok report it; OpenCode and Pi read `unknown`.
 - No `agent_session` is reported, so native-transcript report proof is
   unavailable and delivery rests on the report file and the `REPORT: ` marker.
-- Keep the team session open in a Rex window: an unshown session stays at
-  80×24 and the worker TUIs wrap a long `REPORT: <path>` row.
+- An unshown Rex session stays at 80×24 and worker TUIs wrap a long
+  `REPORT: <path>` row.
 - The adapter's header carries its contract, error codes and poll budgets.
