@@ -7,9 +7,9 @@
 #   argv  : the Herdr subset listed in skills/herdr-teamlead/teamlead/rex_herdr.py,
 #           forwarded verbatim to `uv run … python -m teamlead.rex_herdr`.
 #   stdout: `{"result": ...}` JSON, or raw pane text for `agent read`/`pane read`.
-#   stderr: `{"error":{"code","message"}}` on a Rex-side failure; a diagnostic
-#           from this launcher otherwise.
-#   exit  : 0 success; 1 Rex-side failure or a missing `uv`; 2 usage error.
+#   stderr: `{"error":{"code","message"}}` on every failure; this launcher's
+#           own failures use code `setup_error`.
+#   exit  : 0 success; 1 Rex-side or setup failure; 2 usage error.
 #   env   : REX_SESSION (required), TEAMLEAD_REX_BIN (default `rex`), UV_BIN
 #           (default uv). The module runs through `uv run` per
 #           rules/dependency-management.md Python Execution, standard library
@@ -18,16 +18,23 @@ set -euo pipefail
 
 UV_BIN="${UV_BIN:-uv}"
 
+# Herdr's stderr envelope for a launcher failure, JSON-escaped.
+setup_error() { # <message>
+  local message="${1//\\/\\\\}"
+  message="${message//\"/\\\"}"
+  printf '{"error":{"code":"setup_error","message":"%s"}}\n' "$message" >&2
+}
+
 main() {
   local skill_dir
   skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
   if ! command -v "$UV_BIN" >/dev/null 2>&1; then
-    echo "rex-herdr: '${UV_BIN}' not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/) or point UV_BIN at it" >&2
+    setup_error "rex-herdr: '${UV_BIN}' not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/) or point UV_BIN at it"
     return 1
   fi
   if [[ ! -f "${skill_dir}/teamlead/rex_herdr.py" ]]; then
-    echo "rex-herdr: teamlead/rex_herdr.py is missing from ${skill_dir} — reinstall the plugin with \`tessl install gamussa/coding-policy\`" >&2
+    setup_error "rex-herdr: teamlead/rex_herdr.py is missing from ${skill_dir} — reinstall the plugin with \`tessl install gamussa/coding-policy\`"
     return 1
   fi
 

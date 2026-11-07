@@ -11,8 +11,8 @@ Contract:
           `workspace list|rename`, in Herdr's grammar.
   stdout: one JSON object `{"result": ...}`, or raw text for `agent read` and
           `pane read`.
-  stderr: `{"error":{"code","message"}}` on a Rex-side failure.
-  exit  : 0 success; 1 failure with the stderr envelope; 2 usage error.
+  stderr: `{"error":{"code","message"}}` on every failure.
+  exit  : 0 success; 1 Rex-side failure; 2 usage error (code `usage_error`).
   env   : REX_SESSION (required) scopes every command to one Rex session.
           TEAMLEAD_REX_BIN overrides the `rex` executable.
 
@@ -134,7 +134,7 @@ class Rex:
         except subprocess.TimeoutExpired:
             raise AdapterError("rex_timeout", "`{}` did not answer within {}s — check the Rex server with `rex whoami`".format(shlex.join(argv), REX_CALL_TIMEOUT_SEC)) from None
         if completed.returncode != 0:
-            raise AdapterError("rex_failed", "`{}` exited {}: {}".format(shlex.join(argv), completed.returncode, (completed.stderr or "").strip()))
+            raise AdapterError("rex_failed", "`{}` exited {}: {} — check the Rex server with `rex whoami` and that REX_SESSION names a live session in `rex ls`".format(shlex.join(argv), completed.returncode, (completed.stderr or "").strip()))
         return completed.stdout
 
     def lua(self, script):
@@ -142,12 +142,12 @@ class Rex:
         try:
             return json.loads(out) if out.strip() else None
         except json.JSONDecodeError:
-            raise AdapterError("rex_failed", "rex do returned non-JSON output: {!r}".format(out[:200])) from None
+            raise AdapterError("rex_failed", "rex do returned non-JSON output: {!r} — the adapter needs Rex 0.1.0 (1853) or later; update Rex and retry".format(out[:200])) from None
 
     def snapshot(self):
         value = self.lua(SNAPSHOT_LUA)
         if not isinstance(value, dict):
-            raise AdapterError("rex_failed", "rex returned no session snapshot for {} — check REX_SESSION".format(self.session))
+            raise AdapterError("rex_failed", "rex returned no session snapshot for {} — set REX_SESSION to a live session from `rex ls`".format(self.session))
         # A program Rex names only by its interpreter (Codex runs as `node`)
         # is identified from its full command line before it reports status.
         for block in terminals(value):
@@ -269,7 +269,7 @@ def find_pane(snapshot, pane_id):
     for block in terminals(snapshot):
         if block["block_id"] == pane_id:
             return block
-    raise AdapterError("pane_not_found", "pane {} not found in Rex session {}".format(pane_id, snapshot.get("session_id")))
+    raise AdapterError("pane_not_found", "pane {} not found in Rex session {} — pass a full block id from `agent list` or `rex ls`".format(pane_id, snapshot.get("session_id")))
 
 
 def find_agent(snapshot, target):
@@ -279,7 +279,7 @@ def find_agent(snapshot, target):
         if info and (target in (info["name"], info["pane_id"])):
             matches.append((block, info))
     if not matches:
-        raise AdapterError("agent_not_found", "agent target {} not found".format(target))
+        raise AdapterError("agent_not_found", "agent target {} not found — list live agents with `agent list`; a name is released when its agent exits".format(target))
     if len(matches) > 1:
         raise AdapterError("agent_target_ambiguous", "agent target {} matches {} panes — rename one with `agent rename`".format(target, len(matches)))
     return matches[0]
@@ -291,7 +291,7 @@ def check_name(snapshot, name, pane_id=None):
     for block in terminals(snapshot):
         info = agent_info(snapshot, block)
         if info and info["name"] == name and block["block_id"] != pane_id:
-            raise AdapterError("agent_name_taken", "agent name {} is in use by pane {}".format(name, block["block_id"]))
+            raise AdapterError("agent_name_taken", "agent name {} is in use by pane {} — choose another name or stop that agent first".format(name, block["block_id"]))
 
 
 def read_text(rex, block, source, lines, ansi):
@@ -404,7 +404,7 @@ class Adapter:
         try:
             self.poll(changed, PROMPT_STALL_MS, "")
         except PollTimeout:
-            raise AdapterError("agent_prompt_stalled", "agent {} showed no lifecycle change within {} ms of the prompt".format(target, PROMPT_STALL_MS)) from None
+            raise AdapterError("agent_prompt_stalled", "agent {} showed no lifecycle change within {} ms of the prompt — read the pane with `agent read` before resending".format(target, PROMPT_STALL_MS)) from None
         return self.wait_for(pane, opts.values.get("--until") or list(SETTLED_STATES), opts.int_value("--timeout", DEFAULT_WAIT_TIMEOUT_MS))
 
     def wait_for(self, pane, until, timeout_ms):
@@ -412,7 +412,7 @@ class Adapter:
             _, info = find_agent(self.rex.snapshot(), pane)
             return info if info["agent_status"] in until else None
 
-        info = self.poll(settled, timeout_ms, "agent in pane {} did not reach {} within {} ms".format(pane, "/".join(until), timeout_ms))
+        info = self.poll(settled, timeout_ms, "agent in pane {} did not reach {} within {} ms — read it with `agent read` to see what it is doing, then wait again".format(pane, "/".join(until), timeout_ms))
         return {"type": "agent_status", "agent": info}
 
     def agent_wait(self, args):
@@ -518,7 +518,7 @@ class Adapter:
             return None
 
         timeout = opts.int_value("--timeout", DEFAULT_WAIT_TIMEOUT_MS)
-        return self.poll(matched, timeout, "timed out waiting for output match in pane {}".format(pane))
+        return self.poll(matched, timeout, "timed out waiting for output match in pane {} — check the text with `pane read`, then retry with a longer --timeout".format(pane))
 
     def pane_send_text(self, args):
         pane, text = positional(Options(args, ()), 2, "pane send-text <pane_id> <text>")
@@ -561,7 +561,11 @@ class Adapter:
             label = ""
         else:
             pane, label = positional(opts, 2, "pane rename <pane_id> <label>|--clear")
-        find_pane(self.rex.snapshot(), pane)
+        snapshot = self.rex.snapshot()
+        block = find_pane(snapshot, pane)
+        # Rex keeps one label per block, and an agent's name is that label.
+        if agent_info(snapshot, block):
+            raise AdapterError("pane_title_unsupported", "pane {} hosts an agent whose name is the block label, and Rex has no separate pane title — the title is cosmetic, so continue without it, or rename the agent with `agent rename`".format(pane))
         self.rex.set_block_label(pane, label)
         return {"type": "ok"}
 
@@ -575,7 +579,7 @@ class Adapter:
     def workspace_rename(self, args):
         workspace, label = positional(Options(args, ()), 2, "workspace rename <workspace_id> <label>")
         if workspace != self.rex.snapshot().get("session_id"):
-            raise AdapterError("workspace_not_found", "workspace {} is not the Rex session in REX_SESSION".format(workspace))
+            raise AdapterError("workspace_not_found", "workspace {} is not the Rex session in REX_SESSION — pass the id from `workspace list`".format(workspace))
         self.rex.set_session_label(label)
         return {"type": "ok"}
 
@@ -606,22 +610,25 @@ def main(argv=None, env=None, runner=None, stdout=None, stderr=None, sleep=time.
     env = os.environ if env is None else env
     stdout = stdout if stdout is not None else sys.stdout
     stderr = stderr if stderr is not None else sys.stderr
+    def envelope(code, message):
+        stderr.write(json.dumps({"error": {"code": code, "message": message}}) + "\n")
+
     command = COMMANDS.get((argv[0], argv[1])) if len(argv) >= 2 else None
     if command is None:
-        stderr.write("rex-herdr: unsupported command {!r}; supported: {}\n".format(" ".join(argv[:2]), ", ".join(" ".join(k) for k in COMMANDS)))
+        envelope("usage_error", "unsupported command {!r}; supported: {}".format(" ".join(argv[:2]), ", ".join(" ".join(k) for k in COMMANDS)))
         return 2
     session = env.get("REX_SESSION", "")
     if not session:
-        stderr.write(json.dumps({"error": {"code": "not_in_rex", "message": "REX_SESSION is unset — run the team lead inside a Rex terminal"}}) + "\n")
+        envelope("not_in_rex", "REX_SESSION is unset — run the team lead inside a Rex terminal")
         return 1
     adapter = Adapter(Rex(env.get("TEAMLEAD_REX_BIN") or DEFAULT_REX_BIN, session, runner or subprocess_runner), sleep=sleep, clock=clock)
     try:
         result = command(adapter, argv[2:])
     except UsageError as exc:
-        stderr.write("rex-herdr: {}\n".format(exc))
+        envelope("usage_error", str(exc))
         return 2
     except AdapterError as exc:
-        stderr.write(json.dumps({"error": {"code": exc.code, "message": exc.message}}) + "\n")
+        envelope(exc.code, exc.message)
         return 1
     stdout.write(result if isinstance(result, str) else json.dumps({"result": result}) + "\n")
     return 0

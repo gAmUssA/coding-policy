@@ -240,8 +240,11 @@ class ReadTest(unittest.TestCase):
             self.assertEqual((code, out), (1, ""), argv)
             self.assertIn(error_code(err), ("agent_not_found", "pane_not_found"))
 
-    def test_unknown_source_is_a_usage_error(self):
-        self.assertEqual(run(FakeRex(), "pane", "read", CLAUDE, "--source", "everything")[0], 2)
+    def test_malformed_reads_emit_no_text_and_the_usage_envelope(self):
+        for argv in (("pane", "read", CLAUDE, "--source", "everything"), ("agent", "read", "claude", "--lines", "ten"),
+                     ("pane", "read"), ("agent", "read", "claude", "--source")):
+            code, out, err = run(FakeRex(screens={CLAUDE: "x"}), *argv)
+            self.assertEqual((code, out, error_code(err)), (2, "", "usage_error"), argv)
 
 
 class PromptTest(unittest.TestCase):
@@ -383,6 +386,18 @@ class PaneTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(result(out)["process_info"]["foreground_processes"], [{"pid": 101, "name": "claude"}])
 
+    def test_rename_of_an_agent_pane_is_refused_and_keeps_its_name(self):
+        rex = FakeRex()
+        code, _, err = run(rex, "pane", "rename", CLAUDE, "developer · task-7")
+        self.assertEqual((code, error_code(err), rex.writes), (1, "pane_title_unsupported", []))
+        self.assertEqual(result(run(rex, "agent", "get", "claude")[1])["agent"]["pane_id"], CLAUDE)
+
+    def test_rename_of_a_bare_pane_relabels_it(self):
+        rex = FakeRex()
+        code, _, err = run(rex, "pane", "rename", SHELL, "spare")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([b["label"] for b in rex.current()["blocks"] if b["block_id"] == SHELL], ["spare"])
+
     def test_send_text_and_keys(self):
         rex = FakeRex()
         run(rex, "pane", "send-text", SHELL, "/usage")
@@ -423,8 +438,8 @@ class EnvelopeTest(unittest.TestCase):
 
     def test_unsupported_command_is_a_usage_error(self):
         code, _, err = run(FakeRex(), "agent", "explain", "claude")
-        self.assertEqual(code, 2)
-        self.assertIn("unsupported command", err)
+        self.assertEqual((code, error_code(err)), (2, "usage_error"))
+        self.assertIn("unsupported command", json.loads(err)["error"]["message"])
 
     def test_group_without_a_verb_is_a_usage_error(self):
         self.assertEqual(run(FakeRex(), "agent")[0], 2)

@@ -63,19 +63,16 @@ class LaunchTest(unittest.TestCase):
 
 
 class RestorationTest(unittest.TestCase):
-    def test_pane_back_at_its_shell_reads_shell(self):
-        state = restoration._pane_state(client_over(FakeRex()), SHELL, 300, 301)
-        self.assertEqual(state, "shell")
-
-    def test_shell_pid_is_stable_across_an_agent_run(self):
-        # Archived while Claude ran under shell 100, then read after it exited.
-        rex = FakeRex(ps={"101": "100 claude"})
-        archived = client_over(rex).pane_process_info(CLAUDE)["shell_pid"]
+    def test_release_completes_once_the_agent_exits_to_its_shell(self):
+        # The shell PID is archived while Claude runs under shell 100 (Rex's
+        # `child`, 99, is a login wrapper), then the release wait reads the pane
+        # after Claude exited: the same shell PID and a released name.
+        archived = client_over(FakeRex(ps={"101": "100 claude"})).pane_process_info(CLAUDE)["shell_pid"]
         after = team_snapshot()
         after["blocks"][0]["process"] = {"child": {"argv0": None, "name": "login", "pid": 99},
                                          "foreground": {"argv0": "-zsh", "name": "zsh", "pid": 100, "cwd": "/repo"}}
-        state = restoration._pane_state(client_over(FakeRex(after)), CLAUDE, archived, 101)
-        self.assertEqual((archived, state), (100, "shell"))
+        released = restoration.await_release(client_over(FakeRex(after)), "claude", CLAUDE, archived, 101, sleep=lambda _: None)
+        self.assertEqual(released, {"attempts": 1, "shell_pid": 100})
 
 
 if __name__ == "__main__":

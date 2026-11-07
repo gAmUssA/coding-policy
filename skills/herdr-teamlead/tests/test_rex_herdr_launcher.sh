@@ -18,6 +18,8 @@
 #   3. Exit passthrough-> the module's usage-error 2 reaches the caller.
 #   4. Missing module  -> exit 1 naming the reinstall command.
 #   5. Missing uv      -> exit 1 naming the uv install page.
+#   6. Setup envelope  -> launcher failures are Herdr's stderr JSON, code
+#                         setup_error, even for a path holding a double quote.
 #
 # Run: bash skills/herdr-teamlead/tests/test_rex_herdr_launcher.sh
 set -uo pipefail
@@ -87,6 +89,14 @@ main() {
   out="$(env UV_BIN="$TMP/no-such-uv" bash "$skill/rex-herdr.sh" agent list 2>&1)"; rc=$?
   if [[ $rc -eq 1 ]] && printf '%s' "$out" | grep -q "no-such-uv' not found" && printf '%s' "$out" | grep -q "docs.astral.sh/uv"; then
     pass; else fail "missing uv: expected exit 1 naming uv and its install page, got rc=$rc out=$out"; fi
+
+  # 6. A launcher failure is one valid JSON envelope, quotes escaped.
+  local quoted="$TMP/sk\"ill"
+  mkdir -p "$quoted/teamlead" || die "could not create $quoted/teamlead"
+  cp "$script" "$quoted/rex-herdr.sh" || die "could not copy the launcher into $quoted"
+  out="$(env UV_BIN="$fakeuv" bash "$quoted/rex-herdr.sh" agent read claude 2>&1 >/dev/null)"; rc=$?
+  if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e '.error.code == "setup_error" and (.error.message | contains("sk\"ill"))' >/dev/null; then
+    pass; else fail "setup envelope: expected one setup_error JSON object, got rc=$rc out=$out"; fi
 
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))
