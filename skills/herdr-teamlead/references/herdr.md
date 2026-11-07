@@ -428,15 +428,22 @@ by hand", never as "it has no headroom".
 
 ## Running on Rex
 
-Preview: transport only. `skills/herdr-teamlead/rex-herdr.sh` answers the Herdr
-commands this skill runs, in Herdr's JSON, over the Rex session in
-`REX_SESSION` (ADR `docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md`).
-Set `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` to it and `TEAMLEAD_BACKEND=rex`, so
-the Python client and `wait-report.sh` read its JSON pane text. That does not
-start a team
-round: the mode switch is still `HERDR_ENV`, and the lead's pane and workspace
-identity still come from Herdr. Until a Rex team mode lands, a Rex terminal is
-standalone mode under `rules/agent-team-operation.md`.
+A Herdr team round runs inside Rex through two co-shipped scripts (ADRs
+`docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md` and
+`docs/adr/0016-rex-team-mode-through-herdr-environment.md`):
+
+- `skills/herdr-teamlead/rex-herdr.sh` answers the Herdr commands this skill
+  runs, in Herdr's JSON, over the Rex session in `REX_SESSION`.
+- `skills/herdr-teamlead/rex-team.sh <command>` starts the lead with the
+  environment Herdr gives a managed pane: `HERDR_ENV=1`, `HERDR_PANE_ID` and
+  `HERDR_WORKSPACE_ID` from `REX_BLOCK` and `REX_SESSION`, `HERDR_BIN` and
+  `TEAMLEAD_HERDR_BIN` pointing at the adapter, and `TEAMLEAD_BACKEND=rex`.
+  Run it from a Rex terminal in the session that will hold the team, e.g.
+  `bash <plugin root>/skills/herdr-teamlead/rex-team.sh claude`.
+- `agent start` types each worker's command behind the same variables for the
+  worker's own block, so workers read as Herdr workers to every hook and rule.
+- A Rex terminal not started through `rex-team.sh` is standalone mode under
+  `rules/agent-team-operation.md`; `REX_SESSION` alone never marks a round.
 
 Contract:
 
@@ -466,7 +473,14 @@ Mapping:
   the agent does not report ends in `timeout`.
 - No `agent_session` is reported, so native-transcript report proof is
   unavailable and delivery rests on the report file and the `REPORT: ` marker.
-- An unshown Rex session stays at 80×24 and worker TUIs wrap a long
-  `REPORT: <path>` row.
+- Keep the team session open in a Rex window: an unshown session stays at
+  80×24 and worker TUIs wrap a long `REPORT: <path>` row.
+- `supervision-bind` binds a Claude Code lead to the session id Claude Code
+  exports as `CLAUDE_CODE_SESSION_ID`, recorded with source `claude-code:env`;
+  the native Stop hook enforces it exactly as under Herdr. A lead without that
+  variable, such as a Codex lead, is refused and runs without the Stop
+  backstop, keeping `supervision-watch` in the foreground.
+- `label-workspaces.sh` refuses: one session holds the whole team and block
+  labels are agent names. Skip the layout-labelling step.
 - Poll budgets and the lookup tables are named constants at the top of
   `skills/herdr-teamlead/teamlead/rex_herdr.py`.
