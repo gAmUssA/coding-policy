@@ -436,14 +436,33 @@ round: the mode switch is still `HERDR_ENV`, and the lead's pane and workspace
 identity still come from Herdr. Until a Rex team mode lands, a Rex terminal is
 standalone mode under `rules/agent-team-operation.md`.
 
+Contract:
+
+| Part | Value |
+| ---- | ----- |
+| Inputs | `REX_SESSION` (required); `TEAMLEAD_REX_BIN` (default `rex`); `UV_BIN` (default `uv`); argv in Herdr's grammar for `agent list\|get\|read\|prompt\|send-keys\|wait\|start\|rename`, `pane get\|read\|wait-output\|send-text\|send-keys\|process-info\|rename`, `workspace list\|rename` |
+| stdout | One `{"result": ...}` JSON object. `agent read` and `pane read` print the requested pane rows as text, each ending in a newline, as Herdr does. Nothing on failure |
+| stderr | `{"error":{"code","message"}}` on every failure |
+| Exit | `0` success; `1` Rex-side failure; `2` usage error, code `usage_error` |
+| Error codes | `agent_not_found`, `agent_target_ambiguous`, `agent_name_taken`, `agent_blocked`, `agent_prompt_stalled`, `pane_not_found`, `pane_busy`, `pane_title_unsupported`, `workspace_not_found`, `timeout`, `not_in_rex`, `rex_not_found`, `rex_timeout`, `rex_failed`, `usage_error` |
+| Side effects | `agent prompt` pastes into the agent's block and presses Enter; `agent send-keys`, `pane send-text` and `pane send-keys` type into the block; `agent start` labels the block and types the agent command; `agent rename`, `pane rename` and `workspace rename` change a Rex block or session label. Every other command only reads |
+
+Mapping:
+
 - A pane id is a Rex block id (`block:<uuid>`); the workspace is the session
   in `REX_SESSION`.
 - An agent name is the block's label. `shell` is Rex's default label and never
   names an agent.
+- Rex has one label per block, so `pane rename` refuses a block that hosts an
+  agent with `pane_title_unsupported`; the dispatch title is cosmetic and the
+  round continues.
 - `agent_status` comes from the agent's own OSC 7501 program status. Claude
   Code, Codex and Grok report it; OpenCode and Pi read `unknown`.
+- `agent start` returns once the agent reports a ready prompt; a startup dialog
+  the agent does not report ends in `timeout`.
 - No `agent_session` is reported, so native-transcript report proof is
   unavailable and delivery rests on the report file and the `REPORT: ` marker.
 - An unshown Rex session stays at 80×24 and worker TUIs wrap a long
   `REPORT: <path>` row.
-- The adapter's header carries its contract, error codes and poll budgets.
+- Poll budgets and the lookup tables are named constants at the top of
+  `skills/herdr-teamlead/teamlead/rex_herdr.py`.
