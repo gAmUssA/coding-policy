@@ -255,6 +255,10 @@ def watch(state_path, client, at, *, clock, sleeper, probe=process_identity,
 def bind_current(state_path, client, at, *, environ=None, cwd=None, root=None):
     environ = os.environ if environ is None else environ
     pane_id = store.text(environ.get("HERDR_PANE_ID"), "HERDR_PANE_ID")
+    if environ.get("TEAMLEAD_BACKEND") == "rex":
+        # Rex records no agent session id, so there is no native proof to bind
+        # (docs/adr/0016-rex-team-mode-through-herdr-environment.md).
+        raise UsageError("A Rex team round has no native agent session to bind: Rex records no session id. Leave this owner state unbound; dispatch runs without the native Stop backstop, so keep supervision-watch in the foreground.", {})
     pane = client.pane_get(pane_id)
     native = pane.get("agent_session")
     if (pane.get("pane_id") != pane_id or not isinstance(native, dict)

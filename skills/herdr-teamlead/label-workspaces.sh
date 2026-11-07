@@ -18,8 +18,8 @@
 #                       "pane":"renamed|unchanged|failed"}, ...]}
 #   stderr: diagnostics only.
 #   exit  : 0 every rename landed or was already in place,
-#           1 precondition unmet (usage, not inside Herdr, `herdr`/`jq` absent,
-#             no caller workspace id),
+#           1 precondition unmet (usage, not inside Herdr, a Rex team round,
+#             `herdr`/`jq` absent, no caller workspace id),
 #           2 the roster or workspace list could not be read,
 #           3 at least one rename failed — the JSON says which. Labels are
 #             cosmetic, so a failure is reported rather than fatal to a round.
@@ -75,6 +75,12 @@ main() {
 
   if [[ "${HERDR_ENV:-}" != "1" ]]; then
     warn "not running inside Herdr (HERDR_ENV='${HERDR_ENV:-}') — run this from the lead's own pane"
+    return 1
+  fi
+  # Under rex-team.sh the team shares one Rex session and an agent's name is
+  # its block label, so labelling would overwrite every worker's name.
+  if [[ "${TEAMLEAD_BACKEND:-}" == "rex" ]]; then
+    warn "a Rex team round keeps every agent in one session and names each agent by its block label — skip layout labelling under rex-team.sh; name workers with \`agent rename\` instead"
     return 1
   fi
   local dep

@@ -185,6 +185,13 @@ JSON
   if [[ $RC -eq 1 && -z "$OUT" ]] && grep -q "HERDR_WORKSPACE_ID" "$TMP/e8c"; then
     pass; else fail "no workspace id: expected exit 1, got RC=$RC"; fi
 
+  # 9. A Rex team round refuses before any rename, the fake herdr untouched.
+  : > "$TMP/argv.rex" || die "could not create $TMP/argv.rex"
+  OUT="$(env HERDR_ENV=1 HERDR_WORKSPACE_ID=w1 HERDR_BIN="$FAKE" FAKE_ARGV_FILE="$TMP/argv.rex" TEAMLEAD_BACKEND=rex \
+    bash "$SCRIPT" lead 2>"$TMP/e9")"; RC=$?
+  if [[ $RC -eq 1 && -z "$OUT" && ! -s "$TMP/argv.rex" ]] && grep -q "rex-team.sh" "$TMP/e9"; then
+    pass; else fail "rex team round: expected exit 1 and no herdr call, got RC=$RC OUT=$OUT"; fi
+
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2

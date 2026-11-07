@@ -387,6 +387,15 @@ class SupervisionTest(unittest.TestCase):
         result = runtime.bind_current(self.path, self.client, AT, environ=self.environ, cwd=str(self.root), root=self.bindings)
         self.assertEqual(result["identity"], self.who)
 
+    def test_rex_team_round_refuses_bind_without_reading_the_pane(self):
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent_session": {**NATIVE, "value": "rex-lead"}}
+        rex_who = store.identity("rex-lead", str(self.root), self.environ["HERDR_ENV"], pane_id="lead-pane")
+        with self.assertRaises(UsageError) as caught:
+            runtime.bind_current(self.path, self.client, AT, environ={**self.environ, "TEAMLEAD_BACKEND": "rex"},
+                                 cwd=str(self.root), root=self.bindings)
+        self.assertIn("Rex records no session id", caught.exception.message)
+        self.assertFalse(store.binding_path(rex_who, self.bindings).exists())
+
     def test_path_identity_matches_native_hook_transcript_path(self):
         transcript = str(self.root / "native-session.jsonl")
         self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent_session": {**NATIVE, "kind": "path", "value": transcript}}
