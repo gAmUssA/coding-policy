@@ -342,7 +342,9 @@ class StartTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(result(out)["argv"], ["claude", "--model", "haiku"])
         self.assertEqual((result(out)["agent"]["name"], result(out)["agent"]["agent"]), ("worker1", "claude"))
-        self.assertIn(("text", SHELL, "claude --model haiku"), rex.writes)
+        typed = [w[2] for w in rex.writes if w[0] == "text" and w[1] == SHELL]
+        self.assertEqual(len(typed), 1)
+        self.assertTrue(typed[0].endswith(" claude --model haiku"), typed[0])
         self.assertIn(("keys", SHELL, ["enter"]), rex.writes)
 
     def test_name_held_by_a_live_agent_is_taken(self):

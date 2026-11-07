@@ -108,6 +108,18 @@ class UsageError(Exception):
     """A malformed command line; exit 2, as Herdr does for a syntax error."""
 
 
+#: The adapter's own launcher, which workers get as their Herdr binary.
+ADAPTER_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rex-herdr.sh")
+
+
+def worker_command(argv, pane, session):
+    """The shell line that starts a worker with the identity Herdr would inject
+    (docs/adr/0016-rex-team-mode-through-herdr-environment.md)."""
+    identity = ["HERDR_ENV=1", "HERDR_PANE_ID=" + pane, "HERDR_WORKSPACE_ID=" + session, "HERDR_BIN=" + ADAPTER_PATH,
+                "TEAMLEAD_HERDR_BIN=" + ADAPTER_PATH, "TEAMLEAD_BACKEND=rex"]
+    return shlex.join(["env"] + identity + list(argv))
+
+
 def subprocess_runner(argv):
     return subprocess.run(argv, capture_output=True, text=True, timeout=REX_CALL_TIMEOUT_SEC, check=False)
 
@@ -565,7 +577,7 @@ class Adapter:
             raise AdapterError("pane_busy", "pane {} is not at its own shell prompt (foreground: {}) — start an agent only in a pane whose shell is idle".format(shown(pane), shown(basename((foreground(block) or {}).get("argv0")) or "unknown")))
         argv = [KIND_BINARIES[kind]] + opts.rest
         self.rex.set_block_label(pane, name)
-        self.rex.send_text(pane, shlex.join(argv))
+        self.rex.send_text(pane, worker_command(argv, pane, self.rex.session))
         self.rex.send_keys(pane, ["enter"])
 
         def started():
