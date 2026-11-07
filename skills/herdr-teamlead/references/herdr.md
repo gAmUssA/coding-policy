@@ -425,3 +425,24 @@ corresponding parser. The utility fails loudly on an unreadable pane
 (`ParseError`, the agent listed in `failed_agents`, exit 1) rather than
 reporting a silently wrong number — treat a parse failure as "measure that one
 by hand", never as "it has no headroom".
+
+## Running on Rex
+
+`skills/herdr-teamlead/rex-herdr.sh` answers the Herdr commands this skill
+runs, in Herdr's JSON, over a Rex session (ADR
+`docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md`). Inside a Rex
+terminal, set `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` to the absolute path of that
+script under the installed plugin root.
+
+- A pane id is a Rex block id (`block:<uuid>`); the workspace is the session
+  in `REX_SESSION`. Workers must run in that session.
+- An agent name is the block's label. `shell` is Rex's default label and never
+  names an agent.
+- `agent_status` comes from the agent's own OSC 7501 program status, not the
+  screen. Claude Code, Codex and Grok report it; OpenCode and Pi read
+  `unknown` and are not dispatched.
+- No `agent_session` is reported, so native-transcript report proof is
+  unavailable and delivery rests on the report file and the `REPORT: ` marker.
+- Keep the team session open in a Rex window: an unshown session stays at
+  80×24 and the worker TUIs wrap a long `REPORT: <path>` row.
+- The adapter's header carries its contract, error codes and poll budgets.
