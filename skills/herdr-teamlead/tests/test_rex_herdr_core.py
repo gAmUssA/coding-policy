@@ -16,11 +16,14 @@ if _ROOT not in _sys.path:
     _sys.path.insert(0, _ROOT)
 
 import io
+import shlex
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
-from teamlead import launch, restoration, rex_herdr
-from teamlead.errors import HerdrError
+from teamlead import launch, restoration, rex_herdr, supervision_runtime
+from teamlead.errors import HerdrError, UsageError
 from teamlead.herdr import HerdrClient, default_backend
 
 from tests.fakes import FakeCompleted
@@ -59,8 +62,11 @@ class LaunchTest(unittest.TestCase):
         agent = SimpleNamespace(name="worker1", kind="claude", launch_args=[])
         proof = launch.start_worker(client_over(rex), agent, SHELL, {"model": "opus-5", "effort": "high"})
         self.assertEqual(proof["pane_id"], SHELL)
-        typed = [w[2] for w in rex.writes if w[0] == "text"][0]
-        self.assertTrue(typed.startswith("claude ") and "--model opus-5 --effort high" in typed, typed)
+        typed = shlex.split([w[2] for w in rex.writes if w[0] == "text"][0])
+        # The worker starts behind `env` with its Herdr identity (ADR 0016).
+        command = typed[next(i for i, word in enumerate(typed) if i > 0 and "=" not in word):]
+        self.assertEqual(typed[0], "env")
+        self.assertTrue(command[0] == "claude" and "--model opus-5 --effort high" in " ".join(command), typed)
 
 
 class VerifyRunningTest(unittest.TestCase):
@@ -115,6 +121,31 @@ class ReleaseRaceTest(unittest.TestCase):
         rex = FakeRex(team_snapshot(), exited, ps_misses=1)
         released = restoration.await_release(client_over(rex), "claude", CLAUDE, 100, 101, sleep=lambda _: None)
         self.assertEqual(released, {"attempts": 1, "shell_pid": 100})
+
+
+class SupervisionBindTest(unittest.TestCase):
+    """`supervision-bind` never binds a Rex lead: Rex carries no agent session."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def bind(self, environ):
+        return supervision_runtime.bind_current(self.root / "state.json", client_over(FakeRex()), "2026-11-07T12:00:00+00:00",
+                                                environ=environ, cwd=str(self.root), root=self.root / "bindings")
+
+    def test_rex_team_round_refuses_with_the_rex_reason(self):
+        with self.assertRaises(UsageError) as caught:
+            self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CLAUDE, "TEAMLEAD_BACKEND": "rex"})
+        self.assertIn("Rex records no session id", caught.exception.message)
+        self.assertFalse((self.root / "bindings").exists())
+
+    def test_adapter_pane_without_the_marker_still_offers_no_native_proof(self):
+        with self.assertRaises(UsageError) as caught:
+            self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CLAUDE})
+        self.assertIn("native session proof", caught.exception.message)
+        self.assertFalse((self.root / "bindings").exists())
 
 
 if __name__ == "__main__":
