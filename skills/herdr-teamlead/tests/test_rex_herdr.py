@@ -82,6 +82,7 @@ class FakeRex:
         self.raises = raises
         self.fail = fail
         self.fail_verb = fail_verb
+        self.fail_script = None
         #: The next N `ps` calls omit every non-shell pid, as if each agent
         #: exited between Rex's read and `ps`.
         self.ps_misses = ps_misses
@@ -118,7 +119,7 @@ class FakeRex:
                 self.ps_misses -= 1
                 lines = [line for line in lines if line.split()[2].lstrip("-") in rex_herdr.SHELLS]
             return FakeCompleted(0 if len(lines) == len(argv[-1].split(",")) else 1, "".join(lines), "")
-        if self.fail and self.fail_verb in (None, argv[1]):
+        if self.fail and self.fail_verb in (None, argv[1]) and (self.fail_script is None or self.fail_script in " ".join(argv)):
             return FakeCompleted(1, "", self.fail)
         verb = argv[1]
         if verb == "do":
@@ -549,6 +550,21 @@ class EnvelopeTest(unittest.TestCase):
         self.assertEqual((code, error_code(err)), (1, "rex_failed"))
         self.assertNotIn(token, err)
         self.assertIn("rex send -s {} -b {} <".format(SESSION, SHELL), json.loads(err)["error"]["message"])
+
+    def test_payload_failures_never_quote_rex_stderr(self):
+        echoed = "correct-horse-battery-staple"  # a secret no redaction pattern knows
+        for argv, verb in ((("pane", "send-text", SHELL, echoed), "send"), (("agent", "prompt", "claude", echoed), "api"),
+                           (("agent", "rename", "claude", "lead"), "do")):
+            rex = FakeRex(fail="Error: rejected " + echoed, fail_verb=verb)
+            if verb == "do":
+                rex.fail_script = "set_block_label"
+            code, _, err = run(rex, *argv)
+            self.assertEqual((code, error_code(err)), (1, "rex_failed"), argv)
+            self.assertNotIn(echoed, err, argv)
+
+    def test_read_only_failures_keep_rex_stderr(self):
+        code, _, err = run(FakeRex(fail="Error: session not found"), "agent", "list")
+        self.assertIn("session not found", json.loads(err)["error"]["message"])
 
     def test_unexpected_failure_is_an_envelope_with_no_stdout(self):
         for argv in (("agent", "read", "claude"), ("pane", "read", CLAUDE)):

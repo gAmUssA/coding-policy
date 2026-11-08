@@ -162,7 +162,9 @@ class Rex:
         self.session = session
         self.runner = runner
 
-    def run(self, args):
+    def run(self, args, payload=False):
+        """Run `rex`. A `payload` call carries operator text (a prompt, typed
+        text, a label); Rex may echo it, so its stderr never enters a message."""
         argv = [self.binary] + args
         try:
             completed = self.runner(argv)
@@ -171,11 +173,12 @@ class Rex:
         except subprocess.TimeoutExpired:
             raise AdapterError("rex_timeout", "`{}` did not answer within {}s — check the Rex server with `rex whoami`".format(describe(argv), REX_CALL_TIMEOUT_SEC)) from None
         if completed.returncode != 0:
-            raise AdapterError("rex_failed", "`{}` exited {}: {} — check the Rex server with `rex whoami` and that REX_SESSION names a live session in `rex ls`".format(describe(argv), completed.returncode, tool_stderr(completed)))
+            detail = "Rex's message is withheld, as it may echo the text sent" if payload else tool_stderr(completed)
+            raise AdapterError("rex_failed", "`{}` exited {}: {} — check the Rex server with `rex whoami` and that REX_SESSION names a live session in `rex ls`".format(describe(argv), completed.returncode, detail))
         return completed.stdout
 
-    def lua(self, script):
-        out = self.run(["do", "-s", self.session, "-e", script])
+    def lua(self, script, payload=False):
+        out = self.run(["do", "-s", self.session, "-e", script], payload=payload)
         try:
             return json.loads(out) if out.strip() else None
         except json.JSONDecodeError:
@@ -251,19 +254,19 @@ class Rex:
 
     def paste(self, block_id, text):
         payload = {"session_id": self.session, "block_id": block_id, "event": {"type": "paste", "payload": {"text": text}}}
-        self.run(["api", "call", "block.event", json.dumps(payload)])
+        self.run(["api", "call", "block.event", json.dumps(payload)], payload=True)
 
     def send_keys(self, block_id, keys):
         self.run(["send-key", "-s", self.session, "-b", block_id] + [KEY_NAMES.get(k, k) for k in keys])
 
     def send_text(self, block_id, text):
-        self.run(["send", "-s", self.session, "-b", block_id, text])
+        self.run(["send", "-s", self.session, "-b", block_id, text], payload=True)
 
     def set_block_label(self, block_id, label):
-        self.lua("return {{rex.session.set_block_label{{block_id = {}, label = {}}}}}".format(lua_value(block_id), lua_value(label)))
+        self.lua("return {{rex.session.set_block_label{{block_id = {}, label = {}}}}}".format(lua_value(block_id), lua_value(label)), payload=True)
 
     def set_session_label(self, label):
-        self.lua("return {{rex.session.set_label{{label = {}}}}}".format(lua_value(label)))
+        self.lua("return {{rex.session.set_label{{label = {}}}}}".format(lua_value(label)), payload=True)
 
 
 def root_record(block):
