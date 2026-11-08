@@ -19,14 +19,15 @@ Options considered:
 
 ## Decision
 
-Emulate the environment. `skills/herdr-teamlead/rex-team.sh` requires `REX_SESSION` and `REX_BLOCK`, exports `HERDR_ENV=1`, `HERDR_PANE_ID=$REX_BLOCK`, `HERDR_WORKSPACE_ID=$REX_SESSION`, `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` (the adapter) and `TEAMLEAD_BACKEND=rex`, then execs the lead. The adapter's `agent start` types each worker's command behind `env` with the same variables for that worker's block. `TEAMLEAD_BACKEND=rex` is the only Rex-specific marker, read where Herdr behavior cannot be emulated:
+Emulate the environment. `skills/herdr-teamlead/rex-team.sh` requires `REX_SESSION` and `REX_BLOCK` and prints one JSON object holding `HERDR_ENV=1`, `HERDR_PANE_ID=$REX_BLOCK`, `HERDR_WORKSPACE_ID=$REX_SESSION`, `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` (the adapter) and `TEAMLEAD_BACKEND=rex`. It execs nothing and changes nothing; the operator starts the lead with that environment through a jq `@sh` one-liner in `skills/herdr-teamlead/references/herdr.md`, so the script keeps the plugin's JSON-producing script contract without an exception. The adapter's `agent start` types each worker's command behind `env` with the same variables for that worker's block. `TEAMLEAD_BACKEND=rex` is the only Rex-specific marker, read where Herdr behavior cannot be emulated:
 
 - `supervision-bind` binds a Claude Code lead to the session id Claude Code exports as `CLAUDE_CODE_SESSION_ID`, after the adapter confirms Claude Code is the lead pane's agent. Rex records no agent session, and that id is the one the native Stop hook receives. The binding record moves to version 2 and names its source, `claude-code:env`, never Herdr's `herdr:<kind>`. Only a round with `TEAMLEAD_BACKEND=rex` writes or accepts that source, and the Stop hook blocks a version-2 binding outside one.
 - `label-workspaces.sh` refuses, since one session holds the team and block labels are agent names.
 
 ## Consequences
 
-- A Rex round reuses every hook, rule and script unchanged; the operator opts in by starting the lead through `rex-team.sh`.
+- A Rex round reuses every hook, rule and script unchanged; the operator opts in by starting the lead with the environment `rex-team.sh` prints.
+- Starting the lead is a documented one-liner, not a launcher: it needs `jq`, and a failed `rex-team.sh` starts nothing.
 - Standalone agents in Rex stay standalone: `REX_SESSION` alone never marks a round.
 - A Claude Code lead in a Rex round has the native Stop backstop: the hook blocks that exact session, and no other, while assignments are active.
 - A Codex lead exports no session id, so its `supervision-bind` is refused. The owner state stays unbound, dispatch runs without the backstop, and the lead keeps `supervision-watch` in the foreground.

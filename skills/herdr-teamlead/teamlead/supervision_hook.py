@@ -44,7 +44,7 @@ def check(payload, environ, at, *, root=None, probe=runtime.process_identity):
                     or type(binding.get("generation")) is not int or binding["generation"] < 1):
                 return block("The exact lead binding is unreadable. Restore {} and reconcile its saved state before stopping.".format(path))
             if store.binding_source(binding) is not None and default_backend(environ) != "rex":
-                return block("This lead was bound from the session id Claude Code exports ({}), which only a Rex team round started through rex-team.sh accepts. Restart the lead through rex-team.sh, or rebind it from Herdr's native session proof, before stopping.".format(binding["source"]))
+                return block("This lead was bound from the session id Claude Code exports ({}), which only a Rex team round, its environment from rex-team.sh, accepts. Restart the lead with the rex-team.sh environment, or rebind it from Herdr's native session proof, before stopping.".format(binding["source"]))
             data = store.load(binding["state_path"])
             if data["binding"] is None:
                 return block("This bound lead's supervision state is missing. Restore {} before stopping; missing state cannot prove its work was resolved.".format(store.store_path(binding["state_path"])))

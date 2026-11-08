@@ -434,18 +434,34 @@ A Herdr team round runs inside Rex through two co-shipped scripts (ADRs
 
 - `skills/herdr-teamlead/rex-herdr.sh` answers the Herdr commands this skill
   runs, in Herdr's JSON, over the Rex session in `REX_SESSION`.
-- `skills/herdr-teamlead/rex-team.sh <command>` starts the lead with the
-  environment Herdr gives a managed pane: `HERDR_ENV=1`, `HERDR_PANE_ID` and
-  `HERDR_WORKSPACE_ID` from `REX_BLOCK` and `REX_SESSION`, `HERDR_BIN` and
-  `TEAMLEAD_HERDR_BIN` pointing at the adapter, and `TEAMLEAD_BACKEND=rex`.
-  Run it from a Rex terminal in the session that will hold the team, e.g.
-  `bash <plugin root>/skills/herdr-teamlead/rex-team.sh claude`.
+- `skills/herdr-teamlead/rex-team.sh` prints, as JSON, the environment Herdr
+  gives a managed pane, mapped from the Rex terminal it runs in. It changes
+  nothing itself.
 - `agent start` types each worker's command behind the same variables for the
   worker's own block, so workers read as Herdr workers to every hook and rule.
-- A Rex terminal not started through `rex-team.sh` is standalone mode under
-  `rules/agent-team-operation.md`; `REX_SESSION` alone never marks a round.
+- A Rex terminal whose environment does not come from `rex-team.sh` is
+  standalone mode under `rules/agent-team-operation.md`; `REX_SESSION` alone
+  never marks a round.
 
-Contract:
+Start the lead from a Rex terminal in the session that will hold the team, with
+`CP` resolved to the installed plugin root as the skill's bootstrap does. Each
+value is shell-quoted by jq `@sh`, and a failed `rex-team.sh` starts nothing:
+
+```bash
+TEAM_ENV="$(bash "$CP/skills/herdr-teamlead/rex-team.sh" | jq -er '.env | to_entries | map("\(.key)=\(.value)" | @sh) | join(" ")')" && eval "env $TEAM_ENV claude"
+```
+
+`rex-team.sh` contract:
+
+| Part | Value |
+| ---- | ----- |
+| Inputs | `REX_SESSION` and `REX_BLOCK` (both required, set by Rex in every terminal); no arguments |
+| stdout | On success only: `{"env":{"HERDR_ENV":"1","HERDR_PANE_ID":<REX_BLOCK>,"HERDR_WORKSPACE_ID":<REX_SESSION>,"HERDR_BIN":<adapter>,"TEAMLEAD_HERDR_BIN":<adapter>,"TEAMLEAD_BACKEND":"rex"}}`, where `<adapter>` is the absolute path of the co-shipped `rex-herdr.sh` |
+| stderr | On failure only: `{"error":{"code","message"}}`, every string JSON-escaped |
+| Exit | `0` success; `1` `not_in_rex` (`REX_SESSION` or `REX_BLOCK` unset) or `setup_error` (adapter missing); `2` `usage_error` (any argument) |
+| Side effects | None: no export, no file, no Rex call |
+
+`rex-herdr.sh` contract:
 
 | Part | Value |
 | ---- | ----- |

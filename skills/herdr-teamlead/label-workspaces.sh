@@ -80,12 +80,12 @@ main() {
     warn "not running inside Herdr (HERDR_ENV='${HERDR_ENV:-}') — run this from the lead's own pane"
     return 1
   fi
-  # Under rex-team.sh the team shares one Rex session and an agent's name is
+  # In a Rex team round (rex-team.sh environment) the team shares one Rex session and an agent's name is
   # its block label, so labelling would overwrite every worker's name.
   case "${TEAMLEAD_BACKEND:-herdr}" in
     herdr) ;;
     rex)
-      warn "a Rex team round keeps every agent in one session and names each agent by its block label — skip layout labelling under rex-team.sh; name workers with \`agent rename\` instead"
+      warn "a Rex team round keeps every agent in one session and names each agent by its block label — skip layout labelling in a rex-team.sh round; name workers with \`agent rename\` instead"
       return 1
       ;;
     *)

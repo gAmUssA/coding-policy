@@ -287,7 +287,7 @@ def bind_exported(state_path, client, at, environ, pane_id, *, cwd=None, root=No
         raise UsageError("This Rex lead exports no Claude Code session id ({}); a Codex or other lead has no session to bind. Leave this owner state unbound: dispatch runs without the native Stop backstop, so keep supervision-watch in the foreground.".format(EXPORTED_SESSION_VAR), {})
     pane = client.pane_get(pane_id)
     if pane.get("pane_id") != pane_id or pane.get("agent") != "claude":
-        raise UsageError("Rex pane {} does not host Claude Code, so {} is not this lead's session. Run supervision-bind from the lead's own Claude Code session, started through rex-team.sh.".format(pane_id, EXPORTED_SESSION_VAR), {})
+        raise UsageError("Rex pane {} does not host Claude Code, so {} is not this lead's session. Run supervision-bind from the lead's own Claude Code session, started with the rex-team.sh environment.".format(pane_id, EXPORTED_SESSION_VAR), {})
     who = store.identity(session, cwd or str(Path.cwd()), environ.get("HERDR_ENV"), kind="id", pane_id=pane_id)
     return store.bind(state_path, who, at, root=root, source=EXPORTED_SOURCE)
 
