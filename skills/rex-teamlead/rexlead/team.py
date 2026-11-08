@@ -93,8 +93,15 @@ class Store:
             raise TeamError("no_task", "no team state for task {} — run `team up --task {}` first".format(task, task)) from None
         except json.JSONDecodeError:
             raise TeamError("state_corrupt", "{} is not JSON — restore it or remove it and run `team up` again".format(path)) from None
-        if record.get("schema_version") != SCHEMA_VERSION:
-            raise TeamError("state_version", "{} has schema_version {!r}; this tool reads {} — finish that task with the tool that wrote it".format(path, record.get("schema_version"), SCHEMA_VERSION))
+        version = record.get("schema_version") if isinstance(record, dict) else None
+        if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
+            raise TeamError("state_newer", "{} has schema_version {}, newer than this plugin reads ({}) — update coding-policy and retry".format(path, version, SCHEMA_VERSION))
+        if version != SCHEMA_VERSION:
+            # Version 1 has no predecessor, so any other value is corrupt, not older.
+            raise TeamError("state_corrupt", "{} has schema_version {!r}, which no writer produced — restore it, or remove it and run `team up` again".format(path, version))
+        problem = invalid(record)
+        if problem:
+            raise TeamError("state_corrupt", "{} is malformed: {} — restore it, or remove it and run `team up` again".format(path, problem))
         return record
 
     def save(self, record):
@@ -108,6 +115,35 @@ class Store:
         directory = self.home / task / "reports"
         directory.mkdir(parents=True, exist_ok=True)
         return directory
+
+
+RECORD_FIELDS = {"task": str, "repo": str, "base": str, "session": str, "workers": dict}
+WORKER_FIELDS = {"agent": str, "block": str, "worktree": str, "commit": str, "dispatches": list}
+DISPATCH_FIELDS = {"nonce": str, "report": str, "sent_at": str}
+
+
+def invalid(record):
+    """The first contract violation in a task record, or None (state-schema.md)."""
+    for field, kind in RECORD_FIELDS.items():
+        if not isinstance(record.get(field), kind):
+            return "field {} is missing or not a {}".format(field, kind.__name__)
+    for role, worker in record["workers"].items():
+        if not isinstance(worker, dict):
+            return "worker {} is not an object".format(role)
+        for field, kind in WORKER_FIELDS.items():
+            if not isinstance(worker.get(field), kind):
+                return "worker {} field {} is missing or not a {}".format(role, field, kind.__name__)
+        if worker.get("branch") is not None and not isinstance(worker["branch"], str):
+            return "worker {} field branch is not a string or null".format(role)
+        for dispatch in worker["dispatches"]:
+            if not isinstance(dispatch, dict) or any(not isinstance(dispatch.get(f), k) for f, k in DISPATCH_FIELDS.items()):
+                return "worker {} has a dispatch without nonce, report and sent_at".format(role)
+    return None
+
+
+def check_name(value, what):
+    if not NAME.fullmatch(value):
+        raise UsageError("{} must match [a-z][a-z0-9-]{{0,30}}".format(what))
 
 
 def git(repo, *args):
@@ -133,43 +169,86 @@ class Team:
             if exc.code != "no_task":
                 raise
             record = None
+        if record and record["repo"] != str(repo):
+            raise TeamError("repo_mismatch", "task {} belongs to {} — use another task id for {}".format(task, record["repo"], repo))
         if record and any(s.get("session_id") == record["session"] for s in self.rex.sessions()):
-            return {"task": task, "session": record["session"], "reused": True}
-        base = git(repo, "rev-parse", "HEAD")
+            return {"task": task, "session": record["session"], "base": record["base"], "reused": True}
         session, _ = self.rex.new_session("team-" + task, str(repo))
-        record = {"schema_version": SCHEMA_VERSION, "task": task, "repo": str(repo), "base": base, "session": session, "workers": {}}
+        if record:
+            # The session died (a Rex restart): keep the base and the workers,
+            # whose tabs are gone; `down` forgets them and `spawn` reuses their worktrees.
+            record["session"] = session
+        else:
+            record = {"schema_version": SCHEMA_VERSION, "task": task, "repo": str(repo), "base": git(repo, "rev-parse", "HEAD"),
+                      "session": session, "workers": {}}
         self.store.save(record)
-        return {"task": task, "session": session, "base": base, "reused": False}
+        return {"task": task, "session": session, "base": record["base"], "reused": False, "workers": sorted(record["workers"])}
 
     def spawn(self, task, role, agent, model=None, effort=None, ref=None, read_only=False, timeout=READY_TIMEOUT_SEC):
-        if not NAME.fullmatch(role):
-            raise UsageError("role must match [a-z][a-z0-9-]{0,30}")
+        check_name(role, "role")
         if agent not in AGENTS:
             raise UsageError("agent must be one of " + ", ".join(sorted(AGENTS)))
         record = self.store.load(task)
-        if role in record["workers"]:
-            raise TeamError("role_taken", "task {} already has a {} worker — `team down --role {}` first".format(task, role, role))
+        held = record["workers"].get(role)
+        if held is not None:
+            if held["agent"] == agent and held["block"] in self.rex.live_blocks(record["session"]):
+                # Repeating a spawn reconnects to the worker it started.
+                return {"task": task, "role": role, "block": held["block"], "worktree": held["worktree"], "branch": held.get("branch"),
+                        "commit": held["commit"], "state": (self.rex.status(record["session"], held["block"]) or {}).get("state"), "reused": True}
+            raise TeamError("role_taken", "task {} has a {} {} worker whose tab is gone or differs — `team down --task {} --role {}`, then spawn again".format(task, held["agent"], role, task, role))
         repo = Path(record["repo"])
         path = self.worktrees / repo.name / "{}-{}".format(task, role)
         commit = git(repo, "rev-parse", ref or record["base"])
-        if read_only:
-            git(repo, "worktree", "add", "--detach", str(path), commit)
-            branch = None
-        else:
-            branch = "team/{}-{}".format(task, role)
-            git(repo, "worktree", "add", "-b", branch, str(path), commit)
+        branch = None if read_only else "team/{}-{}".format(task, role)
+        created = self._provision(repo, path, branch, commit)
         label = "{}-{}".format(task, role)
         # REX_TEAM_TASK/REX_TEAM_ROLE mark a Rex team worker (rules/agent-team-operation.md).
         argv = ["env", "REX_TEAM_TASK=" + task, "REX_TEAM_ROLE=" + role] + AGENTS[agent](model, effort)
-        block = self.rex.launch(record["session"], label, str(path), argv)
+        try:
+            block = self.rex.launch(record["session"], label, str(path), argv)
+        except RexError:
+            if created:
+                self._unprovision(repo, path, branch)
+            raise
         worker = {"agent": agent, "model": model, "effort": effort, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "dispatches": []}
         record["workers"][role] = worker
         self.store.save(record)
         try:
             ready = self.rex.wait_status(record["session"], block, lambda r: bool(r) and r.get("state") in READY, timeout)
         except Timeout:
-            raise TeamError("not_ready", "{} in tab {} reported no ready prompt within {}s — answer any startup dialog there (trust the parent of {} once), then `team wait`".format(agent, label, timeout, self.worktrees)) from None
-        return {"task": task, "role": role, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "state": ready.get("state")}
+            raise TeamError("not_ready", "{} in tab {} reported no ready prompt within {}s — answer its startup dialog there (trust the repository once), then `team status --task {}` shows it idle".format(agent, label, timeout, task)) from None
+        return {"task": task, "role": role, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "state": ready.get("state"), "reused": False}
+
+    def _provision(self, repo, path, branch, commit):
+        """Create the worker's worktree, or adopt the one an interrupted spawn
+        or an earlier session left at `path`. True when this call created it."""
+        listing = git(repo, "worktree", "list", "--porcelain")
+        # Git reports resolved paths (`/private/var/…` for `/var/…`), so compare resolved.
+        target = path.resolve()
+        entry = next((block for block in listing.split("\n\n")
+                      if block.startswith("worktree ") and Path(block.split("\n", 1)[0][len("worktree "):]).resolve() == target), None)
+        if entry is not None:
+            on_branch = "branch refs/heads/{}".format(branch) in entry if branch else "detached" in entry
+            at_commit = branch is not None or "HEAD {}".format(commit) in entry
+            if on_branch and at_commit:
+                return False
+            raise TeamError("worktree_conflict", "{} is already a worktree on another branch or commit — remove it with `git worktree remove {}` or use another role name".format(path, path))
+        if path.exists():
+            raise TeamError("worktree_conflict", "{} exists but is not a worktree of {} — move it away or use another role name".format(path, repo))
+        if branch is None:
+            git(repo, "worktree", "add", "--detach", str(path), commit)
+        elif git(repo, "branch", "--list", branch):
+            git(repo, "worktree", "add", str(path), branch)
+        else:
+            git(repo, "worktree", "add", "-b", branch, str(path), commit)
+        return True
+
+    @staticmethod
+    def _unprovision(repo, path, branch):
+        """Undo a worktree this spawn created, before any work landed in it."""
+        git(repo, "worktree", "remove", str(path))
+        if branch:
+            git(repo, "branch", "-d", branch)
 
     def assign(self, task, role, brief):
         record = self.store.load(task)
@@ -218,16 +297,29 @@ class Team:
         return {"task": task, "session": record["session"], "workers": out}
 
     def down(self, task, role=None):
+        """Close worker tabs and forget the workers. A read-only checkout's
+        lifecycle ends here and it is removed; a writer's worktree stays for
+        the release. A tab already gone counts as closed."""
         record = self.store.load(task)
         roles = [role] if role else list(record["workers"])
-        closed = []
         for name in roles:
-            worker = self._worker(record, name)
-            self.rex.close(record["session"], worker["block"])
+            self._worker(record, name)
+        live = self.rex.live_blocks(record["session"])
+        repo = Path(record["repo"])
+        closed, removed, kept = [], [], []
+        for name in roles:
+            worker = record["workers"][name]
+            if worker["block"] in live:
+                self.rex.close(record["session"], worker["block"])
+            if worker.get("branch") is None and Path(worker["worktree"]).exists():
+                git(repo, "worktree", "remove", worker["worktree"])
+                removed.append(worker["worktree"])
+            elif worker.get("branch") is not None:
+                kept.append(worker["worktree"])
             del record["workers"][name]
+            self.store.save(record)
             closed.append(name)
-        self.store.save(record)
-        return {"task": task, "closed": closed, "worktrees_kept": True}
+        return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept}
 
     @staticmethod
     def _worker(record, role):
@@ -297,6 +389,11 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow):
     env = os.environ if env is None else env
     try:
         args = parser().parse_args(argv)
+    except UsageError as exc:
+        envelope(stderr, "usage_error", str(exc))
+        return 2
+    try:
+        check_name(args.task, "task")
     except UsageError as exc:
         envelope(stderr, "usage_error", str(exc))
         return 2

@@ -95,6 +95,14 @@ class Rex:
     def close(self, session, block):
         self.run(["block", "close", "-s", session, block])
 
+    def live_blocks(self, session):
+        """Block ids in `session`; empty when the session itself is gone."""
+        if not any(s.get("session_id") == session for s in self.sessions()):
+            return set()
+        value = self.json(["do", "-s", session, "-e", "return rex.session.list_blocks{}"])
+        blocks = value.get("blocks") if isinstance(value, dict) else None
+        return {b.get("block_id") for b in blocks if isinstance(b, dict)} if isinstance(blocks, list) else set()
+
     # -- one block -----------------------------------------------------------
 
     def status(self, session, block):
