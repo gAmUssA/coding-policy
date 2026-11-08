@@ -645,6 +645,10 @@ class CheckTest(Fixture):
         self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
         self.assertIn("hidden.txt", out["runs"][0]["reason"])
 
+    def test_a_signal_without_a_name_is_reported_by_number(self):
+        self.assertEqual(teammod.signal_name(15), "SIGTERM")
+        self.assertEqual(teammod.signal_name(200), "200")
+
     def test_a_command_killed_by_a_signal_is_invalid(self):
         self.assertIsNone(self.invalid("kill -TERM $$", "SIGTERM")["exit"])
 

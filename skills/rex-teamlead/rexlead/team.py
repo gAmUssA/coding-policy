@@ -211,6 +211,18 @@ def detached_at(repo, path, commit):
     return "detached" in lines and "HEAD {}".format(commit) in lines
 
 
+def signal_name(number):
+    """The signal's name, or its number when the platform defines no name.
+
+    Linux real-time signals (SIGRTMIN..SIGRTMAX) have no `signal.Signals`
+    member, and a ValueError here would lose runs already classified.
+    """
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return str(number)
+
+
 def run_check(command, cwd, log, timeout):
     """Run one check command with `bash -c` in `cwd`: no stdin, combined output
     to `log`, its whole process group killed at `timeout` seconds. The run is
@@ -238,7 +250,7 @@ def run_check(command, cwd, log, timeout):
             proc.wait()
             return ran(None, "invalid", "timed out after {}s and was killed".format(timeout))
     if code < 0:
-        return ran(None, "invalid", "killed by signal {}".format(signal.Signals(-code).name))
+        return ran(None, "invalid", "killed by signal {}".format(signal_name(-code)))
     if code in CHECK_EXITS:
         return ran(code, CHECK_EXITS[code], "exit {}".format(code))
     # 126 and 127 included: under `bash -c` the command may have run before
