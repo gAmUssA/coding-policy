@@ -136,6 +136,18 @@ def describe(argv):
     return " ".join(shown)
 
 
+#: Identifiers a diagnostic may quote back; any other caller value is
+#: withheld, as it may be a credential pasted into the wrong argument.
+SHOWN_IDENTIFIER = re.compile(r"(?:block|session|window):[0-9a-f-]{36}|[a-z][a-z0-9_-]{0,31}")
+
+
+def shown(value):
+    """`value` for a diagnostic when it has an identifier's shape, else only
+    its length."""
+    text = value if isinstance(value, str) else str(value)
+    return text if SHOWN_IDENTIFIER.fullmatch(text) else "<{} bytes withheld>".format(len(text.encode()))
+
+
 def tool_stderr(completed):
     return redact_secrets((completed.stderr or "").strip())[:STDERR_CAP_BYTES]
 
@@ -363,7 +375,7 @@ def find_pane(snapshot, pane_id):
     for block in terminals(snapshot):
         if block["block_id"] == pane_id:
             return block
-    raise AdapterError("pane_not_found", "pane {} not found in Rex session {} — pass a full block id from `agent list` or `rex ls`".format(pane_id, snapshot.get("session_id")))
+    raise AdapterError("pane_not_found", "pane {} not found in Rex session {} — pass a full block id from `agent list` or `rex ls`".format(shown(pane_id), snapshot.get("session_id")))
 
 
 def find_agent(snapshot, target):
@@ -373,19 +385,19 @@ def find_agent(snapshot, target):
         if info and (target in (info["name"], info["pane_id"])):
             matches.append((block, info))
     if not matches:
-        raise AdapterError("agent_not_found", "agent target {} not found — list live agents with `agent list`; a name is released when its agent exits".format(target))
+        raise AdapterError("agent_not_found", "agent target {} not found — list live agents with `agent list`; a name is released when its agent exits".format(shown(target)))
     if len(matches) > 1:
-        raise AdapterError("agent_target_ambiguous", "agent target {} matches {} panes — rename one with `agent rename`".format(target, len(matches)))
+        raise AdapterError("agent_target_ambiguous", "agent target {} matches {} panes — rename one with `agent rename`".format(shown(target), len(matches)))
     return matches[0]
 
 
 def check_name(snapshot, name, pane_id=None):
     if not NAME_RE.fullmatch(name) or name in RESERVED_NAMES:
-        raise UsageError("agent name {!r} must match [a-z][a-z0-9_-]{{0,31}} and not be 'shell'".format(name))
+        raise UsageError("agent name {} must match [a-z][a-z0-9_-]{{0,31}} and not be 'shell' — pick a name of that form".format(shown(name)))
     for block in terminals(snapshot):
         info = agent_info(snapshot, block)
         if info and info["name"] == name and block["block_id"] != pane_id:
-            raise AdapterError("agent_name_taken", "agent name {} is in use by pane {} — choose another name or stop that agent first".format(name, block["block_id"]))
+            raise AdapterError("agent_name_taken", "agent name {} is in use by pane {} — choose another name or stop that agent first".format(shown(name), block["block_id"]))
 
 
 def read_text(rex, block, source, lines, ansi):
@@ -422,7 +434,8 @@ class Options:
                 else:
                     self.values[arg] = args[index]
             elif arg.startswith("--"):
-                raise UsageError("unknown option " + arg)
+                accepted = sorted(set(valued) | set(switches) | set(repeated))
+                raise UsageError("unknown option {} — this command takes {}; remove it and retry".format(shown(arg), ", ".join(accepted) or "no options"))
             else:
                 self.positional.append(arg)
             index += 1
@@ -484,7 +497,7 @@ class Adapter:
         target, text = positional(opts, 2, "agent prompt <target> <text> [--wait] [--until S]... [--timeout MS]")
         block, info = find_agent(self.rex.snapshot(), target)
         if info["agent_status"] == "blocked":
-            raise AdapterError("agent_blocked", "agent {} is at an approval or question dialog; answer it before prompting".format(target))
+            raise AdapterError("agent_blocked", "agent {} is at an approval or question dialog; answer it before prompting".format(shown(target)))
         before = info["agent_status"]
         self.rex.paste(block["block_id"], text)
         self.rex.send_keys(block["block_id"], ["enter"])
@@ -499,7 +512,7 @@ class Adapter:
         try:
             self.poll(changed, PROMPT_STALL_MS, "")
         except PollTimeout:
-            raise AdapterError("agent_prompt_stalled", "agent {} showed no lifecycle change within {} ms of the prompt — read the pane with `agent read` before resending".format(target, PROMPT_STALL_MS)) from None
+            raise AdapterError("agent_prompt_stalled", "agent {} showed no lifecycle change within {} ms of the prompt — read the pane with `agent read` before resending".format(shown(target), PROMPT_STALL_MS)) from None
         return self.wait_for(pane, opts.values.get("--until") or list(SETTLED_STATES), opts.int_value("--timeout", DEFAULT_WAIT_TIMEOUT_MS))
 
     def wait_for(self, pane, until, timeout_ms):
@@ -549,7 +562,7 @@ class Adapter:
         block = find_pane(snapshot, pane)
         check_name(snapshot, name)
         if not holds_only_shell(block):
-            raise AdapterError("pane_busy", "pane {} is not at its own shell prompt (foreground: {}) — start an agent only in a pane whose shell is idle".format(pane, (foreground(block) or {}).get("argv0") or "unknown"))
+            raise AdapterError("pane_busy", "pane {} is not at its own shell prompt (foreground: {}) — start an agent only in a pane whose shell is idle".format(shown(pane), shown(basename((foreground(block) or {}).get("argv0")) or "unknown")))
         argv = [KIND_BINARIES[kind]] + opts.rest
         self.rex.set_block_label(pane, name)
         self.rex.send_text(pane, shlex.join(argv))
@@ -614,7 +627,7 @@ class Adapter:
             return None
 
         timeout = opts.int_value("--timeout", DEFAULT_WAIT_TIMEOUT_MS)
-        return self.poll(matched, timeout, "timed out waiting for output match in pane {} — check the text with `pane read`, then retry with a longer --timeout".format(pane))
+        return self.poll(matched, timeout, "timed out waiting for output match in pane {} — check the text with `pane read`, then retry with a longer --timeout".format(shown(pane)))
 
     def pane_send_text(self, args):
         pane, text = positional(Options(args, ()), 2, "pane send-text <pane_id> <text>")
@@ -645,7 +658,7 @@ class Adapter:
             return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": fg.get("pid"), "foreground_processes": [entry]}}
         detail = block.get("fg_ps")
         if not fg.get("pid") or detail is None:
-            raise AdapterError("process_gone", "the foreground process of pane {} exited or could not be described while it was read — read the pane again".format(pane))
+            raise AdapterError("process_gone", "the foreground process of pane {} exited or could not be described while it was read — read the pane again".format(shown(pane)))
         found = agent_kind(block)
         entry = {"pid": fg["pid"], "name": found[0] if found else (fg.get("name") or basename(fg.get("argv0")))}
         argv = detail["argv"]
@@ -668,7 +681,7 @@ class Adapter:
         block = find_pane(snapshot, pane)
         # Rex keeps one label per block, and an agent's name is that label.
         if agent_info(snapshot, block):
-            raise AdapterError("pane_title_unsupported", "pane {} hosts an agent whose name is the block label, and Rex has no separate pane title — the title is cosmetic, so continue without it, or rename the agent with `agent rename`".format(pane))
+            raise AdapterError("pane_title_unsupported", "pane {} hosts an agent whose name is the block label, and Rex has no separate pane title — the title is cosmetic, so continue without it, or rename the agent with `agent rename`".format(shown(pane)))
         self.rex.set_block_label(pane, label)
         return {"type": "ok"}
 
@@ -682,7 +695,7 @@ class Adapter:
     def workspace_rename(self, args):
         workspace, label = positional(Options(args, ()), 2, "workspace rename <workspace_id> <label>")
         if workspace != self.rex.snapshot().get("session_id"):
-            raise AdapterError("workspace_not_found", "workspace {} is not the Rex session in REX_SESSION — pass the id from `workspace list`".format(workspace))
+            raise AdapterError("workspace_not_found", "workspace {} is not the Rex session in REX_SESSION — pass the id from `workspace list`".format(shown(workspace)))
         self.rex.set_session_label(label)
         return {"type": "ok"}
 
@@ -714,11 +727,14 @@ def main(argv=None, env=None, runner=None, stdout=None, stderr=None, sleep=time.
     stdout = stdout if stdout is not None else sys.stdout
     stderr = stderr if stderr is not None else sys.stderr
     def envelope(code, message):
-        stderr.write(json.dumps({"error": {"code": code, "message": message}}) + "\n")
+        # Every message is redacted here, whatever built it.
+        stderr.write(json.dumps({"error": {"code": code, "message": redact_secrets(message)}}) + "\n")
 
     command = COMMANDS.get((argv[0], argv[1])) if len(argv) >= 2 else None
     if command is None:
-        envelope("usage_error", "unsupported command {!r}; supported: {}".format(" ".join(argv[:2]), ", ".join(" ".join(k) for k in COMMANDS)))
+        words = {word for key in COMMANDS for word in key}
+        asked = " ".join(word if word in words else shown(word) for word in argv[:2]) or "(none)"
+        envelope("usage_error", "unsupported command {}; supported: {}".format(asked, ", ".join(" ".join(k) for k in COMMANDS)))
         return 2
     session = env.get("REX_SESSION", "")
     if not session:

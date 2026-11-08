@@ -561,6 +561,31 @@ class EnvelopeTest(unittest.TestCase):
             self.assertEqual((code, error_code(err)), (1, "rex_failed"), argv)
             self.assertNotIn(echoed, err, argv)
 
+    def test_misplaced_caller_values_are_withheld_from_diagnostics(self):
+        token = "correct-horse-battery-staple-Xy9"
+        for argv in (("agent", token), (token, "list"), ("agent", "get", token), ("pane", "get", token),
+                     ("agent", "list", "--" + token), ("agent", "start", token, "--kind", "claude", "--pane", SHELL),
+                     ("workspace", "rename", token, "x")):
+            code, _, err = run(FakeRex(), *argv)
+            self.assertNotEqual(code, 0, argv)
+            self.assertNotIn(token, err, argv)
+            self.assertIn("bytes withheld", json.loads(err)["error"]["message"], argv)
+
+    def test_identifiers_are_still_named(self):
+        err = run(FakeRex(), "agent", "get", "ghost")[2]
+        self.assertIn("agent target ghost not found", json.loads(err)["error"]["message"])
+
+    def test_unknown_option_names_the_accepted_ones(self):
+        err = run(FakeRex(), "agent", "wait", "claude", "--forever")[2]
+        self.assertIn("this command takes --timeout, --until; remove it and retry", json.loads(err)["error"]["message"])
+
+    def test_every_envelope_is_redacted(self):
+        # Whatever raises a message, the envelope boundary masks a known token shape.
+        token = "ghp_" + "C" * 36
+        code, _, err = run(FakeRex(raises=("rex", rex_herdr.AdapterError("rex_failed", "rejected " + token))), "agent", "list")
+        self.assertEqual((code, error_code(err)), (1, "rex_failed"))
+        self.assertNotIn(token, err)
+
     def test_read_only_failures_keep_rex_stderr(self):
         code, _, err = run(FakeRex(fail="Error: session not found"), "agent", "list")
         self.assertIn("session not found", json.loads(err)["error"]["message"])
