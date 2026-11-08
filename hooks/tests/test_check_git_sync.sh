@@ -139,9 +139,9 @@ main() {
   export HOME="$TMP/home"
   mkdir -p "$HOME" || die "could not create isolated HOME at $HOME"
   export GIT_CONFIG_NOSYSTEM=1
-  # The operator's session may itself run under Herdr or with a custom ssh;
-  # every case sets these explicitly.
-  unset HERDR_ENV SESSION_START_MODE GIT_SSH_COMMAND GIT_SSH
+  # The operator's session may itself run under Herdr, as a Rex team worker
+  # or with a custom ssh; every case sets these explicitly.
+  unset HERDR_ENV REX_TEAM_TASK REX_TEAM_ROLE SESSION_START_MODE GIT_SSH_COMMAND GIT_SSH
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
   FAIL=0; PASS=0

@@ -37,6 +37,9 @@ set -uo pipefail
 # here prints an empty token and never stands in for this one.
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
+# A Rex team worker runs this suite with the worker marker set; every case
+# that needs the marker sets it explicitly.
+unset REX_TEAM_TASK REX_TEAM_ROLE
 
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/stop-handoff-hygiene.sh"
 

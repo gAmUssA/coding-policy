@@ -101,18 +101,23 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait -
 - `delivered: false` with `state: done` — the worker stopped without a valid report; send one correction brief through Step 5
 - `state: timeout` — tell the operator the tab is still working, then run this step again
 
-## Step 7 — Spawn the Reviewer
+## Step 7 — Confirm the Candidate
 
 Confirm the commit the developer reported is the tip of its branch; a
-mismatch stops here and goes back to the developer through Step 5:
+mismatch goes back to the developer through Step 5:
 
 ```bash
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh candidate --task <task> --role dev --sha <reported-sha>
 ```
 
-The returned `candidate` is the commit under review. `<review-role>` is `review` for the first review
+The returned `candidate` is the commit under review. Proceed immediately to
+Step 8.
+
+## Step 8 — Spawn the Reviewer
+
+`<review-role>` is `review` for the first review
 and `review-<n>` for the `n`th, so each candidate gets a fresh reviewer; use
-the same `<review-role>` through Step 11. The reviewer gets a read-only
+the same `<review-role>` through Step 12. The reviewer gets a read-only
 checkout of the candidate:
 
 ```bash
@@ -121,32 +126,32 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn 
 
 Handle `not_ready` as in Step 3.
 
-Proceed immediately to Step 8.
+Proceed immediately to Step 9.
 
-## Step 8 — Write the Reviewer Brief
+## Step 9 — Write the Reviewer Brief
 
 Fill `.tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/templates/brief-reviewer.md` with the task, the
 candidate SHA and the base from Step 2 into a file outside the repository.
-Proceed immediately to Step 9.
+Proceed immediately to Step 10.
 
-## Step 9 — Dispatch the Reviewer
+## Step 10 — Dispatch the Reviewer
 
 ```bash
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh assign --task <task> --role <review-role> --brief <brief-file>
 ```
 
-Proceed immediately to Step 10.
+Proceed immediately to Step 11.
 
-## Step 10 — Wait for the Reviewer
+## Step 11 — Wait for the Reviewer
 
 ```bash
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role <review-role>
 ```
 
 Route `blocked`, `timeout` and an undelivered report as in Step 6. On
-`delivered: true`, proceed immediately to Step 11.
+`delivered: true`, proceed immediately to Step 12.
 
-## Step 11 — Gate the Candidate
+## Step 12 — Gate the Candidate
 
 Check the report reviews exactly the candidate and carries one verdict, then
 read it in full:
@@ -156,12 +161,12 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh verdic
 ```
 
 `review_mismatch` or `no_verdict` sends the reviewer one correction brief
-through Step 9.
+through Step 10.
 
-- `verdict: approve` with no blocking finding — proceed immediately to Step 12
+- `verdict: approve` with no blocking finding — proceed immediately to Step 13
 - Blocking findings — run `down --task <task> --role <review-role>`, brief the developer with the findings verbatim (Step 5), then review the new candidate under the next `<review-role>` (Step 7); stop after three such loops and bring the findings to the operator
 
-## Step 12 — Close the Round
+## Step 13 — Close the Round
 
 Close the worker tabs. Reviewer checkouts are removed; the developer's
 worktree stays for the release:
@@ -170,9 +175,9 @@ worktree stays for the release:
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh down --task <task>
 ```
 
-Proceed immediately to Step 13.
+Proceed immediately to Step 14.
 
-## Step 13 — Release the Branch
+## Step 14 — Release the Branch
 
 Ship `team/<task>-dev` from the developer's worktree through the release
 skill, whose cleanup removes that worktree and branch:

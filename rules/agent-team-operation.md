@@ -15,7 +15,8 @@ description: Team rounds (Rex-native or Herdr) — the mode switch, the worker e
 - Every other agent is standalone
 - `REX_SESSION` alone never marks a team round
 - Never infer the mode from how large or careful the task is
-- **Every section below governs a team round only; `skills/herdr-teamlead/references/team-operation.md` governs a Herdr round only**
+- **Every section below governs a team round only**
+- **`skills/herdr-teamlead/references/team-operation.md` governs a Herdr round only**
 - In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer, no judge seat
 - A standalone agent does the task directly
 - A standalone agent never simulates the roles, the briefs, or the reports
