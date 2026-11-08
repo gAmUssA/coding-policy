@@ -244,11 +244,38 @@ def run_check(command, cwd, log, timeout):
     return ran(code, "invalid", "exit {} is neither pass (0) nor fail (1)".format(code))
 
 
-def changes(worktree):
-    """`git status --porcelain` with every untracked file and every submodule
-    change shown, whatever `status.showUntrackedFiles` or `submodule.<name>.ignore`
-    the user, repository or `.gitmodules` sets."""
-    return git(worktree, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+#: Forced on every clean-tree read. `-c` reaches the status processes git
+#: runs for submodules too. Each setting could otherwise hide a change:
+#: untracked files in a submodule, an fsmonitor that reports nothing changed,
+#: a same-size rewrite with its mtime restored, and an executable-bit change.
+STATUS_CONFIG = ("status.showUntrackedFiles=all", "core.fsmonitor=false", "core.trustctime=true", "core.fileMode=true")
+
+
+def changes(worktree, prefix=""):
+    """Every change `git status` can be made to hide, in `worktree` and each
+    populated submodule below it, one line each; empty when clean. Untracked
+    files, submodule changes and the settings in STATUS_CONFIG are forced
+    whatever the user, repository, `.gitmodules` or a submodule sets. An
+    index entry marked assume-unchanged, or skip-worktree with its file
+    present, is reported: git skips its content, so its change is unseen.
+    Ignored files stay unreported."""
+    root = Path(worktree) / prefix
+    where = "in {}: ".format(prefix) if prefix else ""
+    config = [arg for setting in STATUS_CONFIG for arg in ("-c", setting)]
+    found = [where + line.strip() for line in
+             git(root, *config, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none").splitlines()]
+    for entry in filter(None, git(root, "ls-files", "-v", "-z").split("\0")):
+        tag, path = entry[0], entry[2:]
+        if tag.islower():
+            found.append("{}{} is marked assume-unchanged".format(where, path))
+        elif tag == "S" and (root / path).exists():
+            found.append("{}{} is marked skip-worktree but present".format(where, path))
+    for entry in filter(None, git(root, "ls-files", "--stage", "-z").split("\0")):
+        if entry.startswith("160000 "):
+            sub = prefix + entry.split("\t", 1)[1] + "/"
+            if (Path(worktree) / sub / ".git").exists():
+                found.extend(filter(None, changes(worktree, sub).splitlines()))
+    return "\n".join(found)
 
 
 def worktree_change(worktree, candidate):

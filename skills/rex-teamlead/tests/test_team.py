@@ -19,6 +19,7 @@ import io
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -706,17 +707,38 @@ class CheckTest(Fixture):
         self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
         self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
 
-    def with_ignored_submodule(self, fake, where):
-        """A candidate holding submodule `sub`, its changes hidden from a plain
-        `git status` by `submodule.sub.ignore=all` in `where`."""
-        self.committed(fake)
-        source = Path(self.tmp.name) / "sub-source"
+    #: The clean-tree read before this round's overrides, for asserting a fixture's premise.
+    OLD_STATUS = ["git", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]
+
+    def old_status(self):
+        return subprocess.run(self.OLD_STATUS, cwd=self.worktree, capture_output=True, text=True, check=True).stdout
+
+    def source_repo(self, name, **files):
+        source = Path(self.tmp.name) / name
         source.mkdir()
         git("init", "-q", "-b", "main", cwd=source)
-        (source / "tracked.txt").write_text("original\n")
+        for file, text in files.items():
+            (source / file).write_text(text)
         git("add", "-A", cwd=source)
-        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "sub", cwd=source)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", name, cwd=source)
+        return source
+
+    def with_ignored_submodule(self, fake, where, hide_untracked=False, nested=False):
+        """A candidate holding submodule `sub`, its changes hidden from a plain
+        `git status` by `submodule.sub.ignore=all` in `where`. `hide_untracked`
+        sets `status.showUntrackedFiles=no` inside `sub`; `nested` gives `sub`
+        a submodule `nest` that `sub`'s own `.gitmodules` ignores."""
+        self.committed(fake)
+        source = self.source_repo("sub-source", **{"tracked.txt": "original\n"})
+        if nested:
+            inner = self.source_repo("nest-source", **{"n.txt": "nested\n"})
+            git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(inner), "nest", cwd=source)
+            git("config", "-f", ".gitmodules", "submodule.nest.ignore", "all", cwd=source)
+            git("add", ".gitmodules", cwd=source)
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "nest", cwd=source)
         git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "sub", cwd=self.worktree)
+        if nested:
+            git("-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", "--recursive", cwd=self.worktree)
         if where == ".gitmodules":
             git("config", "-f", ".gitmodules", "submodule.sub.ignore", "all", cwd=self.worktree)
             git("add", ".gitmodules", cwd=self.worktree)
@@ -729,6 +751,21 @@ class CheckTest(Fixture):
         probe = subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True)
         self.assertEqual((hidden.stdout, probe.stdout), ("", ""), "the fixture's ignore setting must hide the submodule")
         git("checkout", "--", "tracked.txt", cwd=self.worktree / "sub")
+        if hide_untracked:
+            git("config", "--local", "status.showUntrackedFiles", "no", cwd=self.worktree / "sub")
+            (self.worktree / "sub" / "stray.txt").write_text("probe\n")
+            self.assertEqual(self.old_status(), "", "the submodule's own setting must hide its untracked file")
+            (self.worktree / "sub" / "stray.txt").unlink()
+        if nested:
+            (self.worktree / "sub" / "nest" / "n.txt").write_text("probe\n")
+            self.assertEqual(self.old_status(), "", "sub's .gitmodules must hide the nested change")
+            git("checkout", "--", "n.txt", cwd=self.worktree / "sub" / "nest")
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+        # Forget that clean run, so a later refusal can prove it recorded nothing.
+        shutil.rmtree(Path(self.env["REX_TEAM_HOME"]) / "t1" / "checks")
+        record = self.state()
+        record["workers"]["dev"]["check"] = None
+        (Path(self.env["REX_TEAM_HOME"]) / "t1.json").write_text(json.dumps(record))
 
     def submodule_modified_before_the_run_is_refused(self, where):
         fake = FakeRex()
@@ -757,6 +794,96 @@ class CheckTest(Fixture):
 
     def test_a_run_that_modifies_a_submodule_ignored_in_repo_config_is_invalid(self):
         self.run_that_modifies_a_submodule_is_invalid("config")
+
+    def untracked_in_submodule_before_the_run_is_refused(self, where):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, where, hide_untracked=True)
+        (self.worktree / "sub" / "stray.txt").write_text("not in the candidate\n")
+        self.refused(fake, "check_dirty")
+        (self.worktree / "sub" / "stray.txt").unlink()
+        self.assertEqual(self.check(fake, "test ! -e sub/stray.txt")[1]["verdict"], "pass")
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
+
+    def run_that_leaves_untracked_in_submodule_is_invalid(self, where):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, where, hide_untracked=True)
+        out = self.check(fake, "touch sub/stray.txt")[1]
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("stray.txt", out["runs"][0]["reason"])
+
+    def test_an_untracked_file_in_a_submodule_hiding_untracked_files_is_refused_gitmodules(self):
+        self.untracked_in_submodule_before_the_run_is_refused(".gitmodules")
+
+    def test_an_untracked_file_in_a_submodule_hiding_untracked_files_is_refused_repo_config(self):
+        self.untracked_in_submodule_before_the_run_is_refused("config")
+
+    def test_a_run_leaving_an_untracked_file_in_a_submodule_hiding_them_is_invalid_gitmodules(self):
+        self.run_that_leaves_untracked_in_submodule_is_invalid(".gitmodules")
+
+    def test_a_run_leaving_an_untracked_file_in_a_submodule_hiding_them_is_invalid_repo_config(self):
+        self.run_that_leaves_untracked_in_submodule_is_invalid("config")
+
+    def test_a_change_in_a_nested_submodule_its_parent_ignores_is_refused(self):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, ".gitmodules", nested=True)
+        nested = self.worktree / "sub" / "nest"
+        (nested / "n.txt").write_text("dirty\n")
+        self.refused(fake, "check_dirty")
+        git("checkout", "--", "n.txt", cwd=nested)
+        (nested / "stray.txt").write_text("not in the candidate\n")
+        self.refused(fake, "check_dirty")
+        (nested / "stray.txt").unlink()
+        self.assertEqual(self.check(fake, "grep -q nested sub/nest/n.txt")[1]["verdict"], "pass")
+
+    def test_an_fsmonitor_that_reports_nothing_changed_is_not_trusted(self):
+        fake = FakeRex()
+        self.committed(fake)
+        liar = Path(self.tmp.name) / "fsmonitor-liar.sh"
+        liar.write_text("#!/bin/sh\nprintf 'token\\0'\n")
+        liar.chmod(0o755)
+        git("config", "--local", "core.fsmonitor", str(liar), cwd=self.worktree)
+        git("update-index", "--fsmonitor", cwd=self.worktree)
+        git("status", "--porcelain", cwd=self.worktree)
+        (self.worktree / "lib.py").write_text("x = 9\n")
+        self.assertEqual(self.old_status(), "", "the fsmonitor hook must hide the change")
+        self.refused(fake, "check_dirty")
+        (self.worktree / "lib.py").write_text("x = 2\n")
+        self.assertEqual(self.check(fake, "grep -q 'x = 2' lib.py")[1]["verdict"], "pass")
+
+    def test_a_same_size_rewrite_under_trustctime_false_is_invalid(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("config", "--local", "core.trustctime", "false", cwd=self.worktree)
+        stamp = "touch -t 202001010000 lib.py"
+        subprocess.run(["bash", "-c", stamp], cwd=self.worktree, check=True)
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+        # Git compares whole-second ctimes, so the rewrite lands in a later second.
+        out = self.check(fake, "sleep 1; printf 'x = 3\\n' > lib.py && " + stamp)[1]
+        self.assertEqual(self.old_status(), "", "core.trustctime=false must hide the rewrite")
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("lib.py", out["runs"][0]["reason"])
+
+    def test_an_executable_bit_change_under_filemode_false_is_invalid(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("config", "--local", "core.fileMode", "false", cwd=self.worktree)
+        self.assertEqual(self.check(fake, "test -f lib.py")[1]["verdict"], "pass")
+        out = self.check(fake, "chmod +x lib.py")[1]
+        self.assertEqual(self.old_status(), "", "core.fileMode=false must hide the mode change")
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+
+    def test_assume_unchanged_and_skip_worktree_entries_are_refused(self):
+        fake = FakeRex()
+        self.committed(fake)
+        for bit in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(bit=bit):
+                git("update-index", "--" + bit, "lib.py", cwd=self.worktree)
+                (self.worktree / "lib.py").write_text("x = 9\n")
+                self.assertEqual(self.old_status(), "", "the index bit must hide the change")
+                self.refused(fake, "check_dirty")
+                git("update-index", "--no-" + bit, "lib.py", cwd=self.worktree)
+                (self.worktree / "lib.py").write_text("x = 2\n")
+        self.assertEqual(self.check(fake, "grep -q 'x = 2' lib.py")[1]["verdict"], "pass")
 
     def test_a_dirty_worktree_is_refused_and_a_clean_one_runs(self):
         fake = FakeRex()
