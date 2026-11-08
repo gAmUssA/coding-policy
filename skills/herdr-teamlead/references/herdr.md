@@ -431,7 +431,9 @@ by hand", never as "it has no headroom".
 Preview: transport only. `skills/herdr-teamlead/rex-herdr.sh` answers the Herdr
 commands this skill runs, in Herdr's JSON, over the Rex session in
 `REX_SESSION` (ADR `docs/adr/0015-rex-backend-through-herdr-compatible-adapter.md`).
-Pointing `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` at it does not start a team
+Set `HERDR_BIN` and `TEAMLEAD_HERDR_BIN` to it and `TEAMLEAD_BACKEND=rex`, so
+the Python client and `wait-report.sh` read its JSON pane text. That does not
+start a team
 round: the mode switch is still `HERDR_ENV`, and the lead's pane and workspace
 identity still come from Herdr. Until a Rex team mode lands, a Rex terminal is
 standalone mode under `rules/agent-team-operation.md`.
@@ -440,11 +442,11 @@ Contract:
 
 | Part | Value |
 | ---- | ----- |
-| Inputs | `REX_SESSION` (required); `TEAMLEAD_REX_BIN` (default `rex`); `UV_BIN` (default `uv`); argv in Herdr's grammar for `agent list\|get\|read\|prompt\|send-keys\|wait\|start\|rename`, `pane get\|read\|wait-output\|send-text\|send-keys\|process-info\|rename`, `workspace list\|rename` |
-| stdout | One `{"result": ...}` JSON object. `agent read` and `pane read` print the requested pane rows as text, each ending in a newline, as Herdr does. Nothing on failure |
-| stderr | `{"error":{"code","message"}}` on every failure |
-| Exit | `0` success; `1` Rex-side failure; `2` usage error, code `usage_error` |
-| Error codes | `agent_not_found`, `agent_target_ambiguous`, `agent_name_taken`, `agent_blocked`, `agent_prompt_stalled`, `pane_not_found`, `pane_busy`, `pane_title_unsupported`, `workspace_not_found`, `timeout`, `not_in_rex`, `rex_not_found`, `rex_timeout`, `rex_failed`, `usage_error` |
+| Inputs | `REX_SESSION` (required); `TEAMLEAD_REX_BIN` (default `rex`); `UV_BIN` (default `uv`); `TEAMLEAD_BACKEND=rex` on the consumers' side; argv in Herdr's grammar for `agent list\|get\|read\|prompt\|send-keys\|wait\|start\|rename`, `pane get\|read\|wait-output\|send-text\|send-keys\|process-info\|rename`, `workspace list\|rename` |
+| stdout | One `{"result": ...}` JSON object for every command. `agent read` and `pane read` answer `{"result":{"type":"pane_text","pane_id","text"}}`, where Herdr prints the rows. Nothing on failure |
+| stderr | `{"error":{"code","message"}}` on every failure, launcher and `uv` failures included. Messages withhold typed and pasted text and redact secret-shaped `rex` stderr |
+| Exit | `0` success; `1` failure; `2` usage error, code `usage_error` |
+| Error codes | `agent_not_found`, `agent_target_ambiguous`, `agent_name_taken`, `agent_blocked`, `agent_prompt_stalled`, `pane_not_found`, `pane_busy`, `pane_title_unsupported`, `process_gone`, `workspace_not_found`, `timeout`, `not_in_rex`, `rex_not_found`, `rex_timeout`, `rex_failed`, `rex_malformed`, `ps_failed`, `setup_error`, `internal_error`, `usage_error` |
 | Side effects | `agent prompt` pastes into the agent's block and presses Enter; `agent send-keys`, `pane send-text` and `pane send-keys` type into the block; `agent start` labels the block and types the agent command; `agent rename`, `pane rename` and `workspace rename` change a Rex block or session label. Every other command only reads |
 
 Mapping:
@@ -458,6 +460,8 @@ Mapping:
   round continues.
 - `agent_status` comes from the agent's own OSC 7501 program status. Claude
   Code, Codex and Grok report it; OpenCode and Pi read `unknown`.
+- A pane is idle only when its foreground is its own shell, at a bare prompt:
+  a script, a nested shell, or a process Rex cannot describe is busy.
 - `agent start` returns once the agent reports a ready prompt; a startup dialog
   the agent does not report ends in `timeout`.
 - No `agent_session` is reported, so native-transcript report proof is

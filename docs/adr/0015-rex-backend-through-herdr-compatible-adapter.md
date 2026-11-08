@@ -22,11 +22,11 @@ Options considered:
 
 ## Decision
 
-Add `skills/herdr-teamlead/rex-herdr.sh`, a `uv run` launcher for `teamlead/rex_herdr.py`. It implements the Herdr `agent`, `pane` and `workspace` commands the plugin calls, in Herdr's JSON envelope and error codes, over the Rex session in `REX_SESSION`. A Herdr pane is a Rex block, an agent name is a block label, and `agent_status` is the agent's own program status, with `error` read as `done` and no record read as `unknown`.
+Add `skills/herdr-teamlead/rex-herdr.sh`, a `uv run` launcher for `teamlead/rex_herdr.py`. It implements the Herdr `agent`, `pane` and `workspace` commands the plugin calls, in Herdr's JSON envelope and error codes, over the Rex session in `REX_SESSION`. A Herdr pane is a Rex block, an agent name is a block label, and `agent_status` is the agent's own program status, with `error` read as `done` and no record read as `unknown`. Every answer is JSON, pane reads included (`{"result":{"type":"pane_text","text"}}`); the two consumers of pane text, `HerdrClient` and `wait-report.sh`, read that shape when `TEAMLEAD_BACKEND=rex` and Herdr's raw rows otherwise.
 
 ## Consequences
 
-- The Python core and shell scripts run on Rex unchanged; the adapter is the only Rex-specific code.
+- The core and shell scripts run on Rex unchanged except for the two pane-text readers, which switch on `TEAMLEAD_BACKEND`; no rule carries a Rex exception.
 - The adapter is pinned to the Herdr grammar and JSON shapes the plugin reads today. A core change that calls a new Herdr command must add it to the adapter.
 - `agent_session` is never returned, so native-transcript report proof is unavailable on Rex.
 - Agents without program status (OpenCode, Pi) read `unknown` and are never dispatched.

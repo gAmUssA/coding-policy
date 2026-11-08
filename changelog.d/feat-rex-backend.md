@@ -7,4 +7,4 @@ bump: minor
 
 ### Changed
 
-- **`rules/script-delegation.md` gains a narrow carve-out for `rex-herdr.sh` pane-text stdout.** Its `agent read` and `pane read` must emit the raw pane rows `herdr agent read` and `herdr pane read` give the same callers, so a JSON envelope would break every consumer that reads Herdr's text; a failed read still emits nothing on stdout and the error envelope on stderr.
+- **`TEAMLEAD_BACKEND` selects how pane text is read.** Unset or `herdr` keeps Herdr's raw `agent read`/`pane read` rows; `rex` makes `HerdrClient` and `wait-report.sh` read the adapter's `{"result":{"type":"pane_text","text"}}` and refuse anything else; any other value is refused. The adapter answers JSON for every command, so the plugin's JSON-producing script rule needs no exception.
