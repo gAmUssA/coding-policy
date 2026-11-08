@@ -187,6 +187,21 @@ t_invalid_json() {
   rm -rf "$dir"
 }
 
+# --- valid JSON without the result shape -> exit 1, nothing posted ---
+t_not_a_result() {
+  local dir payload rc
+  dir=$(mktemp -d) || { bad "not_a_result: mktemp -d failed"; return; }
+  GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
+  for payload in '{}' '{"summary":"x"}' '{"findings":[]}' '{"summary":"x","findings":{}}' '{"summary":"x","findings":["blocking"]}' '[]'; do
+    printf '%s' "$payload" > "$dir/final.json" || fatal "cannot write $dir/final.json"
+    : > "$GH_CAPTURE"
+    rc=0; run_main owner repo 1 "$dir/final.json" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 && ! -s "$GH_CAPTURE" ]]; then ok "not a result ($payload) -> exit 1, nothing posted"
+    else bad "not a result ($payload) -> exit 1, nothing posted (rc=$rc)"; fi
+  done
+  rm -rf "$dir"
+}
+
 # The posted body must classify into the codex-policy lane BY MARKER through
 # the release skill's classifier entry point (skills/release/review-lanes.sh),
 # so a reviewer sharing the login can be told apart (ADR 0010).
@@ -215,6 +230,7 @@ t_mixed
 t_missing_severity_blocks
 t_missing_file
 t_invalid_json
+t_not_a_result
 t_body_classifies_by_marker
 echo "== summary: ${pass} passed, ${fail} failed =="
 echo "test-summary: passed=${pass} failed=${fail} token=${SUMMARY_TOKEN}"

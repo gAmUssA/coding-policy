@@ -84,6 +84,14 @@ main() {
     exit 1
   fi
 
+  # Valid JSON is not a verdict: `{}` would default to zero findings and APPROVE.
+  # Require the schema's top-level shape (schema.json) before deriving anything.
+  if ! jq -e '(.summary | type == "string") and (.findings | type == "array")
+              and all(.findings[]; type == "object")' "$result" >/dev/null; then
+    echo "error: ${result} lacks a string .summary and an array of finding objects in .findings — not a review result; refusing to post. Inspect the file and the review step logs" >&2
+    exit 1
+  fi
+
   local summary findings_count blocking_count advisory_count
   summary=$(jq -r '.summary // ""' "$result")
   findings_count=$(jq '(.findings // []) | length' "$result")

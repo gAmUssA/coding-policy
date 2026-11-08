@@ -9,7 +9,8 @@
 # GitHub already treats as trusted.)
 #
 # Usage: assert-no-secret-leak.sh <auth-json> <review-output-json>
-# Exit:  0 clean; 1 the output contains credential material; 2 arg/tool error.
+# Exit:  0 clean; 1 the output contains credential material; 2 arg/tool error
+#        or a missing input (no verdict reachable).
 
 set -euo pipefail
 
@@ -24,9 +25,11 @@ main() {
     exit 2
   fi
   local auth="$1" out="$2"
-  # Nothing to check if either file is absent — the review/seed step already
-  # failed and surfaces elsewhere; treat as clean here.
-  [[ -f "$auth" && -f "$out" ]] || return 0
+  # A missing input means no verdict can be reached: fail closed, never clean.
+  local f
+  for f in "$auth" "$out"; do
+    [[ -f "$f" ]] || { echo "error: ${f} not found — cannot verify the review output is credential-free; check the auth-seed and review steps' logs" >&2; exit 2; }
+  done
 
   local tokens out_contents
   tokens=$(jq -r '.. | strings' "$auth") \
