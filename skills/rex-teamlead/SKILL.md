@@ -207,16 +207,28 @@ through Step 11. `candidate_mismatch` means the developer's branch moved past
 the reviewed commit: run `down --task <task> --role <review-role>`, then
 review the new tip under the next `<review-role>` from Step 7.
 
-Classify each finding yourself by `rules/review-severity.md`; the
-classification routes the round, never the `verdict:` word:
+The reviewer's `verdict:` binds the round. Only the operator overrides it:
 
-- No blocking finding — proceed immediately to Step 14
+- `verdict: approve` — proceed immediately to Step 14
 - Carry any advisory findings into the release
-- Blocking findings — run `down --task <task> --role <review-role>`
+- An `approve` whose report lists a finding marked `blocking` is inconsistent
+- Route an inconsistent `approve` as `changes-requested`
+- `verdict: changes-requested` — run `down --task <task> --role <review-role>`
 - Brief the developer with the findings verbatim through Step 5
 - Confirm, check and review the new candidate under the next `<review-role>` from Step 7
 - Stop after three such loops
 - Bring the remaining findings to the operator
+
+The lead never loosens the verdict on its own:
+
+- You may treat an advisory finding as blocking
+- An advisory you treat as blocking routes the round as `changes-requested`
+- You may judge a finding marked `blocking` presentation-only by `rules/review-severity.md`
+- Then ask the operator to downgrade it, naming the finding and your reason
+- Downgrade it to advisory only on the operator's explicit approval
+- Record each approved downgrade in the PR body at release: the finding, your reason and the operator's approval
+- Without approval, the finding stays blocking
+- A `changes-requested` whose every blocking finding the operator downgraded proceeds as an `approve`
 
 ## Step 14 — Close the Round
 
