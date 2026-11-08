@@ -499,6 +499,14 @@ class GateTest(Fixture):
         code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
         self.assertEqual((code, err["error"]["code"]), (1, "review_mismatch"))
 
+    def test_a_review_from_a_checkout_moved_after_spawn_is_refused(self):
+        fake = FakeRex()
+        tip = self.reviewed(fake, "reviewed: {sha}\nverdict: approve\n")
+        review = self.state()["workers"]["review"]["worktree"]
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "drift", cwd=review)
+        code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "review_mismatch"))
+
     def test_an_undelivered_review_has_no_verdict_yet(self):
         fake = FakeRex()
         tip = self.committed(fake)
@@ -555,6 +563,9 @@ class StatusDownTest(Fixture):
 
     def test_down_keeps_a_reviewer_checkout_someone_put_on_a_branch(self):
         self.moved_checkout_is_kept("checkout", "-q", "-b", "keep-me")
+
+    def test_down_keeps_a_reviewer_checkout_on_a_branch_named_detached(self):
+        self.moved_checkout_is_kept("checkout", "-q", "-b", "detached-fix")
 
     def test_down_keeps_a_reviewer_checkout_with_a_new_commit(self):
         self.moved_checkout_is_kept("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "work")

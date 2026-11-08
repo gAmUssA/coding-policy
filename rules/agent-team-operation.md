@@ -10,7 +10,8 @@ description: Team rounds (Rex-native or Herdr) — the mode switch, the worker e
 - **Standalone** — one agent working a task on its own, with no team round around it. `HERDR_ENV` and `REX_TEAM_TASK` are unset
 - **Rex team round** — the operator asks for a Rex team round and the lead runs `skills/rex-teamlead`, dispatching work to worker tabs in a Rex session. Workers carry `REX_TEAM_TASK`
 - **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set. Deprecated: removed in coding-policy 2.0.0
-- `REX_TEAM_TASK` set marks a Rex worker; `HERDR_ENV` set marks a Herdr round
+- `REX_TEAM_TASK` set marks a Rex worker
+- `HERDR_ENV` set marks a Herdr round
 - An agent running `skills/rex-teamlead` on the operator's request is a Rex lead
 - Every other agent is standalone
 - `REX_SESSION` alone never marks a team round

@@ -29,7 +29,9 @@ from .rex import FINISHED, READY, Rex, RexError, Timeout
 
 SCHEMA_VERSION = 1
 READY_TIMEOUT_SEC = 90
-DEFAULT_WAIT_TIMEOUT_SEC = 3600
+# Below the shell-tool limit of an agent lead (Claude Code's Bash caps at 600 s),
+# so a long turn ends as `state: timeout`, never as a killed command.
+DEFAULT_WAIT_TIMEOUT_SEC = 300
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
     "claude": lambda model, effort: ["claude"] + (["--model", model] if model else []) + (["--effort", effort] if effort else []),
@@ -158,6 +160,14 @@ def worktree_entry(listing, path):
                  if block.startswith("worktree ") and Path(block.split("\n", 1)[0][len("worktree "):]).resolve() == target), None)
 
 
+def detached_at(repo, path, commit):
+    """Whether live git lists `path` as a detached checkout at `commit`.
+    Whole porcelain lines are compared: a branch named `detached-fix` is a branch."""
+    entry = worktree_entry(git(repo, "worktree", "list", "--porcelain"), path)
+    lines = entry.splitlines() if entry else []
+    return "detached" in lines and "HEAD {}".format(commit) in lines
+
+
 def check_name(value, what):
     if not NAME.fullmatch(value):
         raise UsageError("{} must match [a-z][a-z0-9-]{{0,30}}".format(what))
@@ -254,8 +264,9 @@ class Team:
         listing = git(repo, "worktree", "list", "--porcelain")
         entry = worktree_entry(listing, path)
         if entry is not None:
-            on_branch = "branch refs/heads/{}".format(branch) in entry if branch else "detached" in entry
-            at_commit = branch is not None or "HEAD {}".format(commit) in entry
+            lines = entry.splitlines()
+            on_branch = "branch refs/heads/{}".format(branch) in lines if branch else "detached" in lines
+            at_commit = branch is not None or "HEAD {}".format(commit) in lines
             if on_branch and at_commit:
                 return (False, False)
             raise TeamError("worktree_conflict", "{} is already a worktree on another branch or commit — remove it with `git worktree remove {}` or use another role name".format(path, path))
@@ -356,8 +367,9 @@ class Team:
         reviewed = [line[len("reviewed:"):].strip() for line in lines if line.startswith("reviewed:")]
         verdicts = [line[len("verdict:"):].strip() for line in lines if line.startswith("verdict:")]
         candidate = git(Path(record["repo"]), "rev-parse", sha)
-        if worker.get("branch") is None and worker["commit"] != candidate:
-            raise TeamError("review_mismatch", "{}'s checkout is at {}, not the candidate {} — spawn a fresh reviewer with `--ref {}`".format(role, worker["commit"], candidate, candidate))
+        # The recorded commit is a hint; the live checkout must still be the candidate.
+        if worker.get("branch") is None and not detached_at(Path(record["repo"]), worker["worktree"], candidate):
+            raise TeamError("review_mismatch", "{}'s checkout at {} is no longer a detached checkout of the candidate {} — spawn a fresh reviewer with `--ref {}`".format(role, worker["worktree"], candidate, candidate))
         if len(reviewed) != 1 or reviewed[0].strip("`") != candidate:
             raise TeamError("review_mismatch", "{}'s report does not review exactly {} (found {}) — brief a fresh reviewer on the candidate".format(role, candidate, reviewed or "no `reviewed:` line"))
         if len(verdicts) != 1 or verdicts[0] not in ("approve", "changes-requested"):
@@ -392,8 +404,7 @@ class Team:
                 # A read-only checkout is disposable by contract; tests may leave
                 # untracked output in it, so it is removed with --force — but only
                 # once live git confirms it is still this worker's checkout.
-                entry = worktree_entry(git(repo, "worktree", "list", "--porcelain"), worker["worktree"])
-                if entry is None or "detached" not in entry or "HEAD {}".format(worker["commit"]) not in entry:
+                if not detached_at(repo, worker["worktree"], worker["commit"]):
                     failed.append({"role": name, "worktree": worker["worktree"],
                                    "error": "it is no longer this worker's detached checkout at {}".format(worker["commit"])})
                     continue

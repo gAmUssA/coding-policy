@@ -45,9 +45,10 @@ Every tab label is cosmetic: `tab_label_error` reports a label Rex refused.
 
 ## Step 1 — Confirm the Round
 
-A round needs a Rex terminal (`REX_SESSION` set), a git repository the
-operator already trusts in each agent, and an explicit request for a team
-round. Without all three, do the task directly and finish here.
+A round needs a Rex terminal (`REX_SESSION` set), a git repository and an
+explicit request for a team round. Without all three, do the task directly
+and finish here. An agent's trust prompt for a new worktree surfaces at
+spawn as `not_ready` (Step 3).
 
 Pick a short task id (`[a-z][a-z0-9-]{0,30}`) and the agents: the reviewer is
 a different agent kind from the developer. Proceed immediately to Step 2.
@@ -96,10 +97,13 @@ Proceed immediately to Step 6.
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role dev
 ```
 
+`wait` returns within its 300-second default; give the shell call a longer
+time limit.
+
 - `delivered: true` — read the report in full; proceed immediately to Step 7
 - `state: blocked` — relay the `kind` and tab to the operator; once answered, run this step again
 - `delivered: false` with `state: done` — the worker stopped without a valid report; send one correction brief through Step 5
-- `state: timeout` — tell the operator the tab is still working, then run this step again
+- `state: timeout` — the worker is still working; run this step again
 
 ## Step 7 — Confirm the Candidate
 
@@ -163,7 +167,10 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh verdic
 `review_mismatch` or `no_verdict` sends the reviewer one correction brief
 through Step 10.
 
-- `verdict: approve` with no blocking finding — proceed immediately to Step 13
+Classify each finding yourself by `rules/review-severity.md`; the
+classification routes the round, never the `verdict:` word:
+
+- No blocking finding — proceed immediately to Step 13, carrying any advisory findings into the release
 - Blocking findings — run `down --task <task> --role <review-role>`, brief the developer with the findings verbatim (Step 5), then review the new candidate under the next `<review-role>` (Step 7); stop after three such loops and bring the findings to the operator
 
 ## Step 13 — Close the Round
