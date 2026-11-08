@@ -49,7 +49,7 @@ fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
 mk_fake_uv() { # <path>
   cat > "$1" <<'FAKE' || die "could not write the fake uv at $1"
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 if [[ -n "${FAKE_UV_STDERR:-}" ]]; then
   printf '%s\n' "$FAKE_UV_STDERR" >&2
   exit "${FAKE_UV_RC:-0}"
