@@ -21,9 +21,13 @@
 #   6. Setup envelope  -> launcher failures are Herdr's stderr JSON, code
 #                         setup_error, even for a path holding a double quote.
 #   7. uv failure      -> uv's own unstructured failure becomes a setup_error
-#                         envelope with exit 1 and no stdout.
+#                         envelope with exit 1 and no stdout, and uv's text,
+#                         a token included, is never forwarded.
 #   8. Module envelope -> the module's own error envelope passes through with
-#                         its exit status.
+#                         its exit status, even after a uv warning line, and
+#                         the warning is not forwarded.
+#   9. Control bytes   -> a path holding a tab and a newline still yields one
+#                         valid JSON envelope.
 #
 # Run: bash skills/herdr-teamlead/tests/test_rex_herdr_launcher.sh
 set -uo pipefail
@@ -109,14 +113,25 @@ main() {
 
   # 7. uv's own failure, before the module runs, becomes a setup_error envelope.
   local stdout_only
-  stdout_only="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR="error: No interpreter found for Python >=3.11" bash "$skill/rex-herdr.sh" pane read p1 2>"$TMP/err7")"; rc=$?
-  if [[ $rc -eq 1 && -z "$stdout_only" ]] && jq -e '.error.code == "setup_error" and (.error.message | contains("No interpreter found"))' "$TMP/err7" >/dev/null; then
-    pass; else fail "uv failure: expected exit 1, no stdout and a setup_error envelope, got rc=$rc stdout=$stdout_only err=$(cat "$TMP/err7")"; fi
+  local token="ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  stdout_only="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR="error: No interpreter found while running ${token}" bash "$skill/rex-herdr.sh" pane read p1 2>"$TMP/err7")"; rc=$?
+  if [[ $rc -eq 1 && -z "$stdout_only" ]] && jq -e '.error.code == "setup_error" and (.error.message | contains("python -V"))' "$TMP/err7" >/dev/null \
+    && ! grep -q "$token" "$TMP/err7" && [[ "$(wc -l < "$TMP/err7" | tr -d ' ')" == 1 ]]; then
+    pass; else fail "uv failure: expected exit 1, no stdout and one token-free setup_error envelope, got rc=$rc stdout=$stdout_only err=$(cat "$TMP/err7")"; fi
 
   # 8. The module's own envelope passes through unchanged, with its status.
-  out="$(env UV_BIN="$fakeuv" FAKE_UV_RC=1 FAKE_UV_STDERR='{"error":{"code":"pane_not_found","message":"pane p1 not found"}}' bash "$skill/rex-herdr.sh" pane read p1 2>&1 >/dev/null)"; rc=$?
-  if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e '.error.code == "pane_not_found"' >/dev/null; then
-    pass; else fail "module envelope: expected the pane_not_found envelope with exit 1, got rc=$rc out=$out"; fi
+  out="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR='warning: VIRTUAL_ENV does not match
+{"error":{"code":"usage_error","message":"--lines must be an integer"}}' bash "$skill/rex-herdr.sh" pane read p1 2>&1 >/dev/null)"; rc=$?
+  if [[ $rc -eq 2 ]] && printf '%s' "$out" | jq -e '.error.code == "usage_error"' >/dev/null && ! printf '%s' "$out" | grep -q VIRTUAL_ENV; then
+    pass; else fail "module envelope: expected only the usage_error envelope with exit 2, got rc=$rc out=$out"; fi
+
+  # 9. Control bytes in a path still produce one valid JSON envelope.
+  local odd="$TMP/sk"$'\t'"i"$'\n'"ll"
+  mkdir -p "$odd/teamlead" || die "could not create the control-byte skill dir"
+  cp "$script" "$odd/rex-herdr.sh" || die "could not copy the launcher into the control-byte dir"
+  out="$(env UV_BIN="$fakeuv" bash "$odd/rex-herdr.sh" agent list 2>&1 >/dev/null)"; rc=$?
+  if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e --arg dir "$odd" '.error.code == "setup_error" and (.error.message | contains($dir))' >/dev/null; then
+    pass; else fail "control bytes: expected one valid setup_error envelope naming the path, got rc=$rc out=$out"; fi
 
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))

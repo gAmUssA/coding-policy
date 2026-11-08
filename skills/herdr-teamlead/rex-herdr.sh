@@ -7,9 +7,11 @@
 #   argv  : the Herdr subset listed in skills/herdr-teamlead/teamlead/rex_herdr.py,
 #           forwarded verbatim to `uv run … python -m teamlead.rex_herdr`.
 #   stdout: one `{"result": ...}` JSON object, reads included; nothing on failure.
-#   stderr: `{"error":{"code","message"}}` on every failure. This launcher's own
-#           failures, and any uv failure before the module answers, use code
-#           `setup_error`.
+#   stderr: `{"error":{"code","message"}}` on every failure, and nothing else:
+#           the module's own envelope (the last stderr line it writes) passes
+#           through; this launcher's failures, and any uv failure before the
+#           module answers, use code `setup_error`. Raw uv or interpreter
+#           stderr is never forwarded, as it may echo arguments.
 #   exit  : 0 success; 1 Rex-side or setup failure; 2 usage error.
 #   env   : REX_SESSION (required), TEAMLEAD_REX_BIN (default `rex`), UV_BIN
 #           (default uv). The module runs through `uv run` per
@@ -19,11 +21,28 @@ set -euo pipefail
 
 UV_BIN="${UV_BIN:-uv}"
 
-# Herdr's stderr envelope for a launcher failure, JSON-escaped.
+# <text> as a JSON string body: quote, backslash and every control byte
+# escaped. Bytes run in the C locale, so UTF-8 passes through unchanged.
+json_escape() { # <text>
+  local LC_ALL=C text="$1" out="" char code i
+  for (( i = 0; i < ${#text}; i++ )); do
+    char="${text:i:1}"
+    case "$char" in
+      '"') out+='\"' ;;
+      "\\") out+="\\\\" ;;
+      *)
+        printf -v code '%d' "'$char"
+        if (( code >= 0 && code < 32 || code == 127 )); then printf -v char '\\u%04x' "$code"; fi
+        out+="$char"
+        ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Herdr's stderr envelope for a launcher failure.
 setup_error() { # <message>
-  local message="${1//\\/\\\\}"
-  message="${message//\"/\\\"}"
-  printf '{"error":{"code":"setup_error","message":"%s"}}\n' "$message" >&2
+  printf '{"error":{"code":"setup_error","message":"%s"}}\n' "$(json_escape "$1")" >&2
 }
 
 ERRFILE=""
@@ -52,20 +71,19 @@ main() {
   export PYTHONPATH="${skill_dir}${PYTHONPATH:+:${PYTHONPATH}}"
   ERRFILE="$(mktemp -t rex-herdr.XXXXXX)" || { setup_error "rex-herdr: mktemp failed — check that \$TMPDIR is writable"; return 1; }
   trap cleanup EXIT
-  local rc=0 first
+  local rc=0 last
   "$UV_BIN" run --no-project --no-python-downloads --python '>=3.11' python -m teamlead.rex_herdr "$@" 2>"$ERRFILE" || rc=$?
   if (( rc == 0 )); then
-    cat "$ERRFILE" >&2
     return 0
   fi
-  # The module answers every failure with one envelope line; anything else
-  # came from uv before the module ran.
-  if [[ "$(wc -l < "$ERRFILE" | tr -d ' ')" == 1 && "$(head -c 9 "$ERRFILE")" == '{"error":' ]]; then
-    cat "$ERRFILE" >&2
+  # The module ends every failure with one JSON-encoded envelope line; uv or
+  # interpreter warnings may precede it. No envelope means uv failed first.
+  last="$(tail -n 1 "$ERRFILE")"
+  if [[ "$last" == '{"error":'* ]]; then
+    printf '%s\n' "$last" >&2
     return "$rc"
   fi
-  first="$(head -n 1 "$ERRFILE" | head -c 300)"
-  setup_error "rex-herdr: uv could not run the adapter (exit ${rc}): ${first} — check \`${UV_BIN} --version\` and that Python 3.11+ is installed"
+  setup_error "rex-herdr: uv could not run the adapter (exit ${rc}) — run \`${UV_BIN} run --no-project --no-python-downloads --python '>=3.11' python -V\` to see uv's error, and check that Python 3.11+ is installed"
   return 1
 }
 
