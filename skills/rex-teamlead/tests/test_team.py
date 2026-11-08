@@ -16,6 +16,7 @@ if _ROOT not in _sys.path:
 
 import datetime as dt
 import io
+import itertools
 import json
 import os
 import subprocess
@@ -30,8 +31,9 @@ from rexlead.rex import Rex, RexError, Timeout
 SESSION = "session:01a1b968-0889-721b-bfeb-f94b8a6239b3"
 LEAD = "block:01a1b968-0000-7000-8000-00000000000a"
 SENT = dt.datetime(2026, 11, 7, 12, 0, 0, tzinfo=dt.timezone.utc)
-AFTER = "2026-11-07T07:00:05-05:00"   # 12:00:05Z, after the dispatch
-BEFORE = "2026-11-07T06:59:00-05:00"  # 11:59:00Z, before it
+# Rex 0.1.0 (1853) stamps `updated_at` to the microsecond, in local time.
+AFTER = "2026-11-07T07:00:05.250117-05:00"   # 12:00:05.25Z, after the dispatch
+BEFORE = "2026-11-07T06:59:00.004211-05:00"  # 11:59:00Z, before it
 
 
 def status(state, at=AFTER, **extra):
@@ -157,13 +159,15 @@ class Fixture(unittest.TestCase):
         git("add", "-A", cwd=self.repo)
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init", cwd=self.repo)
         self.env = {"REX_TEAM_HOME": str(root / "state"), "HOME": str(root / "home")}
+        self.nonces = itertools.count(0xA11CE)
         self.brief = root / "brief.md"
         self.brief.write_text("# Brief\n\nAdd a function.\n")
 
     def cli(self, fake: "FakeRex", *argv: str) -> "tuple[int, dict[str, Any], dict[str, Any]]":
         """Exit code, parsed stdout and parsed stderr; an empty stream parses as {}."""
         out, err = io.StringIO(), io.StringIO()
-        code = teammod.main(list(argv), rex=fake.client(), stdout=out, stderr=err, env=self.env, now=lambda: SENT)
+        code = teammod.main(list(argv), rex=fake.client(), stdout=out, stderr=err, env=self.env, now=lambda: SENT,
+                            nonce=lambda: "{:016x}".format(next(self.nonces)))
         return code, (json.loads(out.getvalue()) if out.getvalue() else {}), (json.loads(err.getvalue()) if err.getvalue() else {})
 
     def state(self):
@@ -677,6 +681,20 @@ class RexClientTest(unittest.TestCase):
         rex = Rex(binary="rex", runner=runner, events=lambda argv: Stream([], close=False))
         record = rex.wait_status(SESSION, LEAD, lambda r: r.get("state") == "done", 5) or {}
         self.assertEqual((record.get("state"), len(reads)), ("done", 2))
+
+    def test_a_missing_rex_binary_names_the_fix_when_waiting(self):
+        def missing(argv):
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+        rex = Rex(binary="/nonexistent/rex", runner=lambda argv: Done(0, json.dumps({"records": []})), events=missing)
+        with self.assertRaises(RexError) as caught:
+            rex.wait_status(SESSION, LEAD, lambda r: False, 1)
+        self.assertIn("--rex", caught.exception.message)
+
+    def test_wait_status_accepts_a_status_from_the_stream(self):
+        rex = Rex(binary="rex", runner=lambda argv: Done(0, json.dumps({"records": [status("working")]})),
+                  events=lambda argv: Stream([event(LEAD, status("done"))], close=False))
+        self.assertEqual((rex.wait_status(SESSION, LEAD, lambda r: r.get("state") == "done", 5) or {}).get("state"), "done")
 
     def test_child_records_do_not_count(self):
         line = json.loads(event(LEAD, status("done")))

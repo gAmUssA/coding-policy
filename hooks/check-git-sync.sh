@@ -105,10 +105,10 @@ emit_notice() { # <notice-text>
 # worker writes the remote-tracking refs the lead's checkout shares, and a hook
 # that tells a worker to fast-forward `main` instructs it to break that rule.
 #
-# Neither Herdr (`HERDR_ENV`) nor a Rex team round (`REX_TEAM_TASK`, set on
-# workers) exports a lead/worker flag the lead lacks, so the role is derived
-# from where the session sits: the lead works in the shared checkout, every
-# worker works in a linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
+# A Rex team worker carries `REX_TEAM_TASK`, which marks it directly. Herdr
+# (`HERDR_ENV`) exports no lead/worker flag the lead lacks, so a Herdr role is
+# derived from where the session sits: the lead works in the shared checkout,
+# every worker works in a linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
 # resolve differently; in the main checkout they are the same. Under
 # SESSION_START_MODE=portable tessl has stripped HERDR_ENV, so its absence
 # proves nothing and a linked worktree may be a worker's.

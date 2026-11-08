@@ -13,12 +13,6 @@ description: >
 
 Process steps in order. Do not skip ahead.
 
-Every command below runs the launcher from the repository's own plugin
-install, `.tessl/plugins/gamussa/coding-policy/`. In a checkout of
-coding-policy itself, which has no install, run
-`skills/rex-teamlead/rex-team.sh` from the repository root instead, with the
-same arguments.
-
 Every command below runs `team`, the `rex-team.sh` launcher; its header and
 `skills/rex-teamlead/rexlead/team.py` carry the contract: one JSON object on
 stdout, `{"error":{"code","message"}}` on stderr, exit 0, 1 or 2. Worker state
@@ -97,8 +91,9 @@ Proceed immediately to Step 6.
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role dev
 ```
 
-`wait` returns within its 300-second default; give the shell call a longer
-time limit.
+`wait` returns by its default budget, `DEFAULT_WAIT_TIMEOUT_SEC` in
+`skills/rex-teamlead/rexlead/team.py`; give the shell call a longer time
+limit than that budget.
 
 - `delivered: true` — read the report in full; proceed immediately to Step 7
 - `state: blocked` — relay the `kind` and tab to the operator; once answered, run this step again

@@ -181,11 +181,12 @@ def git(repo, *args):
 
 
 class Team:
-    def __init__(self, rex, store, worktrees, now=utcnow):
+    def __init__(self, rex, store, worktrees, now=utcnow, nonce=lambda: secrets.token_hex(8)):
         self.rex = rex
         self.store = store
         self.worktrees = Path(worktrees)
         self.now = now
+        self.nonce = nonce
 
     def up(self, task, repo):
         repo = Path(repo).resolve()
@@ -292,7 +293,7 @@ class Team:
     def assign(self, task, role, brief):
         record = self.store.load(task)
         worker = self._worker(record, role)
-        nonce = secrets.token_hex(8)
+        nonce = self.nonce()
         report = self.store.reports(task) / "{}-{}.md".format(role, len(worker["dispatches"]) + 1)
         text = Path(brief).read_text() + DELIVERY.format(report=report, nonce=nonce)
         state = (self.rex.status(record["session"], worker["block"]) or {}).get("state")
@@ -506,7 +507,7 @@ def envelope(stream, code, message):
     stream.write(json.dumps({"error": {"code": code, "message": message}}) + "\n")
 
 
-def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow):
+def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow, nonce=None):
     stdout = stdout if stdout is not None else sys.stdout
     stderr = stderr if stderr is not None else sys.stderr
     env = os.environ if env is None else env
@@ -522,7 +523,8 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow):
         return 2
     home = env.get("REX_TEAM_HOME") or str(Path.home() / ".rex-team")
     # Worker checkouts live under ~/.worktrees/ (rules/agent-team-operation.md Workers).
-    team = Team(rex or Rex(binary=args.rex), Store(home), str(Path(env.get("HOME") or Path.home()) / ".worktrees"), now=now)
+    team = Team(rex or Rex(binary=args.rex), Store(home), str(Path(env.get("HOME") or Path.home()) / ".worktrees"), now=now,
+                **({"nonce": nonce} if nonce else {}))
     try:
         if args.command == "up":
             result = team.up(args.task, args.repo)

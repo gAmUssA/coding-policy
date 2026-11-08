@@ -146,7 +146,10 @@ class Rex:
         re-read whenever no event arrives within a second, which bounds that
         gap. Returns the accepted record.
         """
-        stream = self.events([self.binary, "events", "-s", session, "--json"])
+        try:
+            stream = self.events([self.binary, "events", "-s", session, "--json"])
+        except OSError as exc:
+            raise RexError("could not start `{} events` ({}) — install Rex or pass its path with `--rex`".format(self.binary, exc.strerror or exc)) from None
         try:
             record = self.status(session, block)
             if accept(record):
