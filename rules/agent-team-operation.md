@@ -1,17 +1,19 @@
 ---
 alwaysApply: true
-description: Herdr team rounds — the mode switch, the worker essentials, and where the lead's full contract lives
+description: Team rounds (Rex-native or Herdr) — the mode switch, the worker essentials, and where each lead's contract lives
 ---
 
 # Agent Team Operation
 
 ## Two Modes
 
-- **Standalone** — one agent working a task on its own, with no Herdr session around it. `HERDR_ENV` is unset
-- **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set
-- Read `HERDR_ENV` to tell the modes apart
+- **Standalone** — one agent working a task on its own, with no team round around it. `HERDR_ENV` and `REX_TEAM_TASK` are unset
+- **Rex team round** — a lead running `skills/rex-teamlead` dispatches work to worker tabs in a Rex session. Workers carry `REX_TEAM_TASK`
+- **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set. Deprecated: removed in coding-policy 2.0.0
+- Read `REX_TEAM_TASK` and `HERDR_ENV` to tell the modes apart
+- `REX_SESSION` alone never marks a team round
 - Never infer the mode from how large or careful the task is
-- **Every section below, and `skills/herdr-teamlead/references/team-operation.md`, governs a Herdr team round only**
+- **Every section below governs a team round only; `skills/herdr-teamlead/references/team-operation.md` governs a Herdr round only**
 - In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer, no judge seat
 - A standalone agent does the task directly
 - A standalone agent never simulates the roles, the briefs, or the reports
@@ -19,11 +21,12 @@ description: Herdr team rounds — the mode switch, the worker essentials, and w
 
 ## The Lead
 
-- The lead reads the core of `skills/herdr-teamlead/references/team-operation.md` before planning a round
-- The lead reads each other section at the `herdr-teamlead` step that names it, before acting on that step
+- A Herdr lead reads the core of `skills/herdr-teamlead/references/team-operation.md` before planning a round
+- A Herdr lead reads each other section at the `herdr-teamlead` step that names it, before acting on that step
 - That reference is the team contract: composition, specialists, judge seat, tiers, fix loops, dispatch safety, ledger, memory, attention, supervision, retrospectives, review before PR, authority
-- Every section binds every team round as a rule does, whether or not the lead has read it yet
+- Every section binds every Herdr round as a rule does, whether or not the lead has read it yet
 - The `herdr-teamlead` skill runs the round under it
+- A Rex lead runs `skills/rex-teamlead/SKILL.md` step by step instead; that skill is its contract
 
 ## Workers
 
@@ -36,7 +39,8 @@ description: Herdr team rounds — the mode switch, the worker essentials, and w
 - The worker acts on none of it
 - A worker's repository writes happen only in the worktree its brief names, under `~/.worktrees/`
 - A worker's report is a file at the path its brief names
-- The final chat message's last line is exactly `REPORT: <path>`
+- In a Herdr round, the final chat message's last line is exactly `REPORT: <path>`
+- In a Rex round, the report's first line is the brief's `task-nonce:` line
 - Substantive output never travels through pane text
 - A worker never blocks on a question to the lead
 - A worker decides the question itself
