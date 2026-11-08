@@ -99,14 +99,15 @@ main() {
   local summary findings_count blocking_count advisory_count
   summary=$(jq -r '.summary // ""' "$result")
   findings_count=$(jq '(.findings // []) | length' "$result")
-  # Only a well-formed advisory finding (every schema field present and typed)
-  # is non-gating. A missing or unknown severity, or any malformed field, counts
-  # as blocking — fail safe: never let an unclassified finding slip through.
-  blocking_count=$(jq '[(.findings // [])[] | select(
-      (.severity == "advisory"
-       and (.path | type == "string") and (.line | type == "number")
-       and (.rule | type == "string") and (.message | type == "string")) | not
-    )] | length' "$result")
+  # Only a well-formed advisory finding (every schema field present and typed,
+  # line a 1-indexed integer) is non-gating. A missing or unknown severity, or
+  # any malformed field, counts as blocking — fail safe: never let an
+  # unclassified finding slip through. One predicate drives the count and both
+  # rendered sections, so the body lists every finding under its real tier.
+  local advisory_def='def is_advisory: .severity == "advisory"
+    and (.path | type == "string") and (.rule | type == "string") and (.message | type == "string")
+    and (.line | type == "number" and . == floor and . >= 1);'
+  blocking_count=$(jq "${advisory_def} [.findings[] | select(is_advisory | not)] | length" "$result")
   advisory_count=$(( findings_count - blocking_count ))
 
   # Derive the event from severity (rules/review-severity.md), never a model verdict.
@@ -121,11 +122,11 @@ main() {
   local body blocking_md advisory_md
   body="${REVIEW_LANE_MARKER}"$'\n'"${summary}"
   if (( blocking_count > 0 )); then
-    blocking_md=$(jq -r '.findings[] | select((.severity // "blocking") != "advisory") | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
+    blocking_md=$(jq -r "${advisory_def}"' .findings[] | select(is_advisory | not) | "- `\(.path // "?"):\(.line // "?")` — **\(.rule // "?")** — \(.message // "(malformed finding: \(tojson))")"' "$result")
     body="${body}"$'\n\n'"## Blocking findings (gate the merge)"$'\n'"${blocking_md}"
   fi
   if (( advisory_count > 0 )); then
-    advisory_md=$(jq -r '.findings[] | select((.severity // "blocking") == "advisory") | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
+    advisory_md=$(jq -r "${advisory_def}"' .findings[] | select(is_advisory) | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
     body="${body}"$'\n\n'"## Advisory findings (do not gate)"$'\n'"${advisory_md}"
   fi
 

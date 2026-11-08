@@ -172,28 +172,58 @@ JSON
   rm -rf "$dir"
 }
 
-# --- a malformed "advisory" finding gates: only a well-formed advisory is non-gating ---
+# --- a malformed "advisory" finding gates and is listed under Blocking ---
 t_malformed_advisory_blocks() {
-  local dir; dir=$(mktemp -d) || { bad "malformed-advisory: mktemp -d failed"; return; }
+  local dir payload rc out body
+  dir=$(mktemp -d) || { bad "malformed-advisory: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  printf '%s' '{"summary":"Policy loaded: 23 rule files from rules/. One nit.",
- "findings":[{"severity":"advisory"}]}' > "$dir/final.json" || fatal "cannot write $dir/final.json"
-  local out rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
-  [[ $rc -eq 0 ]]                                          || { bad "malformed-advisory: exit 0 (rc=$rc)"; rm -rf "$dir"; return; }
-  [[ "$(jq -r .event <<<"$out")" == "REQUEST_CHANGES" ]] || { bad "malformed-advisory: event REQUEST_CHANGES (got $out)"; rm -rf "$dir"; return; }
-  ok "advisory finding missing schema fields -> blocking (REQUEST_CHANGES)"
+  for payload in \
+    '{"summary":"Policy loaded: 23 rule files from rules/.","findings":[{"severity":"advisory"}]}' \
+    '{"summary":"Policy loaded: 23 rule files from rules/.","findings":[{"path":"a.md","line":2.5,"rule":"context-artifacts","severity":"advisory","message":"fractional line"}]}' \
+    '{"summary":"Policy loaded: 23 rule files from rules/.","findings":[{"path":"a.md","line":0,"rule":"context-artifacts","severity":"advisory","message":"zero line"}]}'; do
+    printf '%s' "$payload" > "$dir/final.json" || fatal "cannot write $dir/final.json"
+    rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
+    body=$(jq -r .body "$GH_CAPTURE")
+    if [[ $rc -eq 0 && "$(jq -r .event <<<"$out")" == "REQUEST_CHANGES" ]] \
+       && [[ "$(sed -n '/^## Blocking findings/,$p' <<<"$body" | grep -c '^- ')" == "1" ]] \
+       && ! grep -q '^## Advisory findings' <<<"$body"; then
+      ok "malformed advisory ($payload) -> REQUEST_CHANGES, listed under Blocking"
+    else bad "malformed advisory ($payload) -> REQUEST_CHANGES, listed under Blocking (rc=$rc, body=$body)"; fi
+  done
+  # mixed: one well-formed advisory stays advisory, the malformed one is blocking
+  printf '%s' '{"summary":"Policy loaded: 23 rule files from rules/.","findings":[
+    {"path":"a.md","line":3,"rule":"context-artifacts","severity":"advisory","message":"good nit"},
+    {"path":"b.md","line":-1,"rule":"context-artifacts","severity":"advisory","message":"bad line"}]}' > "$dir/final.json" \
+    || fatal "cannot write $dir/final.json"
+  rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
+  body=$(jq -r .body "$GH_CAPTURE")
+  if [[ $rc -eq 0 ]] && [[ "$(jq -r '.blocking, .advisory' <<<"$out" | paste -sd, -)" == "1,1" ]] \
+     && sed -n '/^## Blocking findings/,/^## Advisory findings/p' <<<"$body" | grep -q 'bad line' \
+     && sed -n '/^## Advisory findings/,$p' <<<"$body" | grep -q 'good nit' \
+     && ! sed -n '/^## Advisory findings/,$p' <<<"$body" | grep -q 'bad line'; then
+    ok "mixed advisory -> each finding listed under its real tier"
+  else bad "mixed advisory -> each finding listed under its real tier (rc=$rc, out=$out, body=$body)"; fi
   rm -rf "$dir"
 }
 
-# --- a consumer's RULES_DIR (.coding-policy/rules) in the indicator is accepted ---
-t_consumer_rules_dir_accepted() {
-  local dir; dir=$(mktemp -d) || { bad "consumer-dir: mktemp -d failed"; return; }
-  GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
+# --- accept through the documented CLI entry point: a consumer's RULES_DIR
+#     (.coding-policy/rules) in the indicator posts APPROVE. gh is a PATH mock
+#     at the process boundary, capturing the POSTed payload. ---
+t_cli_accepts_consumer_result() {
+  local dir; dir=$(mktemp -d) || { bad "cli-accept: mktemp -d failed"; return; }
+  mkdir -p "$dir/bin" || fatal "cannot create $dir/bin"
+  cat > "$dir/bin/gh" <<MOCK || fatal "cannot write $dir/bin/gh"
+#!/usr/bin/env bash
+cat > "$dir/posted.json"
+MOCK
+  chmod +x "$dir/bin/gh" || fatal "cannot chmod $dir/bin/gh"
   printf '%s' '{"summary":"Policy loaded: 29 rule files from .coding-policy/rules. Clean.","findings":[]}' > "$dir/final.json" \
     || fatal "cannot write $dir/final.json"
-  local out rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
-  if [[ $rc -eq 0 && "$(jq -r .event <<<"$out")" == "APPROVE" ]]; then ok "consumer RULES_DIR indicator -> APPROVE"
-  else bad "consumer RULES_DIR indicator -> APPROVE (rc=$rc, out=$out)"; fi
+  local out rc=0
+  out=$(PATH="$dir/bin:$PATH" bash "$SCRIPT" owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
+  if [[ $rc -eq 0 && "$(jq -r .event <<<"$out")" == "APPROVE" && "$(jq -r .event "$dir/posted.json")" == "APPROVE" ]]; then
+    ok "CLI: consumer RULES_DIR indicator -> APPROVE posted"
+  else bad "CLI: consumer RULES_DIR indicator -> APPROVE posted (rc=$rc, out=$out)"; fi
   rm -rf "$dir"
 }
 
@@ -254,7 +284,7 @@ t_advisory_only
 t_mixed
 t_missing_severity_blocks
 t_malformed_advisory_blocks
-t_consumer_rules_dir_accepted
+t_cli_accepts_consumer_result
 t_missing_file
 t_invalid_json
 t_not_a_result
