@@ -73,10 +73,12 @@ class Stream:
 class FakeRex:
     """The `rex` CLI: sessions, blocks with a current status, and recorded writes."""
 
-    def __init__(self, statuses=None, events=(), close_stream=False, live=(SESSION,), fail_run=False, new_session=SESSION, fail_label=False):
+    def __init__(self, statuses=None, events=(), close_stream=False, live=(SESSION,), fail_run=False, new_session=SESSION, fail_label=False, bad_ls=False, bad_blocks=False):
         self.statuses = dict(statuses or {})
         self.fail_run = fail_run
         self.fail_label = fail_label
+        self.bad_ls = bad_ls
+        self.bad_blocks = bad_blocks
         self.tab_labels = {}
         self.new_session_id = new_session
         self.queued = list(events)
@@ -87,6 +89,8 @@ class FakeRex:
 
     def runner(self, argv):
         verb = argv[1]
+        if verb == "ls" and self.bad_ls:
+            return Done(0, json.dumps({"error": "shape changed"}))
         if verb == "ls":
             return Done(0, json.dumps({"sessions": [{"session_id": s, "label": "team"} for s in self.live]}))
         if verb == "new":
@@ -108,6 +112,8 @@ class FakeRex:
             window, label = [json.loads(part.split("]]", 1)[0]) for part in argv[5].split("([[")[1:]]
             self.tab_labels[window] = label
             return Done(0, '[{"revision":3}]')
+        if verb == "do" and "list_blocks" in argv[5] and self.bad_blocks:
+            return Done(0, "{}")
         if verb == "do" and "list_blocks" in argv[5]:
             return Done(0, json.dumps({"blocks": [{"block_id": b} for b in self.statuses] + [{"block_id": LEAD}]}))
         if verb == "do":
@@ -261,6 +267,16 @@ class SpawnTest(Fixture):
         self.assertEqual(out["worktree"], first["worktree"])
         self.assertEqual((Path(out["worktree"]) / "work.txt").read_text(), "in progress\n")
 
+    def test_a_failed_launch_keeps_a_branch_it_did_not_create(self):
+        git("branch", "team/t1-dev", cwd=self.repo)
+        fake = FakeRex(fail_run=True)
+        self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
+        code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")
+        self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
+        self.assertIn("launch failed", err["error"]["message"])
+        branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True).stdout
+        self.assertIn("team/t1-dev", branches)
+
     def test_a_foreign_directory_at_the_worktree_path_is_refused(self):
         fake = FakeRex()
         self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
@@ -329,6 +345,14 @@ class WaitTest(Fixture):
         out = self.cli(fake, "wait", "--task", "t1", "--role", "dev", "--timeout", "5")[1]
         self.assertEqual((out["state"], out["delivered"]), ("done", False))
         self.assertIn("nonce", out["reason"])
+
+    def test_an_errored_worker_is_never_delivered_even_with_the_nonce(self):
+        fake = FakeRex()
+        block, sent = self.dispatched(fake)
+        Path(sent["report"]).write_text("task-nonce: {}\n".format(sent["nonce"]))
+        fake.queued = [event(block, status("error"))]
+        out = self.cli(fake, "wait", "--task", "t1", "--role", "dev", "--timeout", "5")[1]
+        self.assertEqual((out["state"], out["delivered"]), ("error", False))
 
     def test_missing_report_is_not_delivery(self):
         fake = FakeRex()
@@ -421,6 +445,31 @@ class StatusDownTest(Fixture):
         self.assertFalse(Path(review["worktree"]).exists())
         self.assertEqual(self.state()["workers"], {})
 
+    def test_down_removes_a_reviewer_checkout_the_tests_left_files_in(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        review = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--read-only")[1]
+        (Path(review["worktree"]) / ".coverage").write_text("data\n")
+        code, result, _ = self.cli(fake, "down", "--task", "t1", "--role", "review")
+        self.assertEqual((code, result["worktrees_removed"]), (0, [review["worktree"]]))
+
+    def test_down_reports_a_checkout_it_cannot_remove_and_still_forgets_the_worker(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        review = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--read-only")[1]
+        git("worktree", "lock", review["worktree"], cwd=self.repo)
+        code, result, _ = self.cli(fake, "down", "--task", "t1", "--role", "review")
+        self.assertEqual((code, result["closed"], [left["worktree"] for left in result["worktrees_left"]]), (0, ["review"], [review["worktree"]]))
+        self.assertNotIn("review", self.state()["workers"])
+
+    def test_down_refuses_when_rex_cannot_list_the_blocks(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        fake.bad_blocks = True
+        code, _, err = self.cli(fake, "down", "--task", "t1")
+        self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
+        self.assertIn("dev", self.state()["workers"])
+
     def test_down_of_a_tab_closed_by_hand_forgets_the_worker(self):
         fake = FakeRex()
         out = self.spawned(fake)
@@ -441,7 +490,11 @@ class StateTest(Fixture):
         self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
         path = Path(self.env["REX_TEAM_HOME"]) / "t1.json"
         good = self.state()
+        worker = {"agent": "claude", "window": "window:a", "block": "block:a", "worktree": "/w", "commit": "c", "dispatches": []}
         cases = [({**good, "schema_version": 2}, "state_newer"), ({**good, "schema_version": "1"}, "state_corrupt"),
+                 ({**good, "schema_version": True}, "state_corrupt"), ({**good, "task": "t2"}, "state_corrupt"),
+                 ({**good, "workers": {"dev": {**worker, "model": 5}}}, "state_corrupt"),
+                 ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "yesterday"}]}}}, "state_corrupt"),
                  ({**good, "schema_version": 0}, "state_corrupt"), ({k: v for k, v in good.items() if k != "base"}, "state_corrupt"),
                  ({**good, "workers": {"dev": {"agent": "claude"}}}, "state_corrupt")]
         for record, code in cases:
@@ -449,6 +502,12 @@ class StateTest(Fixture):
             self.assertEqual(self.cli(fake, "status", "--task", "t1")[2]["error"]["code"], code, record)
         path.write_text(json.dumps(good))
         self.assertEqual(self.cli(fake, "status", "--task", "t1")[0], 0)
+
+    def test_a_session_list_rex_did_not_answer_is_a_failure_not_an_empty_list(self):
+        self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))
+        code, _, err = self.cli(FakeRex(bad_ls=True), "up", "--task", "t1", "--repo", str(self.repo))
+        self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
+        self.assertEqual(self.state()["session"], SESSION)
 
     def test_task_ids_are_validated(self):
         for task in ("../x", "a/b", "Up"):

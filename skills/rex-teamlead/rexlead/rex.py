@@ -81,7 +81,10 @@ class Rex:
 
     def sessions(self):
         value = self.json(["ls", "--json"])
-        return value if isinstance(value, list) else value.get("sessions", [])
+        sessions = value.get("sessions") if isinstance(value, dict) else None
+        if not isinstance(sessions, list) or any(not isinstance(s, dict) or not isinstance(s.get("session_id"), str) for s in sessions):
+            raise RexError("`rex ls --json` returned no valid session list — update Rex to 0.1.0 (1853) or later and retry")
+        return sessions
 
     def new_session(self, label, cwd):
         value = self.json(["new", label, "--cwd", cwd, "--json"])
@@ -107,7 +110,9 @@ class Rex:
             return set()
         value = self.json(["do", "-s", session, "-e", "return rex.session.list_blocks{}"])
         blocks = value.get("blocks") if isinstance(value, dict) else None
-        return {b.get("block_id") for b in blocks if isinstance(b, dict)} if isinstance(blocks, list) else set()
+        if not isinstance(blocks, list) or any(not isinstance(b, dict) or not isinstance(b.get("block_id"), str) for b in blocks):
+            raise RexError("Rex returned no valid block list for {} — update Rex to 0.1.0 (1853) or later and retry".format(session))
+        return {b["block_id"] for b in blocks}
 
     # -- one block -----------------------------------------------------------
 

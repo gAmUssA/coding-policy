@@ -94,12 +94,14 @@ class Store:
         except json.JSONDecodeError:
             raise TeamError("state_corrupt", "{} is not JSON — restore it or remove it and run `team up` again".format(path)) from None
         version = record.get("schema_version") if isinstance(record, dict) else None
-        if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
+        if type(version) is not int:
+            version = None  # JSON `true` would otherwise compare equal to 1
+        if version is not None and version > SCHEMA_VERSION:
             raise TeamError("state_newer", "{} has schema_version {}, newer than this plugin reads ({}) — update coding-policy and retry".format(path, version, SCHEMA_VERSION))
         if version != SCHEMA_VERSION:
             # Version 1 has no predecessor, so any other value is corrupt, not older.
             raise TeamError("state_corrupt", "{} has schema_version {!r}, which no writer produced — restore it, or remove it and run `team up` again".format(path, version))
-        problem = invalid(record)
+        problem = invalid(record) or (None if record["task"] == task else "it records task {!r}".format(record["task"]))
         if problem:
             raise TeamError("state_corrupt", "{} is malformed: {} — restore it, or remove it and run `team up` again".format(path, problem))
         return record
@@ -135,11 +137,14 @@ def invalid(record):
         for field, kind in WORKER_FIELDS.items():
             if not isinstance(worker.get(field), kind):
                 return "worker {} field {} is missing or not a {}".format(role, field, kind.__name__)
-        if worker.get("branch") is not None and not isinstance(worker["branch"], str):
-            return "worker {} field branch is not a string or null".format(role)
+        for field in ("branch", "model", "effort"):
+            if worker.get(field) is not None and not isinstance(worker[field], str):
+                return "worker {} field {} is not a string or null".format(role, field)
         for dispatch in worker["dispatches"]:
             if not isinstance(dispatch, dict) or any(not isinstance(dispatch.get(f), k) for f, k in DISPATCH_FIELDS.items()):
                 return "worker {} has a dispatch without nonce, report and sent_at".format(role)
+            if parse_time(dispatch["sent_at"]) is None:
+                return "worker {} has a dispatch whose sent_at is not ISO-8601".format(role)
     return None
 
 
@@ -208,15 +213,18 @@ class Team:
         path = self.worktrees / repo.name / "{}-{}".format(task, role)
         commit = git(repo, "rev-parse", ref or record["base"])
         branch = None if read_only else "team/{}-{}".format(task, role)
-        created = self._provision(repo, path, branch, commit)
+        created = self._provision(repo, path, branch, commit)  # (worktree, branch) this call created
         label = "{}-{}".format(task, role)
         # REX_TEAM_TASK/REX_TEAM_ROLE mark a Rex team worker (rules/agent-team-operation.md).
         argv = ["env", "REX_TEAM_TASK=" + task, "REX_TEAM_ROLE=" + role] + AGENTS[agent](model, effort)
         try:
             window, block = self.rex.launch(record["session"], label, str(path), argv)
-        except RexError:
-            if created:
-                self._unprovision(repo, path, branch)
+        except RexError as exc:
+            try:
+                self._unprovision(repo, path, branch, *created)
+            except TeamError as undo:
+                # Keep the launch failure as the cause; name what is left behind.
+                raise RexError("{} (cleanup also failed: {})".format(exc.message, undo.message)) from None
             raise
         worker = {"agent": agent, "model": model, "effort": effort, "window": window, "block": block, "worktree": str(path),
                   "branch": branch, "commit": commit, "dispatches": []}
@@ -242,23 +250,25 @@ class Team:
             on_branch = "branch refs/heads/{}".format(branch) in entry if branch else "detached" in entry
             at_commit = branch is not None or "HEAD {}".format(commit) in entry
             if on_branch and at_commit:
-                return False
+                return (False, False)
             raise TeamError("worktree_conflict", "{} is already a worktree on another branch or commit — remove it with `git worktree remove {}` or use another role name".format(path, path))
         if path.exists():
             raise TeamError("worktree_conflict", "{} exists but is not a worktree of {} — move it away or use another role name".format(path, repo))
         if branch is None:
             git(repo, "worktree", "add", "--detach", str(path), commit)
-        elif git(repo, "branch", "--list", branch):
+            return (True, False)
+        if git(repo, "branch", "--list", branch):
             git(repo, "worktree", "add", str(path), branch)
-        else:
-            git(repo, "worktree", "add", "-b", branch, str(path), commit)
-        return True
+            return (True, False)
+        git(repo, "worktree", "add", "-b", branch, str(path), commit)
+        return (True, True)
 
     @staticmethod
-    def _unprovision(repo, path, branch):
-        """Undo a worktree this spawn created, before any work landed in it."""
-        git(repo, "worktree", "remove", str(path))
-        if branch:
+    def _unprovision(repo, path, branch, created_worktree, created_branch):
+        """Undo only what this spawn created, before any work landed in it."""
+        if created_worktree:
+            git(repo, "worktree", "remove", str(path))
+        if created_branch and branch:
             git(repo, "branch", "-d", branch)
 
     def assign(self, task, role, brief):
@@ -295,8 +305,11 @@ class Team:
             status = self.rex.wait_status(record["session"], worker["block"], settled, timeout)
         except Timeout:
             return {"task": task, "role": role, "state": "timeout", "delivered": False, "report": dispatch["report"]}
-        delivered, reason = self._delivery(dispatch)
         state = status.get("state")
+        if state == "done":
+            delivered, reason = self._delivery(dispatch)
+        else:
+            delivered, reason = False, "worker reported {!r}, not done".format(state)
         if state == "blocked":
             outcome = OUTCOME_LABELS["blocked"] + (": " + status["kind"] if status.get("kind") else "")
         elif state == "error":
@@ -326,20 +339,25 @@ class Team:
             self._worker(record, name)
         live = self.rex.live_blocks(record["session"])
         repo = Path(record["repo"])
-        closed, removed, kept = [], [], []
+        closed, removed, kept, leftover = [], [], [], []
         for name in roles:
             worker = record["workers"][name]
             if worker["block"] in live:
                 self.rex.close(record["session"], worker["block"])
             if worker.get("branch") is None and Path(worker["worktree"]).exists():
-                git(repo, "worktree", "remove", worker["worktree"])
-                removed.append(worker["worktree"])
+                # A read-only checkout is disposable by contract; tests may leave
+                # untracked output in it. A failed removal is reported, never fatal.
+                try:
+                    git(repo, "worktree", "remove", "--force", worker["worktree"])
+                    removed.append(worker["worktree"])
+                except TeamError as exc:
+                    leftover.append({"worktree": worker["worktree"], "error": exc.message})
             elif worker.get("branch") is not None:
                 kept.append(worker["worktree"])
             del record["workers"][name]
             self.store.save(record)
             closed.append(name)
-        return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept}
+        return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept, "worktrees_left": leftover}
 
     def _label(self, record, role, suffix=None):
         """Name the worker's tab `<role> · <agent>[ · <suffix>]` (state-schema.md
