@@ -648,8 +648,13 @@ class Adapter:
             raise AdapterError("process_gone", "the foreground process of pane {} exited or could not be described while it was read — read the pane again".format(pane))
         found = agent_kind(block)
         entry = {"pid": fg["pid"], "name": found[0] if found else (fg.get("name") or basename(fg.get("argv0")))}
-        if detail["argv"]:
-            entry["argv"] = detail["argv"]
+        argv = detail["argv"]
+        # An agent run by an interpreter (`node …/codex`) is reported from its
+        # own executable, as Herdr names it: the core checks argv[0] is the kind.
+        if found and argv and len(argv) > 1 and basename(argv[0]) in INTERPRETERS and basename(argv[1]) == found[0]:
+            argv = argv[1:]
+        if argv:
+            entry["argv"] = argv
         return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": detail["ppid"], "foreground_processes": [entry]}}
 
     def pane_rename(self, args):

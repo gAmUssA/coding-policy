@@ -421,7 +421,7 @@ class PaneTest(unittest.TestCase):
         snapshot["blocks"][1]["process"]["child"]["pid"] = 199
         out = run(FakeRex(snapshot, ps={"201": "200 node /opt/homebrew/bin/codex --yolo"}), "pane", "process-info", "--pane", CODEX)[1]
         self.assertEqual(result(out)["process_info"], {"pane_id": CODEX, "shell_pid": 200, "foreground_processes": [
-            {"pid": 201, "name": "codex", "argv": ["node", "/opt/homebrew/bin/codex", "--yolo"]}]})
+            {"pid": 201, "name": "codex", "argv": ["/opt/homebrew/bin/codex", "--yolo"]}]})
 
     def test_unquotable_process_arguments_do_not_crash(self):
         code, out, err = run(FakeRex(ps={"101": "100 claude --append-system-prompt don't"}), "pane", "process-info", "--pane", CLAUDE)

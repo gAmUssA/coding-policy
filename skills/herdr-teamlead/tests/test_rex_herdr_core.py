@@ -24,7 +24,7 @@ from teamlead.errors import HerdrError
 from teamlead.herdr import HerdrClient, default_backend
 
 from tests.fakes import FakeCompleted
-from tests.test_rex_herdr import CLAUDE, SESSION, SHELL, Clock, FakeRex, agent_process, record, shell_process, team_snapshot
+from tests.test_rex_herdr import CLAUDE, CODEX, SESSION, SHELL, Clock, FakeRex, agent_process, record, shell_process, team_snapshot
 
 
 def client_over(rex, backend="rex"):
@@ -61,6 +61,15 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(proof["pane_id"], SHELL)
         typed = [w[2] for w in rex.writes if w[0] == "text"][0]
         self.assertTrue(typed.startswith("claude ") and "--model opus-5 --effort high" in typed, typed)
+
+
+class VerifyRunningTest(unittest.TestCase):
+    def test_codex_under_node_passes_the_pre_dispatch_argv_check(self):
+        # npm installs Codex as a node script; `ps` shows the interpreter first.
+        rex = FakeRex(ps={"201": "200 node /opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox -m gpt-6-astra -c model_reasoning_effort=high"})
+        agent = SimpleNamespace(name="codex", kind="codex", launch_args=[])
+        proof = launch.verify_running(client_over(rex), agent, CODEX, {"model": "gpt-6-astra", "effort": "high"})
+        self.assertEqual((proof["pid"], proof["pane_id"], proof["source"]), (201, CODEX, "process_argv"))
 
 
 class ReadTest(unittest.TestCase):
