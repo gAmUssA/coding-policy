@@ -20,6 +20,7 @@ import itertools
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -233,6 +234,31 @@ class SpawnTest(Fixture):
         self.assertEqual((code, err["error"]["code"]), (1, "not_ready"))
         self.assertIn("startup dialog", err["error"]["message"])
         self.assertIn("team status --task t1", err["error"]["message"])
+
+    def test_an_agent_that_errors_at_startup_is_named_not_left_to_time_out(self):
+        fake = FakeRex()
+        self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
+        original = fake.runner
+
+        def errors(argv):
+            done = original(argv)
+            if argv[1] == "run":
+                fake.statuses[json.loads(done.stdout)["block_ids"][0]] = status("error")
+            return done
+
+        fake.runner = errors
+        code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude", "--timeout", "5")
+        self.assertEqual((code, err["error"]["code"]), (1, "agent_failed"))
+        self.assertIn("team down --task t1 --role dev", err["error"]["message"])
+
+    def test_the_reviewer_must_be_another_agent_kind_than_the_developer(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "claude", "--read-only")
+        self.assertEqual((code, err["error"]["code"]), (1, "not_independent"))
+        self.assertNotIn("review", self.state()["workers"])
+        code, out, _ = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "grok", "--read-only")
+        self.assertEqual((code, out["branch"]), (0, None))
 
     def test_repeating_a_spawn_reconnects_to_the_live_worker(self):
         fake = FakeRex()
@@ -648,6 +674,20 @@ class StateTest(Fixture):
     def test_usage_errors_are_the_json_envelope(self):
         code, _, err = self.cli(FakeRex(), "spawn", "--task", "t1")
         self.assertEqual((code, err["error"]["code"]), (2, "usage_error"))
+
+
+class EntryPointTest(unittest.TestCase):
+    def test_python_m_rexlead_keeps_the_json_and_exit_code_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "REX_TEAM_HOME": str(Path(tmp) / "state")}
+            skill = Path(__file__).resolve().parent.parent
+            done = subprocess.run([sys.executable, "-m", "rexlead", "status", "--task", "t1"], cwd=skill, env=env,
+                                  capture_output=True, text=True, check=False)
+            self.assertEqual((done.returncode, done.stdout), (1, ""))
+            self.assertEqual(json.loads(done.stderr)["error"]["code"], "no_task")
+            done = subprocess.run([sys.executable, "-m", "rexlead", "status"], cwd=skill, env=env,
+                                  capture_output=True, text=True, check=False)
+            self.assertEqual((done.returncode, json.loads(done.stderr)["error"]["code"]), (2, "usage_error"))
 
 
 class RexClientTest(unittest.TestCase):

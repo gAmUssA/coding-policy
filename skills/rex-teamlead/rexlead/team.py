@@ -230,6 +230,9 @@ class Team:
                 return {"task": task, "role": role, "block": held["block"], "worktree": held["worktree"], "branch": held.get("branch"),
                         "commit": held["commit"], "state": (self.rex.status(record["session"], held["block"]) or {}).get("state"), "reused": True}
             raise TeamError("role_taken", "task {} has a {} {} worker whose tab is gone or differs — `team down --task {} --role {}`, then spawn again".format(task, held["agent"], role, task, role))
+        writers = {w["agent"] for w in record["workers"].values() if w.get("branch")}
+        if read_only and agent in writers:
+            raise TeamError("not_independent", "the developer is a {} agent; spawn the reviewer with a different `--agent` ({})".format(agent, ", ".join(sorted(set(AGENTS) - writers))))
         repo = Path(record["repo"])
         path = self.worktrees / repo.name / "{}-{}".format(task, role)
         commit = git(repo, "rev-parse", ref or record["base"])
@@ -253,9 +256,11 @@ class Team:
         self.store.save(record)
         tab = self._label(record, role)
         try:
-            ready = self.rex.wait_status(record["session"], block, lambda r: bool(r) and r.get("state") in READY, timeout)
+            ready = self.rex.wait_status(record["session"], block, lambda r: bool(r) and r.get("state") in READY + ("error",), timeout)
         except Timeout:
             raise TeamError("not_ready", "{} in tab {} reported no ready prompt within {}s — answer its startup dialog there (trust the repository once), then `team status --task {}` shows it idle".format(agent, label, timeout, task)) from None
+        if ready.get("state") == "error":
+            raise TeamError("agent_failed", "{} in tab {} failed at startup — read the error there and fix the agent (login, install, flags), then `team down --task {} --role {}` and spawn again".format(agent, label, task, role))
         return {"task": task, "role": role, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "state": ready.get("state"),
                 "reused": False, **tab}
 

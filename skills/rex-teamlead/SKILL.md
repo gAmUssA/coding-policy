@@ -17,9 +17,12 @@ Every command below runs `team`, the `rex-team.sh` launcher; its header and
 `skills/rex-teamlead/rexlead/team.py` carry the contract: one JSON object on
 stdout, `{"error":{"code","message"}}` on stderr, exit 0, 1 or 2. Worker state
 and delivery come only from the command's JSON, never from reading a tab. The
-commands name the session, tabs, panes, branches and worktrees as
-`skills/rex-teamlead/state-schema.md` Naming lists; use those names when
-pointing the operator at a tab.
+commands name the session, tabs, panes, branches and worktrees as the Naming
+section lists; use those names when pointing the operator at a tab:
+
+```text
+skills/rex-teamlead/state-schema.md
+```
 
 | Command | Reads | stdout fields | Side effects |
 | --- | --- | --- | --- |
@@ -33,8 +36,8 @@ pointing the operator at a tab.
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
 Exit 0 is success; exit 1 carries an error `code` such as `not_ready`,
-`worker_busy`, `role_taken`, `worktree_conflict`, `rex_failed`, `git_failed`
-or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
+`agent_failed`, `not_independent`, `worker_busy`, `role_taken`,
+`worktree_conflict`, `rex_failed`, `git_failed` or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
 Every tab label is cosmetic: `tab_label_error` reports a label Rex refused.
 
 ## Step 1 — Confirm the Round
@@ -69,6 +72,9 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn 
 `not_ready` means a startup dialog the agent does not report. Tell the
 operator which tab (`dev · <agent>`) waits on them, then run this step again:
 a repeated `spawn` reconnects to the same worker and reports its `state`.
+`agent_failed` means the agent itself errored at startup; relay its tab to the
+operator, and once they fix the agent, run `down --task <task> --role dev` and
+this step again.
 Once `state` is `idle` or `done`, proceed immediately to Step 4.
 
 ## Step 4 — Write the Developer Brief
@@ -124,7 +130,8 @@ checkout of the candidate:
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role <review-role> --agent <other-kind> --ref <candidate-sha> --read-only
 ```
 
-Handle `not_ready` as in Step 3. Once `state` is `idle` or `done`, proceed
+Handle `not_ready` and `agent_failed` as in Step 3. `not_independent` means
+the reviewer's agent matches the developer's; spawn again with another kind. Once `state` is `idle` or `done`, proceed
 immediately to Step 9.
 
 ## Step 9 — Write the Reviewer Brief
