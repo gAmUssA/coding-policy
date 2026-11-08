@@ -74,7 +74,7 @@ class FakeRex:
     """The `rex` and `ps` executables. Snapshots are served from a queue (the
     last one repeats); `do` label scripts and terminal writes are recorded."""
 
-    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None, ps_result=None, raises=None, fail_verb=None, ps_misses=0):
+    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None, ps_result=None, raises=None, fail_verb=None, ps_misses=0, fail_script=None):
         self.snapshots = [copy.deepcopy(s) for s in snapshots] or [team_snapshot()]
         self.screens = screens or {}
         self.ps = ps or {}
@@ -82,7 +82,7 @@ class FakeRex:
         self.raises = raises
         self.fail = fail
         self.fail_verb = fail_verb
-        self.fail_script = None
+        self.fail_script = fail_script
         #: The next N `ps` calls omit every non-shell pid, as if each agent
         #: exited between Rex's read and `ps`.
         self.ps_misses = ps_misses
@@ -555,9 +555,8 @@ class EnvelopeTest(unittest.TestCase):
         echoed = "correct-horse-battery-staple"  # a secret no redaction pattern knows
         for argv, verb in ((("pane", "send-text", SHELL, echoed), "send"), (("agent", "prompt", "claude", echoed), "api"),
                            (("agent", "rename", "claude", "lead"), "do")):
-            rex = FakeRex(fail="Error: rejected " + echoed, fail_verb=verb)
-            if verb == "do":
-                rex.fail_script = "set_block_label"
+            rex = FakeRex(fail="Error: rejected " + echoed, fail_verb=verb,
+                          fail_script="set_block_label" if verb == "do" else None)
             code, _, err = run(rex, *argv)
             self.assertEqual((code, error_code(err)), (1, "rex_failed"), argv)
             self.assertNotIn(echoed, err, argv)
