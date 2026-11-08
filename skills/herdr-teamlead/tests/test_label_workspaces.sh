@@ -192,6 +192,17 @@ JSON
   if [[ $RC -eq 1 && -z "$OUT" && ! -s "$TMP/argv.rex" ]] && grep -q "rex-team.sh" "$TMP/e9"; then
     pass; else fail "rex team round: expected exit 1 and no herdr call, got RC=$RC OUT=$OUT"; fi
 
+  # 10. An unknown backend is refused before any herdr call; `herdr` labels.
+  : > "$TMP/argv.bad" || die "could not create $TMP/argv.bad"
+  OUT="$(env HERDR_ENV=1 HERDR_WORKSPACE_ID=w1 HERDR_BIN="$FAKE" FAKE_ARGV_FILE="$TMP/argv.bad" TEAMLEAD_BACKEND=tmux \
+    bash "$SCRIPT" lead 2>"$TMP/e10")"; RC=$?
+  if [[ $RC -eq 1 && -z "$OUT" && ! -s "$TMP/argv.bad" ]] && grep -q "is not a backend" "$TMP/e10"; then
+    pass; else fail "unknown backend: expected exit 1 and no herdr call, got RC=$RC OUT=$OUT"; fi
+  ARGS=(lead)
+  run TEAMLEAD_BACKEND=herdr
+  if [[ $RC -eq 0 ]] && grep -q "workspace rename" "$ARGV"; then
+    pass; else fail "explicit herdr backend: expected the labels to land, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
   echo "PASSED: all ${PASS} checks" >&2

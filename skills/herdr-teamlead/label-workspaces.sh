@@ -24,6 +24,9 @@
 #           3 at least one rename failed — the JSON says which. Labels are
 #             cosmetic, so a failure is reported rather than fatal to a round.
 #   env   : HERDR_BIN overrides the herdr binary; the tests point it at a fake.
+#           TEAMLEAD_BACKEND unset or `herdr` labels; `rex` refuses (one Rex
+#           session holds the team and block labels are agent names); any
+#           other value is refused, as teamlead.herdr.default_backend does.
 #
 # Idempotent: a name already in place is reported `unchanged` and nothing is
 # sent (`rules/file-hygiene.md` Idempotency).
@@ -79,10 +82,17 @@ main() {
   fi
   # Under rex-team.sh the team shares one Rex session and an agent's name is
   # its block label, so labelling would overwrite every worker's name.
-  if [[ "${TEAMLEAD_BACKEND:-}" == "rex" ]]; then
-    warn "a Rex team round keeps every agent in one session and names each agent by its block label — skip layout labelling under rex-team.sh; name workers with \`agent rename\` instead"
-    return 1
-  fi
+  case "${TEAMLEAD_BACKEND:-herdr}" in
+    herdr) ;;
+    rex)
+      warn "a Rex team round keeps every agent in one session and names each agent by its block label — skip layout labelling under rex-team.sh; name workers with \`agent rename\` instead"
+      return 1
+      ;;
+    *)
+      warn "TEAMLEAD_BACKEND='${TEAMLEAD_BACKEND}' is not a backend — set it to \`herdr\` or \`rex\`, or unset it"
+      return 1
+      ;;
+  esac
   local dep
   for dep in "$HERDR_BIN" jq; do
     if ! command -v "$dep" >/dev/null 2>&1; then
