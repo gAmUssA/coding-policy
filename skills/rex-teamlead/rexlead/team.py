@@ -223,10 +223,48 @@ def signal_name(number):
         return str(number)
 
 
-def run_check(command, cwd, log, timeout):
+#: Environment variables whose values are redacted from check logs: a name
+#: segment that marks a credential (GITHUB_TOKEN, OPENAI_API_KEY, DB_PASSWORD).
+SECRET_ENV_NAME = re.compile(r"(?i)(?:^|_)(?:token|secret|password|passwd|api_?key|private_?key|access_?key|credentials?)(?:$|_)")
+
+#: Credential-shaped values redacted from check logs whatever printed them.
+SECRET_VALUE = re.compile(
+    r"AIza[0-9A-Za-z_-]{20,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z]{32,}"
+    r"|AKIA[0-9A-Z]{16}|gh[pousr]_[0-9A-Za-z]{30,}|xox[abprs]-[0-9A-Za-z-]{20,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"
+    r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}[A-Za-z0-9._-]*")
+
+#: Shorter environment values are skipped so ordinary words are never redacted.
+SECRET_MIN_LENGTH = 8
+
+REDACTED = "[REDACTED]"
+
+
+def redact_log(log, env):
+    """Rewrite `log` with secret environment values and credential-shaped
+    strings replaced by REDACTED, so a check's output never keeps a secret."""
+    text = Path(log).read_bytes().decode("utf-8", "surrogateescape")
+    values = sorted({value for name, value in env.items()
+                     if SECRET_ENV_NAME.search(name) and len(value) >= SECRET_MIN_LENGTH}, key=len, reverse=True)
+    clean = text
+    for value in values:
+        clean = clean.replace(value, REDACTED)
+    clean = SECRET_VALUE.sub(REDACTED, clean)
+    if clean != text:
+        Path(log).write_bytes(clean.encode("utf-8", "surrogateescape"))
+
+
+def run_check(command, cwd, log, timeout, env=None):
     """Run one check command with `bash -c` in `cwd`: no stdin, combined output
     to `log`, its whole process group killed at `timeout` seconds. The run is
-    classified by how the process ended; the caller checks the worktree."""
+    classified by how the process ended; the caller checks the worktree. The
+    log is redacted (`redact_log`) before the result is returned."""
+    result = _run_check(command, cwd, log, timeout)
+    redact_log(log, os.environ if env is None else env)
+    return result
+
+
+def _run_check(command, cwd, log, timeout):
     started = time.monotonic()
 
     def ran(code, verdict, reason):

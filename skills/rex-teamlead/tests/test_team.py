@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any
 
@@ -586,6 +587,33 @@ class CheckTest(Fixture):
         recorded = {"candidate": tip, "verdict": "pass", "checked_at": "2026-11-07T12:00:00+00:00"}
         self.assertEqual(self.state()["workers"]["dev"]["check"], recorded)
         self.assertEqual(self.cli(fake, "status", "--task", "t1")[1]["workers"]["dev"]["check"], recorded)
+
+    def test_secrets_in_a_runs_output_are_redacted_from_its_log(self):
+        fake = FakeRex()
+        self.committed(fake)
+        # Fixture values built at runtime, so no credential-shaped literal sits in the source.
+        token = "fixture-token-value-0123"
+        github = "gh" + "p_" + "A" * 36
+        key = "-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n-----END " + "RSA PRIVATE KEY-----"
+        command = ('printf "out %s\\n" "$REX_FIXTURE_API_TOKEN"; printf "err %s\\n" "$REX_FIXTURE_API_TOKEN" >&2; '
+                   'printf "%s\\n" "$REX_FIXTURE_GH" "$REX_FIXTURE_KEY" "kept words"')
+        env = {"REX_FIXTURE_API_TOKEN": token, "REX_FIXTURE_GH": github, "REX_FIXTURE_KEY": key}
+        with mock.patch.dict(os.environ, env):
+            out = self.check(fake, command)[1]
+        log = Path(out["runs"][0]["log"]).read_text()
+        for secret in (token, github, "MIIfixture"):
+            self.assertNotIn(secret, log)
+        self.assertEqual(log.count("[REDACTED]"), 4)
+        self.assertIn("out [REDACTED]\n", log)
+        self.assertIn("err [REDACTED]\n", log)
+        self.assertIn("kept words\n", log)
+
+    def test_a_log_without_secrets_is_left_as_written(self):
+        fake = FakeRex()
+        self.committed(fake)
+        with mock.patch.dict(os.environ, {"REX_FIXTURE_API_TOKEN": "fixture-token-value-0123", "REX_FIXTURE_NAME": "fixture-name-value"}):
+            out = self.check(fake, 'printf "%s\\n" "$REX_FIXTURE_NAME" "short sk-1 AKIA"')[1]
+        self.assertEqual(Path(out["runs"][0]["log"]).read_text(), "fixture-name-value\nshort sk-1 AKIA\n")
 
     def test_the_command_reads_no_stdin(self):
         fake = FakeRex()
