@@ -62,9 +62,15 @@ t_short_field_in_prose_passes() {
   rm -rf "$dir"
 }
 
-t_missing_files_pass() {
-  local rc=0; bash "$SCRIPT" "/nope/auth.json" "/nope/out.json" >/dev/null 2>&1 || rc=$?
-  if [[ $rc -eq 0 ]]; then ok "missing files treated as clean"; else bad "missing files treated as clean (rc=$rc)"; fi
+t_missing_files_fail_closed() {
+  local dir rc; dir=$(with_files '{"summary":"ok","findings":[]}')
+  rc=0; bash "$SCRIPT" "$dir/absent-auth.json" "$dir/absent-out.json" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then ok "missing files -> exit 2 (fail closed)"; else bad "missing files -> exit 2 (rc=$rc)"; fi
+  rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/absent-out.json" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then ok "missing review output -> exit 2"; else bad "missing review output -> exit 2 (rc=$rc)"; fi
+  rc=0; bash "$SCRIPT" "$dir/absent-auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then ok "missing auth file -> exit 2"; else bad "missing auth file -> exit 2 (rc=$rc)"; fi
+  rm -rf "$dir"
 }
 
 t_bad_args() {
@@ -77,7 +83,7 @@ t_clean_passes
 t_leaked_access_token_fails
 t_leaked_refresh_token_fails
 t_short_field_in_prose_passes
-t_missing_files_pass
+t_missing_files_fail_closed
 t_bad_args
 echo "== summary: ${pass} passed, ${fail} failed =="
 echo "test-summary: passed=${pass} failed=${fail} token=${SUMMARY_TOKEN}"

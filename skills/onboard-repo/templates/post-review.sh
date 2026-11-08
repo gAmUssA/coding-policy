@@ -84,13 +84,30 @@ main() {
     exit 1
   fi
 
+  # Valid JSON is not a verdict: `{}` would default to zero findings and APPROVE.
+  # Require the schema's shape (schema.json), including the summary's load
+  # indicator with a positive count and a named source — without it nothing
+  # shows the policy was read. The count and path are not matched against
+  # RULES_DIR: the model's wording of both varies on genuine reviews.
+  if ! jq -e '(.summary | type == "string" and test("^Policy loaded: [1-9][0-9]* rule files from \\S"))
+              and (.findings | type == "array")
+              and all(.findings[]; type == "object")' "$result" >/dev/null; then
+    echo "error: ${result} is not a review result: it needs a .summary starting 'Policy loaded: N rule files from <dir>' with N >= 1 and an array of finding objects in .findings; refusing to post. Inspect the file and the review step logs" >&2
+    exit 1
+  fi
+
   local summary findings_count blocking_count advisory_count
   summary=$(jq -r '.summary // ""' "$result")
   findings_count=$(jq '(.findings // []) | length' "$result")
-  # A finding with no severity (older reviewer that predates the severity field,
-  # or a malformed entry) is treated as blocking — fail safe: never let an
-  # unclassified finding slip through as non-gating.
-  blocking_count=$(jq '[(.findings // [])[] | select((.severity // "blocking") != "advisory")] | length' "$result")
+  # Only a well-formed advisory finding (every schema field present and typed,
+  # line a 1-indexed integer) is non-gating. A missing or unknown severity, or
+  # any malformed field, counts as blocking — fail safe: never let an
+  # unclassified finding slip through. One predicate drives the count and both
+  # rendered sections, so the body lists every finding under its real tier.
+  local advisory_def='def is_advisory: .severity == "advisory"
+    and (.path | type == "string") and (.rule | type == "string") and (.message | type == "string")
+    and (.line | type == "number" and . == floor and . >= 1);'
+  blocking_count=$(jq "${advisory_def} [.findings[] | select(is_advisory | not)] | length" "$result")
   advisory_count=$(( findings_count - blocking_count ))
 
   # Derive the event from severity (rules/review-severity.md), never a model verdict.
@@ -105,11 +122,11 @@ main() {
   local body blocking_md advisory_md
   body="${REVIEW_LANE_MARKER}"$'\n'"${summary}"
   if (( blocking_count > 0 )); then
-    blocking_md=$(jq -r '.findings[] | select((.severity // "blocking") != "advisory") | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
+    blocking_md=$(jq -r "${advisory_def}"' .findings[] | select(is_advisory | not) | "- `\(.path // "?"):\(.line // "?")` — **\(.rule // "?")** — \(.message // "(malformed finding: \(tojson))")"' "$result")
     body="${body}"$'\n\n'"## Blocking findings (gate the merge)"$'\n'"${blocking_md}"
   fi
   if (( advisory_count > 0 )); then
-    advisory_md=$(jq -r '.findings[] | select((.severity // "blocking") == "advisory") | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
+    advisory_md=$(jq -r "${advisory_def}"' .findings[] | select(is_advisory) | "- `\(.path):\(.line)` — **\(.rule)** — \(.message)"' "$result")
     body="${body}"$'\n\n'"## Advisory findings (do not gate)"$'\n'"${advisory_md}"
   fi
 

@@ -41,8 +41,10 @@ t_skips_short_fields() {
 }
 
 t_missing_file_ok() {
-  local rc=0 out; out=$(bash "$SCRIPT" /nope/auth.json) || rc=$?
+  local dir; dir=$(mktemp -d) || { bad "missing file: mktemp -d failed"; return; }
+  local rc=0 out; out=$(bash "$SCRIPT" "$dir/absent-auth.json") || rc=$?
   if [[ $rc -eq 0 && -z "$out" ]]; then ok "missing file -> exit 0, no output"; else bad "missing file -> exit 0, no output (rc=$rc out='$out')"; fi
+  rm -rf "$dir"
 }
 
 t_bad_args() {
