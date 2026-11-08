@@ -172,6 +172,31 @@ JSON
   rm -rf "$dir"
 }
 
+# --- a malformed "advisory" finding gates: only a well-formed advisory is non-gating ---
+t_malformed_advisory_blocks() {
+  local dir; dir=$(mktemp -d) || { bad "malformed-advisory: mktemp -d failed"; return; }
+  GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
+  printf '%s' '{"summary":"Policy loaded: 23 rule files from rules/. One nit.",
+ "findings":[{"severity":"advisory"}]}' > "$dir/final.json" || fatal "cannot write $dir/final.json"
+  local out rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
+  [[ $rc -eq 0 ]]                                          || { bad "malformed-advisory: exit 0 (rc=$rc)"; rm -rf "$dir"; return; }
+  [[ "$(jq -r .event <<<"$out")" == "REQUEST_CHANGES" ]] || { bad "malformed-advisory: event REQUEST_CHANGES (got $out)"; rm -rf "$dir"; return; }
+  ok "advisory finding missing schema fields -> blocking (REQUEST_CHANGES)"
+  rm -rf "$dir"
+}
+
+# --- a consumer's RULES_DIR (.coding-policy/rules) in the indicator is accepted ---
+t_consumer_rules_dir_accepted() {
+  local dir; dir=$(mktemp -d) || { bad "consumer-dir: mktemp -d failed"; return; }
+  GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
+  printf '%s' '{"summary":"Policy loaded: 29 rule files from .coding-policy/rules. Clean.","findings":[]}' > "$dir/final.json" \
+    || fatal "cannot write $dir/final.json"
+  local out rc=0; out=$(run_main owner repo 1 "$dir/final.json" 2>/dev/null) || rc=$?
+  if [[ $rc -eq 0 && "$(jq -r .event <<<"$out")" == "APPROVE" ]]; then ok "consumer RULES_DIR indicator -> APPROVE"
+  else bad "consumer RULES_DIR indicator -> APPROVE (rc=$rc, out=$out)"; fi
+  rm -rf "$dir"
+}
+
 # --- missing result file -> exit 1 ---
 t_missing_file() {
   local rc=0; run_main owner repo 1 "/nonexistent/final.json" >/dev/null 2>&1 || rc=$?
@@ -192,7 +217,7 @@ t_not_a_result() {
   local dir payload rc
   dir=$(mktemp -d) || { bad "not_a_result: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  for payload in '{}' '{"summary":"x","findings":[]}' '{"summary":"x"}' '{"findings":[]}' '{"summary":"x","findings":{}}' '{"summary":"x","findings":["blocking"]}' '[]'; do
+  for payload in '{}' '{"summary":"x","findings":[]}' '{"summary":"Policy loaded: 0 rule files from rules/.","findings":[]}' '{"summary":"Policy loaded: 3 rule files from ","findings":[]}' '{"summary":"x"}' '{"findings":[]}' '{"summary":"x","findings":{}}' '{"summary":"x","findings":["blocking"]}' '[]'; do
     printf '%s' "$payload" > "$dir/final.json" || fatal "cannot write $dir/final.json"
     : > "$GH_CAPTURE"
     rc=0; run_main owner repo 1 "$dir/final.json" >/dev/null 2>&1 || rc=$?
@@ -228,6 +253,8 @@ t_blocking
 t_advisory_only
 t_mixed
 t_missing_severity_blocks
+t_malformed_advisory_blocks
+t_consumer_rules_dir_accepted
 t_missing_file
 t_invalid_json
 t_not_a_result
