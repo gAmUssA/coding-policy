@@ -241,35 +241,62 @@ def exited_unreaped(pid, deadline):
         time.sleep(CHECK_POLL_SEC)
 
 
-def group_survivors(pgid):
-    """Pids of live processes in group `pgid` other than its leader `pgid`.
-    Zombies are ignored: `kill(-pgid, 0)` would count them. Raises OSError
-    when `ps` cannot list the processes."""
-    done = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+#: The process listing `check` reads: one `pid pgid stat` line per process.
+PS_COMMAND = ("ps", "-A", "-o", "pid=,pgid=,stat=")
+
+
+def process_table():
+    """`(pid, pgid, stat)` for every process PS_COMMAND lists. Raises OSError
+    when the listing cannot run, fails, or prints an unreadable line."""
+    done = subprocess.run(list(PS_COMMAND), stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     if done.returncode != 0:
-        raise OSError("`ps -A -o pid=,pgid=,stat=` exited {}: {}".format(done.returncode, done.stderr.strip()[:300]))
-    pids = []
+        raise OSError("`{}` exited {}: {}".format(" ".join(PS_COMMAND), done.returncode, done.stderr.strip()[:300]))
+    table = []
     for line in done.stdout.splitlines():
         fields = line.split()
         if len(fields) < 3 or not (fields[0].isdigit() and fields[1].isdigit()):
             raise OSError("`ps` printed an unreadable line: {!r}".format(line[:200]))
-        pid, group, stat = int(fields[0]), int(fields[1]), fields[2]
-        if group == pgid and pid != pgid and not stat.startswith("Z"):
-            pids.append(pid)
-    return pids
+        table.append((int(fields[0]), int(fields[1]), fields[2]))
+    return table
 
 
-def kill_group(pgid):
+def require_ps():
+    """Refuse a check when `ps` cannot list this process: without a listing,
+    background survivors go unseen."""
+    try:
+        table = process_table()
+    except OSError as exc:
+        raise TeamError("setup_error", "`ps` cannot list processes ({}) — install procps, or make `ps` available on PATH, then check again".format(exc)) from None
+    if not any(pid == os.getpid() for pid, _, _ in table):
+        raise TeamError("setup_error", "`{}` did not list this process ({}) — install procps, or make a `ps` that lists every process available on PATH, then check again".format(" ".join(PS_COMMAND), os.getpid()))
+
+
+def group_survivors(pgid):
+    """Pids of live processes in group `pgid` other than its leader `pgid`.
+    Zombies are ignored: `kill(-pgid, 0)` would count them. Raises OSError
+    when `ps` cannot list the processes."""
+    return [pid for pid, group, stat in process_table() if group == pgid and pid != pgid and not stat.startswith("Z")]
+
+
+def kill_group(pgid) -> "list[int] | None":
     """SIGKILL group `pgid` while its leader is unreaped, then wait up to
     CHECK_KILL_SETTLE_SEC for its other members to end. Returns the pids
-    still alive afterwards."""
+    still alive afterwards, or None when the listing failed and the
+    survivors are unknown; the kill is sent either way."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         return []  # the group ended before the kill
+    except PermissionError:
+        # macOS refuses to signal a group whose only member is the zombie
+        # leader; the listing below reports any member the kill missed.
+        pass
     deadline = time.monotonic() + CHECK_KILL_SETTLE_SEC
     while True:
-        alive = group_survivors(pgid)
+        try:
+            alive = group_survivors(pgid)
+        except OSError:
+            return None
         if not alive or time.monotonic() >= deadline:
             return alive
         time.sleep(CHECK_POLL_SEC)
@@ -303,9 +330,10 @@ def run_check(command, cwd, timeout):
     except OSError as exc:
         kill_group(proc.pid)
         proc.wait()
-        return ran(None, "invalid", "could not list the command's processes ({}) — check that `ps` runs on this machine".format(exc)), \
+        return ran(None, "invalid", "the process listing failed ({}); its process group was sent SIGKILL and any survivors are unknown — check that `ps` runs on this machine".format(exc)), \
             "not run: an earlier run's processes could not be listed"
-    stop, alive = None, []
+    stop: "str | None" = None
+    alive: "list[int] | None" = []
     if survivors:
         alive = kill_group(proc.pid)
         stop = "not run: an earlier run left background processes running"
@@ -314,8 +342,12 @@ def run_check(command, cwd, timeout):
     if code < 0:
         reasons.append("killed by signal {}".format(signal_name(-code)))
     if survivors:
-        reasons.append("left background processes running (killed): {}".format(" ".join(map(str, survivors)))
-                       + ("; still alive after SIGKILL: {}".format(" ".join(map(str, alive))) if alive else ""))
+        reason = "left background processes running (killed): {}".format(" ".join(map(str, survivors)))
+        if alive is None:
+            reason += "; the process listing failed after SIGKILL, so any still alive are unknown"
+        elif alive:
+            reason += "; still alive after SIGKILL: {}".format(" ".join(map(str, alive)))
+        reasons.append(reason)
     if reasons:
         return ran(code if code >= 0 else None, "invalid", "; ".join(reasons)), stop
     # Any non-zero exit is a failure, 126 and 127 included: the command
@@ -607,6 +639,7 @@ class Team:
         if timeout < 1:
             raise UsageError("--timeout must be at least 1 second")
         require_waitid()
+        require_ps()
         record = self.store.load(task)
         worker = self._worker(record, role)
         if not worker.get("branch"):

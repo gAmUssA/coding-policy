@@ -715,6 +715,60 @@ class CheckTest(Fixture):
         out = self.check(fake, "sleep 0.2 & wait")[1]
         self.assertEqual((out["verdict"], out["runs"][0]["reason"]), ("pass", "exit 0"))
 
+    def path_without_ps(self):
+        """The current PATH with every `ps` hidden: a directory holding one is
+        replaced by a mirror of symlinks to its other entries."""
+        dirs = []
+        for index, entry in enumerate(os.environ.get("PATH", "").split(os.pathsep)):
+            directory = Path(entry)
+            if not (directory / "ps").exists():
+                dirs.append(entry)
+                continue
+            mirror = Path(self.tmp.name) / "path-{}".format(index)
+            mirror.mkdir()
+            for child in directory.iterdir():
+                if child.name != "ps":
+                    (mirror / child.name).symlink_to(child)
+            dirs.append(str(mirror))
+        path = os.pathsep.join(dirs)
+        self.assertIsNone(shutil.which("ps", path=path))
+        self.assertIsNotNone(shutil.which("bash", path=path))
+        return path
+
+    def test_a_ps_that_cannot_list_is_a_setup_error_before_any_run(self):
+        fake = FakeRex()
+        self.committed(fake)
+        marker = Path(self.tmp.name) / "ran"
+        with mock.patch.dict(os.environ, {"PATH": self.path_without_ps()}):
+            code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "setup_error"))
+        self.assertIn("install procps, or make `ps` available on PATH", err["error"]["message"])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+        code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, out.get("verdict")), (0, "pass"), err)
+        self.assertTrue(marker.exists())
+
+    def test_a_process_listing_that_fails_mid_run_is_invalid_and_recorded(self):
+        fake = FakeRex()
+        self.committed(fake)
+        marker = Path(self.tmp.name) / "ran"
+        without_ps, preflight = self.path_without_ps(), teammod.require_ps
+
+        def preflight_then_lose_ps():
+            preflight()  # the real preflight passes with `ps` on PATH
+            os.environ["PATH"] = without_ps
+
+        with mock.patch.dict(os.environ), mock.patch.object(teammod, "require_ps", preflight_then_lose_ps):
+            code, out, err = self.check(fake, "true", "touch {}".format(marker))
+        self.assertEqual((code, out.get("verdict")), (0, "invalid"), err)
+        first, second = out["runs"]
+        self.assertEqual((first["exit"], first["verdict"]), (None, "invalid"))
+        self.assertIn("the process listing failed", first["reason"])
+        self.assertEqual((second["verdict"], second["reason"]), ("invalid", "not run: an earlier run's processes could not be listed"))
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
+
     def test_a_python_without_waitid_is_a_setup_error_before_any_run(self):
         fake = FakeRex()
         self.committed(fake)

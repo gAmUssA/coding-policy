@@ -37,6 +37,7 @@ The skill gates the reviewer on `pass`. `fail` returns to the developer with eac
 - No command output is kept: nothing a command prints is persisted, so there is no log to redact.
 - After the leader exits, it is waited for unreaped (`os.waitid` with `WNOWAIT`), so its process-group id cannot be reused. Any live, non-zombie member of the group left behind is `SIGKILL`ed with the group, the run is `invalid` and the remaining runs are not run. A Python without `os.waitid`, such as one before 3.13 on macOS, is refused with `setup_error`. A process that leaves the group with `setsid` is not seen.
 - `rex-team.sh` selects Python 3.13+ on macOS, where `os.waitid` first appeared in 3.13, and 3.11+ elsewhere.
+- Before any run, `check` refuses with `setup_error` unless `ps` lists its own process; a listing that fails mid-run still sends the group `SIGKILL` and makes the run `invalid` with its survivors unknown.
 - A timed-out command's whole process group is killed.
 - The clean-tree reads before and after the runs compare content against the candidate, never `git status`: `HEAD` is read into a temporary index in the checkout's own git directory, never in the worktree whatever `TMPDIR` says, and the working tree staged into it, so cached stat data, index flags and status settings cannot hide a change. The real index is never written. An untracked nested repository is a change, named by its path.
 - Paths ignored through `.gitignore`, `info/exclude` or `core.excludesFile` are exempt; clean filters and `core.autocrlf` stay honored.
