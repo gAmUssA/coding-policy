@@ -105,20 +105,21 @@ emit_notice() { # <notice-text>
 # worker writes the remote-tracking refs the lead's checkout shares, and a hook
 # that tells a worker to fast-forward `main` instructs it to break that rule.
 #
-# Herdr exports no lead/worker flag, so the role is derived from where the
-# session sits: the lead works in the shared checkout, every worker works in a
-# linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
+# Neither Herdr (`HERDR_ENV`) nor a Rex team round (`REX_TEAM_TASK`, set on
+# workers) exports a lead/worker flag the lead lacks, so the role is derived
+# from where the session sits: the lead works in the shared checkout, every
+# worker works in a linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
 # resolve differently; in the main checkout they are the same. Under
 # SESSION_START_MODE=portable tessl has stripped HERDR_ENV, so its absence
 # proves nothing and a linked worktree may be a worker's.
 #
-# Return: 0 = a Herdr worker; 1 = the lead or a standalone agent (the only
+# Return: 0 = a team worker; 1 = the lead or a standalone agent (the only
 # sessions that fetch); 2 = unproven — no fetch, no fast-forward. ROLE_WHY names
 # the cause for the notice when 2.
 herdr_role() {
   ROLE_WHY=""
   local portable=0
-  if [[ -z "${HERDR_ENV:-}" ]]; then
+  if [[ -z "${HERDR_ENV:-}" && -z "${REX_TEAM_TASK:-}" ]]; then
     [[ "${SESSION_START_MODE:-}" == portable ]] || return 1
     portable=1
   fi
@@ -349,12 +350,12 @@ main() {
   role=0
   herdr_role || role=$?
   if (( role == 2 )); then
-    emit_notice "Session-start status — git: \`${db}\` sync not verified, and nothing was fetched or fast-forwarded here — ${ROLE_WHY} If this is a Herdr worker session, do not sync the shared checkout (rules/agent-team-operation.md Workers); otherwise run \`git fetch origin\`, then \`git status\` (rules/sync-before-work.md)."
+    emit_notice "Session-start status — git: \`${db}\` sync not verified, and nothing was fetched or fast-forwarded here — ${ROLE_WHY} If this is a team worker session, do not sync the shared checkout (rules/agent-team-operation.md Workers); otherwise run \`git fetch origin\`, then \`git status\` (rules/sync-before-work.md)."
     return 0
   fi
   if (( role == 0 )); then
     drift_counts "$db" || return 0
-    emit_notice "Session-start status — git: local \`${db}\` is ${DRIFT_BEHIND} behind / ${DRIFT_AHEAD} ahead of \`origin/${db}\` as last fetched (a Herdr worker session does not fetch). This is a Herdr worker session: the shared checkout is the lead's (rules/agent-team-operation.md Workers). Do not sync it — work in this worktree and report the drift."
+    emit_notice "Session-start status — git: local \`${db}\` is ${DRIFT_BEHIND} behind / ${DRIFT_AHEAD} ahead of \`origin/${db}\` as last fetched (a team worker session does not fetch). This is a team worker session: the shared checkout is the lead's (rules/agent-team-operation.md Workers). Do not sync it — work in this worktree and report the drift."
     return 0
   fi
 
