@@ -599,12 +599,13 @@ store requires recovery of its history before rebinding or writing.
 - `binding`: `{schema_version, at, generation, identity, state_path}`, plus
   `source` at version 2. Version 1 binds Herdr's native session proof and has
   no `source`. Version 2 binds an identity the agent exported itself; `source`
-  is `claude-code:env`, Claude Code's `CLAUDE_CODE_SESSION_ID`, and only a Rex
-  team round (`TEAMLEAD_BACKEND=rex`) writes or accepts it
-  (`docs/adr/0016-rex-team-mode-through-herdr-environment.md`). The bump is
-  additive: every reader accepts both versions, version 1 is never migrated,
-  a version-1 row with `source` or a version-2 row with another `source` is
-  corrupt, and the Stop hook refuses a version-2 binding outside Rex.
+  is `claude-code:env`, Claude Code's `CLAUDE_CODE_SESSION_ID`, written only by
+  `supervision-bind` in a Rex team round (`TEAMLEAD_BACKEND=rex`;
+  `docs/adr/0016-rex-team-mode-through-herdr-environment.md`). The bump is
+  additive: every reader parses both versions whatever the backend, version 1
+  is never migrated, and a version-1 row with `source` or a version-2 row with
+  another `source` is corrupt. Only the Stop hook gates a version-2 binding on
+  the backend: it blocks one outside `TEAMLEAD_BACKEND=rex`.
   `generation` is a positive, increasing integer for native lead changes.
   `identity` contains `kind: id|path`, native `value`, canonical `cwd`,
   `herdr_env`, and `pane_id`. Path identities use an absolute native transcript
