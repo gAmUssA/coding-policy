@@ -554,7 +554,7 @@ class HerdrClient:
             result = None
         if not isinstance(result, dict) or result.get("type") != "pane_text" or not isinstance(result.get("text"), str):
             raise HerdrError(
-                "`{}` did not answer a pane_text result under TEAMLEAD_BACKEND=rex - point HERDR_BIN at skills/herdr-teamlead/rex-herdr.sh, or unset TEAMLEAD_BACKEND for Herdr.".format(format_argv(argv)),
+                "`{}` did not answer a pane_text result under TEAMLEAD_BACKEND=rex - set TEAMLEAD_HERDR_BIN (or pass --herdr-bin) to skills/herdr-teamlead/rex-herdr.sh, or unset TEAMLEAD_BACKEND for Herdr.".format(format_argv(argv)),
                 {"command": format_argv(argv)},
             )
         return result["text"]
