@@ -723,117 +723,103 @@ class CheckTest(Fixture):
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", name, cwd=source)
         return source
 
-    def with_ignored_submodule(self, fake, where, hide_untracked=False, nested=False):
-        """A candidate holding submodule `sub`, its changes hidden from a plain
-        `git status` by `submodule.sub.ignore=all` in `where`. `hide_untracked`
-        sets `status.showUntrackedFiles=no` inside `sub`; `nested` gives `sub`
-        a submodule `nest` that `sub`'s own `.gitmodules` ignores."""
+    def with_submodule(self, fake, ignore=None, nested=False):
+        """A candidate holding submodule `sub`, optionally ignored by
+        `submodule.sub.ignore=all` in `ignore` (`.gitmodules` or `config`), and
+        optionally holding a nested submodule `nest`."""
         self.committed(fake)
         source = self.source_repo("sub-source", **{"tracked.txt": "original\n"})
         if nested:
             inner = self.source_repo("nest-source", **{"n.txt": "nested\n"})
             git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(inner), "nest", cwd=source)
-            git("config", "-f", ".gitmodules", "submodule.nest.ignore", "all", cwd=source)
-            git("add", ".gitmodules", cwd=source)
             git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "nest", cwd=source)
         git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "sub", cwd=self.worktree)
         if nested:
             git("-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", "--recursive", cwd=self.worktree)
-        if where == ".gitmodules":
+        if ignore == ".gitmodules":
             git("config", "-f", ".gitmodules", "submodule.sub.ignore", "all", cwd=self.worktree)
             git("add", ".gitmodules", cwd=self.worktree)
-        else:
+        elif ignore == "config":
             git("config", "--local", "submodule.sub.ignore", "all", cwd=self.worktree)
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "add sub", cwd=self.worktree)
         self.tip = self.rev("HEAD")
-        hidden = subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True)
-        (self.worktree / "sub" / "tracked.txt").write_text("probe\n")
-        probe = subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True)
-        self.assertEqual((hidden.stdout, probe.stdout), ("", ""), "the fixture's ignore setting must hide the submodule")
-        git("checkout", "--", "tracked.txt", cwd=self.worktree / "sub")
-        if hide_untracked:
-            git("config", "--local", "status.showUntrackedFiles", "no", cwd=self.worktree / "sub")
-            (self.worktree / "sub" / "stray.txt").write_text("probe\n")
-            self.assertEqual(self.old_status(), "", "the submodule's own setting must hide its untracked file")
-            (self.worktree / "sub" / "stray.txt").unlink()
-        if nested:
-            (self.worktree / "sub" / "nest" / "n.txt").write_text("probe\n")
-            self.assertEqual(self.old_status(), "", "sub's .gitmodules must hide the nested change")
-            git("checkout", "--", "n.txt", cwd=self.worktree / "sub" / "nest")
-        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
-        # Forget that clean run, so a later refusal can prove it recorded nothing.
-        shutil.rmtree(Path(self.env["REX_TEAM_HOME"]) / "t1" / "checks")
-        record = self.state()
-        record["workers"]["dev"]["check"] = None
-        (Path(self.env["REX_TEAM_HOME"]) / "t1.json").write_text(json.dumps(record))
 
-    def submodule_modified_before_the_run_is_refused(self, where):
-        fake = FakeRex()
-        self.with_ignored_submodule(fake, where)
-        (self.worktree / "sub" / "tracked.txt").write_text("dirty\n")
-        self.refused(fake, "check_dirty")
-        git("checkout", "--", "tracked.txt", cwd=self.worktree / "sub")
-        self.assertEqual(self.check(fake, "grep -q original sub/tracked.txt")[1]["verdict"], "pass")
-        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
+    def unsupported_submodule(self, fake, *setup):
+        """Refused `check_unsupported`, naming `sub`, whatever `setup` did to it."""
+        for step in setup:
+            step()
+        self.refused(fake, "check_unsupported")
+        message = self.check(fake, "true")[2]["error"]["message"]
+        self.assertIn("submodules at sub", message)
+        self.assertIn("the check does not support submodules — run the checks yourself and continue the round by hand, or remove the submodule", message)
 
-    def run_that_modifies_a_submodule_is_invalid(self, where):
+    def test_a_candidate_with_a_submodule_is_unsupported_and_one_without_passes(self):
         fake = FakeRex()
-        self.with_ignored_submodule(fake, where)
-        out = self.check(fake, "printf 'dirty\\n' > sub/tracked.txt")[1]
+        self.with_submodule(fake)
+        self.unsupported_submodule(fake)
+        git("rm", "-q", "-f", "sub", cwd=self.worktree)
+        git("rm", "-q", "-f", ".gitmodules", cwd=self.worktree)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "drop sub", cwd=self.worktree)
+        self.tip = self.rev("HEAD")
+        self.accepted(fake)
+
+    def test_a_submodule_ignored_in_gitmodules_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake, ignore=".gitmodules")
+        self.unsupported_submodule(fake)
+
+    def test_a_submodule_ignored_in_repo_config_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake, ignore="config")
+        self.unsupported_submodule(fake)
+
+    def test_a_candidate_with_nested_submodules_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake, nested=True)
+        self.unsupported_submodule(fake)
+
+    def test_a_deinitialized_submodule_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake)
+        self.unsupported_submodule(fake, lambda: git("submodule", "deinit", "-q", "-f", "sub", cwd=self.worktree),
+                                   lambda: git("update-index", "--skip-worktree", "sub", cwd=self.worktree))
+
+    def test_a_regular_file_at_the_submodule_path_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake)
+        sub = self.worktree / "sub"
+        self.unsupported_submodule(fake, lambda: git("submodule", "deinit", "-q", "-f", "sub", cwd=self.worktree),
+                                   sub.rmdir, lambda: sub.write_text("replacement\n"))
+
+    def test_a_dangling_symlink_at_the_submodule_path_is_unsupported(self):
+        fake = FakeRex()
+        self.with_submodule(fake)
+        sub = self.worktree / "sub"
+        self.unsupported_submodule(fake, lambda: git("submodule", "deinit", "-q", "-f", "sub", cwd=self.worktree),
+                                   sub.rmdir, lambda: sub.symlink_to("missing-target"))
+
+    def nested_repository_run_is_invalid(self, command):
+        fake = FakeRex()
+        self.committed(fake)
+        source = self.source_repo("clone-source", **{"f.txt": "f\n"})
+        out = self.check(fake, command.format(source=source))[1]
         self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
-        self.assertIn("sub", out["runs"][0]["reason"])
+        self.assertIn("A nested/ (nested repository)", out["runs"][0]["reason"])
 
-    def test_a_submodule_ignored_in_gitmodules_and_modified_before_the_run_is_refused(self):
-        self.submodule_modified_before_the_run_is_refused(".gitmodules")
+    def test_a_run_that_inits_a_nested_repository_is_invalid(self):
+        self.nested_repository_run_is_invalid("git init -q nested")
 
-    def test_a_submodule_ignored_in_repo_config_and_modified_before_the_run_is_refused(self):
-        self.submodule_modified_before_the_run_is_refused("config")
+    def test_a_run_that_clones_a_repository_into_the_worktree_is_invalid(self):
+        self.nested_repository_run_is_invalid("git clone -q {source} nested")
 
-    def test_a_run_that_modifies_a_submodule_ignored_in_gitmodules_is_invalid(self):
-        self.run_that_modifies_a_submodule_is_invalid(".gitmodules")
-
-    def test_a_run_that_modifies_a_submodule_ignored_in_repo_config_is_invalid(self):
-        self.run_that_modifies_a_submodule_is_invalid("config")
-
-    def untracked_in_submodule_before_the_run_is_refused(self, where):
+    def test_a_nested_repository_before_the_run_is_refused_and_its_removal_passes(self):
         fake = FakeRex()
-        self.with_ignored_submodule(fake, where, hide_untracked=True)
-        (self.worktree / "sub" / "stray.txt").write_text("not in the candidate\n")
+        self.committed(fake)
+        git("init", "-q", "nested", cwd=self.worktree)
         self.refused(fake, "check_dirty")
-        (self.worktree / "sub" / "stray.txt").unlink()
-        self.assertEqual(self.check(fake, "test ! -e sub/stray.txt")[1]["verdict"], "pass")
-        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
-
-    def run_that_leaves_untracked_in_submodule_is_invalid(self, where):
-        fake = FakeRex()
-        self.with_ignored_submodule(fake, where, hide_untracked=True)
-        out = self.check(fake, "touch sub/stray.txt")[1]
-        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
-        self.assertIn("stray.txt", out["runs"][0]["reason"])
-
-    def test_an_untracked_file_in_a_submodule_hiding_untracked_files_is_refused_gitmodules(self):
-        self.untracked_in_submodule_before_the_run_is_refused(".gitmodules")
-
-    def test_an_untracked_file_in_a_submodule_hiding_untracked_files_is_refused_repo_config(self):
-        self.untracked_in_submodule_before_the_run_is_refused("config")
-
-    def test_a_run_leaving_an_untracked_file_in_a_submodule_hiding_them_is_invalid_gitmodules(self):
-        self.run_that_leaves_untracked_in_submodule_is_invalid(".gitmodules")
-
-    def test_a_run_leaving_an_untracked_file_in_a_submodule_hiding_them_is_invalid_repo_config(self):
-        self.run_that_leaves_untracked_in_submodule_is_invalid("config")
-
-    def test_a_change_in_a_nested_submodule_its_parent_ignores_is_refused(self):
-        fake = FakeRex()
-        self.with_ignored_submodule(fake, ".gitmodules", nested=True)
-        nested = self.worktree / "sub" / "nest"
-        (nested / "n.txt").write_text("dirty\n")
-        self.refused(fake, "check_dirty")
-        git("checkout", "--", "n.txt", cwd=nested)
-        (nested / "stray.txt").write_text("not in the candidate\n")
-        self.refused(fake, "check_dirty")
-        (nested / "stray.txt").unlink()
-        self.assertEqual(self.check(fake, "grep -q nested sub/nest/n.txt")[1]["verdict"], "pass")
+        self.assertIn("A nested/ (nested repository)", self.check(fake, "true")[2]["error"]["message"])
+        shutil.rmtree(self.worktree / "nested")
+        self.accepted(fake)
 
     def test_an_fsmonitor_that_reports_nothing_changed_is_not_trusted(self):
         fake = FakeRex()
@@ -915,16 +901,6 @@ class CheckTest(Fixture):
         self.assertEqual(flags, "h lib.py\n", "core.ignoreStat must set the assume-unchanged bit")
         self.accepted(fake)
 
-    def test_an_empty_deinitialized_submodule_marked_skip_worktree_is_accepted(self):
-        fake = FakeRex()
-        self.with_ignored_submodule(fake, "config")
-        git("submodule", "deinit", "-q", "-f", "sub", cwd=self.worktree)
-        git("update-index", "--skip-worktree", "sub", cwd=self.worktree)
-        self.assertEqual(list((self.worktree / "sub").iterdir()), [])
-        self.accepted(fake)
-        (self.worktree / "sub").rmdir()
-        self.accepted(fake)
-
     #: Changes to lib.py, each hidden from `git status` by its skip-worktree bit.
     FLAGGED = {"dangling symlink": "rm lib.py && ln -s missing-target lib.py",
                "modified file": "printf 'x = 9\\n' > lib.py",
@@ -971,7 +947,7 @@ class CheckTest(Fixture):
         git("sparse-checkout", "set", "--no-cone", "/lib.py", cwd=self.worktree)
         marker = Path(self.tmp.name) / "ran"
         code, out, err = self.check(fake, "touch {}".format(marker))
-        self.assertEqual((code, err["error"]["code"], out), (1, "check_dirty", {}))
+        self.assertEqual((code, err["error"]["code"], out), (1, "check_unsupported", {}))
         self.assertIn("sparse checkout: the check cannot see the candidate's full tree", err["error"]["message"])
         self.assertFalse(marker.exists())
         self.assertIsNone(self.state()["workers"]["dev"]["check"])
@@ -1240,6 +1216,27 @@ class EntryPointTest(unittest.TestCase):
             out = json.loads(done.stdout)
             self.assertEqual(out["verdict"], verdict)
             self.assertIn("tab_label_error", out)
+
+
+    def test_check_keeps_its_temporary_index_out_of_the_worktree_whatever_tmpdir_says(self):
+        fixture = Fixture("run")
+        fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        worktree = Path(fixture.spawned(FakeRex())["worktree"])
+        tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, capture_output=True, text=True, check=True).stdout.strip()
+        git_dir = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=worktree, capture_output=True, text=True, check=True).stdout.strip())
+        skill = Path(__file__).resolve().parent.parent
+        inside, outside = worktree / "scratch", Path(fixture.tmp.name) / "tmp-outside"
+        for tmpdir in (inside, outside):
+            with self.subTest(tmpdir=tmpdir.name):
+                tmpdir.mkdir()
+                env = {"PATH": os.environ.get("PATH", ""), "TMPDIR": str(tmpdir), **fixture.env}
+                done = subprocess.run([sys.executable, "-m", "rexlead", "--rex", "/nonexistent/rex", "check", "--task", "t1", "--role", "dev",
+                                       "--candidate", tip, "--run", "true"], cwd=skill, env=env, capture_output=True, text=True, check=False)
+                self.assertEqual((done.returncode, done.stderr), (0, ""))
+                self.assertEqual(json.loads(done.stdout)["verdict"], "pass")
+                self.assertEqual((list(tmpdir.iterdir()), sorted(git_dir.glob("rex-team-index-*"))), ([], []))
+                tmpdir.rmdir()
 
 
 class RexClientTest(unittest.TestCase):

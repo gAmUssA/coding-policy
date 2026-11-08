@@ -24,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -260,14 +261,23 @@ def sparse_checkout(root):
     return done.stdout.strip() == "true"
 
 
+def gitlinks(root):
+    """Paths of the submodules in `root`'s HEAD tree, never read from the index."""
+    return [entry.split("\t", 1)[1] for entry in filter(None, git(root, "ls-tree", "-r", "-z", "HEAD").split("\0"))
+            if entry.startswith("160000 ")]
+
+
 def content_diff(root):
-    """`root`'s working tree against its own HEAD, by content: HEAD is read into
-    a temporary index outside the worktree and the working tree staged into it,
-    so every tracked and untracked, non-ignored file is hashed through the
-    repository's filters. The real index and its cached stat data and flags
-    are never read or written."""
+    """`root`'s working tree against its own HEAD, by content, one line each:
+    HEAD is read into a temporary index in the checkout's own git directory,
+    which git never lists as worktree content, and the working tree staged
+    into it, so every tracked and untracked, non-ignored file is hashed
+    through the repository's filters. An untracked nested repository is
+    reported by path and kept out of the staging. The real index and its
+    cached stat data and flags are never read or written."""
     config = [arg for setting in CONTENT_CONFIG for arg in ("-c", setting)]
-    with tempfile.TemporaryDirectory(prefix="rex-team-index-") as tmp:
+    tmp = tempfile.mkdtemp(prefix="rex-team-index-", dir=git(root, "rev-parse", "--absolute-git-dir"))
+    try:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
 
         def run(*args):
@@ -277,33 +287,34 @@ def content_diff(root):
             return done.stdout
 
         run("read-tree", "HEAD")
-        run("add", "-A")
-        return run("diff", "--cached", "--name-status", "--no-renames", "--ignore-submodules=none", "-z", "HEAD")
+        # `ls-files --others` lists a nested repository as `<path>/`, never its files.
+        nested = [path for path in run("ls-files", "--others", "--exclude-standard", "-z").split("\0") if path.endswith("/")]
+        run("add", "-A", "--", ".", *[":(exclude,literal)" + path for path in nested])
+        fields = run("diff", "--cached", "--name-status", "--no-renames", "--ignore-submodules=none", "-z", "HEAD").split("\0")
+    finally:
+        shutil.rmtree(tmp)
+    return ["{} {}".format(status, path) for status, path in zip(fields[0::2], fields[1::2])] + \
+        ["A {} (nested repository)".format(path) for path in nested]
 
 
-def changes(worktree, prefix=""):
-    """Every difference between `worktree` and its candidate, recursing into
-    each populated submodule against that submodule's own HEAD, one line each;
+def changes(worktree):
+    """Every difference between `worktree` and its candidate, one line each;
     empty when clean. Ignored paths are exempt. A sparse checkout is reported:
-    its omitted paths cannot be compared. An unpopulated submodule, with no
-    directory or an empty one, is clean."""
-    root = Path(worktree) / prefix
-    where = "in {}: ".format(prefix) if prefix else ""
-    if sparse_checkout(root):
-        return where + SPARSE
-    gitlinks = [entry.split("\t", 1)[1] for entry in filter(None, git(root, "ls-tree", "-r", "-z", "HEAD").split("\0"))
-                if entry.startswith("160000 ")]
-    populated = {path for path in gitlinks if (root / path / ".git").exists()}
-    fields = content_diff(root).split("\0")
-    found = []
-    for status, path in zip(fields[0::2], fields[1::2]):
-        if path in gitlinks and path not in populated:
-            continue  # an unpopulated submodule is clean
-        found.append("{}{} {}".format(where, status, path))
-    for path in gitlinks:
-        if path in populated:
-            found.extend(filter(None, changes(worktree, prefix + path + "/").splitlines()))
-    return "\n".join(found)
+    its omitted paths cannot be compared."""
+    if sparse_checkout(worktree):
+        return SPARSE
+    return "\n".join(content_diff(worktree))
+
+
+def unsupported(worktree):
+    """Why `check` cannot vouch for this checkout, or None: a sparse checkout,
+    or a candidate holding submodules."""
+    if sparse_checkout(worktree):
+        return SPARSE
+    paths = gitlinks(worktree)
+    if paths:
+        return "the candidate has submodules at {}: the check does not support submodules".format(", ".join(paths))
+    return None
 
 
 def worktree_change(worktree, candidate):
@@ -532,8 +543,11 @@ class Team:
         head = git(worktree, "rev-parse", "HEAD")
         if head != candidate:
             raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
-        if sparse_checkout(worktree):
-            raise TeamError("check_dirty", "{}'s worktree {} is a {} — run the check in a full checkout of the candidate".format(role, worktree, SPARSE))
+        reason = unsupported(worktree)
+        if reason == SPARSE:
+            raise TeamError("check_unsupported", "{}'s worktree {} is a {} — run the check in a full checkout of the candidate".format(role, worktree, SPARSE))
+        if reason:
+            raise TeamError("check_unsupported", "{}'s worktree {}: {} — run the checks yourself and continue the round by hand, or remove the submodule".format(role, worktree, reason))
         dirty = changes(worktree)
         if dirty:
             raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(

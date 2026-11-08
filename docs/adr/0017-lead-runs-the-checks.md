@@ -33,8 +33,8 @@ The skill gates the reviewer on `pass`. `fail` returns to the developer with the
 - The lead picks the check commands at Step 1 and owns them; a wrong pick yields a wrong `pass`.
 - A check outlasts an agent lead's shell-tool limit at the default budget; the lead runs it with a longer limit or in the background.
 - Background processes a command leaves after a normal exit are not killed; a timed-out command's whole process group is.
-- The clean-tree reads before and after the runs compare content against the candidate, never `git status`: `HEAD` is read into a temporary index outside the worktree and the working tree staged into it, so cached stat data, index flags and status settings cannot hide a change. The real index is never written.
+- The clean-tree reads before and after the runs compare content against the candidate, never `git status`: `HEAD` is read into a temporary index in the checkout's own git directory, never in the worktree whatever `TMPDIR` says, and the working tree staged into it, so cached stat data, index flags and status settings cannot hide a change. The real index is never written. An untracked nested repository is a change, named by its path.
 - Paths ignored through `.gitignore`, `info/exclude` or `core.excludesFile` are exempt; clean filters and `core.autocrlf` stay honored.
-- A sparse checkout is refused: its omitted paths cannot be compared.
+- Submodules and sparse checkouts are unsupported: a candidate whose tree holds a gitlink, or a sparse checkout, is refused with `check_unsupported` before any run, and the lead takes it to the operator.
 - Every check hashes every non-ignored file twice. On this repository, 390 files, `check --run true` took about 0.22 s; a large tree pays proportionally more.
-- Later work: JUnit or other structured result parsing, known-red fixture controls proving a check can fail, and a findings ledger across rounds.
+- Later work: JUnit or other structured result parsing, known-red fixture controls proving a check can fail, a findings ledger across rounds, and submodule support.

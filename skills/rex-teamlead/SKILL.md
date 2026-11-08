@@ -31,14 +31,14 @@ skills/rex-teamlead/state-schema.md
 | `assign` | `--task`, `--role`, `--brief` | `report`, `nonce`, `tab_label` | Pastes the brief plus its delivery section into the worker |
 | `wait` | `--task`, `--role`, optional `--timeout` | `state`, `kind`, `delivered`, `reason`, `report`, `tab_label` | Relabels the tab with the outcome |
 | `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
-| `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `log`, `seconds`; `tab_label` | Runs each command in the writer's worktree, writes its log under `REX_TEAM_HOME`, records the check; exit 1 `check_mismatch` or `check_dirty` before any run |
+| `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `log`, `seconds`; `tab_label` | Runs each command in the writer's worktree, writes its log under `REX_TEAM_HOME`, records the check; exit 1 `check_mismatch`, `check_unsupported` or `check_dirty` before any run |
 | `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict`, `not_delivered`, or `candidate_mismatch` once the developer's branch moved |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered`, `check` | None |
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
 Exit 0 is success; exit 1 carries an error `code` such as `not_ready`,
 `agent_failed`, `not_independent`, `worker_busy`, `role_taken`,
-`worktree_conflict`, `check_mismatch`, `check_dirty`, `rex_failed`, `git_failed` or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
+`worktree_conflict`, `check_mismatch`, `check_unsupported`, `check_dirty`, `rex_failed`, `git_failed` or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
 Every tab label is cosmetic: `tab_label_error` reports a label Rex refused.
 
 ## Step 1 — Confirm the Round
@@ -143,6 +143,13 @@ Each command's budget is `--timeout`, default `DEFAULT_CHECK_TIMEOUT_SEC` in
 than the commands' total budget, or run it in the background.
 `check_mismatch` or `check_dirty` means the worktree is not a clean checkout
 of the candidate; send the developer one correction brief through Step 5.
+`check_unsupported` means the check cannot vouch for this checkout: a
+candidate with submodules, or a sparse checkout. It never goes to the
+developer as a correction:
+
+- Tell the operator the check cannot run on this candidate, quoting the `message`
+- Continue only on the operator's instruction
+
 Route on `verdict`:
 
 - `pass` — proceed immediately to Step 9
