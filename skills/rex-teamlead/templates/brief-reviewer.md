@@ -18,6 +18,6 @@ current directory is a read-only, detached checkout of candidate
 ## Report
 
 - `reviewed: <sha>` on its own line.
-- Each finding, marked `blocking` (changes behavior or breaks a rule) or `advisory`, with file and line.
+- Each finding with file and line, marked by `rules/review-severity.md`: `blocking` when fixing it changes behavior or closes a contract gap, `advisory` when fixing it changes only presentation.
 - Each command you ran and its result.
-- A final line `verdict: approve` or `verdict: changes-requested`.
+- A final line `verdict: approve` when no finding is blocking, otherwise `verdict: changes-requested`.

@@ -47,8 +47,8 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn 
 ```
 
 `not_ready` means a startup dialog the agent does not report: tell the
-operator which tab (`<task>-dev`) waits on them, and retry Step 5 once they
-answer it. Proceed immediately to Step 4.
+operator which tab (`<task>-dev`) waits on them. Step 5 refuses a worker that
+is not yet idle, so it is safe to continue. Proceed immediately to Step 4.
 
 ## Step 4 — Write the Developer Brief
 
@@ -73,7 +73,7 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait -
 - `delivered: true` — read the report in full; proceed immediately to Step 7
 - `state: blocked` — relay the `kind` and tab to the operator; once answered, run this step again
 - `delivered: false` with `state: done` — the worker stopped without a valid report; send one correction brief through Step 5
-- `state: timeout` — tell the operator the tab is still working; run this step again when asked
+- `state: timeout` — tell the operator the tab is still working, then run this step again
 
 ## Step 7 — Spawn the Reviewer
 
@@ -118,13 +118,19 @@ Read the review report in full. Its `reviewed:` SHA must equal the candidate.
 
 ## Step 12 — Close the Round
 
-Close the worker tabs; the worktrees stay for the release:
+Close the worker tabs. Reviewer checkouts are removed; the developer's
+worktree stays for the release:
 
 ```bash
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh down --task <task>
 ```
 
-Ship `team/<task>-dev` through the release skill:
+Proceed immediately to Step 13.
+
+## Step 13 — Release the Branch
+
+Ship `team/<task>-dev` from the developer's worktree through the release
+skill, whose cleanup removes that worktree and branch:
 
 ```text
 Skill(skill: "release")

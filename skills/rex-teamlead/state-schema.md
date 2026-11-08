@@ -8,6 +8,9 @@ live in `$REX_TEAM_HOME/<task>/reports/`.
 
 ## Record, `schema_version` 1
 
+Every field is required unless marked optional; none has a default. The
+writer writes every field on every save.
+
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `schema_version` | integer | `1` |
@@ -22,10 +25,10 @@ Worker:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `agent` | string | `claude`, `codex` or `grok` |
-| `model`, `effort` | string or null | Launch flags given to `spawn` |
+| `model`, `effort` | string or null, optional | Launch flags given to `spawn`; absent or null means the agent's default |
 | `block` | string | The worker's Rex block id (`block:<uuid>`) |
 | `worktree` | string | Absolute worktree path |
-| `branch` | string or null | `team/<task>-<role>` for a writer; null for a read-only checkout |
+| `branch` | string or null, optional | `team/<task>-<role>` for a writer; absent or null for a read-only checkout |
 | `commit` | string | Commit the worktree started at |
 | `dispatches` | array | Each `assign`: `{nonce, report, sent_at}`; the last is current |
 
@@ -35,7 +38,11 @@ dispatch's `sent_at`.
 
 ## Contract
 
-- A record whose `schema_version` is not `1` is refused with `state_version`; nothing migrates it.
+- `1` is the first version: no older record exists to migrate.
+- A record with a higher integer `schema_version` was written by a newer plugin; the reader refuses it with `state_newer` and the instruction to update coding-policy, and writes nothing.
+- Any other `schema_version`, a required field that is missing or of the wrong type, or a dispatch without `nonce`, `report` and `sent_at`, is refused with `state_corrupt`, naming the field; the reader writes nothing.
 - A missing record reads as "no task", answered with `no_task` and the `team up` command to run.
 - The record is a last-seen snapshot. `up` re-checks the session is live in Rex, and `assign` re-reads the worker's live status before any input.
-- `down` removes a worker from the record and closes its tab; its worktree and reports stay.
+- `up` on a task whose session is gone opens a new session and keeps the base and the workers; their tabs are gone until `down` forgets them.
+- `spawn` of a role whose worker is live reconnects to it; on a path left by an earlier spawn it adopts that worktree; a failed launch removes the worktree and branch it created.
+- `down` closes each live tab, forgets the worker after each one, removes a read-only checkout and keeps a writer's worktree; reports stay.
