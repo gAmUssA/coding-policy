@@ -89,6 +89,23 @@ def default_binary():
     return os.environ.get("TEAMLEAD_HERDR_BIN", "herdr")
 
 
+#: Which multiplexer answers the `herdr` command line: Herdr itself, or the
+#: Rex adapter (`skills/herdr-teamlead/rex-herdr.sh`), whose reads are JSON.
+BACKEND_ENV_VAR = "TEAMLEAD_BACKEND"
+BACKENDS = ("herdr", "rex")
+
+
+def default_backend(environ=None):
+    """TEAMLEAD_BACKEND, `herdr` when unset; any other value is refused."""
+    value = (environ if environ is not None else os.environ).get(BACKEND_ENV_VAR, "") or "herdr"
+    if value not in BACKENDS:
+        raise HerdrError(
+            "{}={!r} is not a backend - set it to `herdr` or `rex` (the Rex adapter), or unset it.".format(BACKEND_ENV_VAR, value),
+            {BACKEND_ENV_VAR: value},
+        )
+    return value
+
+
 def trace_enabled_in_env(environ=None):
     """True when TEAMLEAD_TRACE is set to something other than 0 or empty."""
     value = (environ if environ is not None else os.environ).get(TRACE_ENV_VAR, "")
@@ -231,8 +248,9 @@ def error_code(exc):
 class HerdrClient:
     """A thin, injectable wrapper over the `herdr` CLI."""
 
-    def __init__(self, binary=None, runner=None, trace=None):
+    def __init__(self, binary=None, runner=None, trace=None, backend=None):
         self.binary = binary or default_binary()
+        self.backend = backend or default_backend()
         self._runner = runner if runner is not None else subprocess_runner
         # A callable taking one string, or None for no tracing. Diagnostics go
         # to stderr so stdout stays machine-readable JSON.
@@ -522,7 +540,24 @@ class HerdrClient:
 
     def pane_read(self, pane_id, lines):
         """Read visible rows even while the agent status changes."""
-        return self._run([self.binary, "pane", "read", pane_id, "--source", "visible", "--lines", str(lines)])
+        return self._pane_text([self.binary, "pane", "read", pane_id, "--source", "visible", "--lines", str(lines)])
+
+    def _pane_text(self, argv):
+        """Pane rows: Herdr prints them; the Rex adapter answers
+        `{"result":{"type":"pane_text","text":...}}`, and nothing else is text."""
+        out = self._run(argv)
+        if self.backend != "rex":
+            return out
+        try:
+            result = json.loads(out).get("result")
+        except (json.JSONDecodeError, AttributeError):
+            result = None
+        if not isinstance(result, dict) or result.get("type") != "pane_text" or not isinstance(result.get("text"), str):
+            raise HerdrError(
+                "`{}` did not answer a pane_text result under TEAMLEAD_BACKEND=rex - point HERDR_BIN at skills/herdr-teamlead/rex-herdr.sh, or unset TEAMLEAD_BACKEND for Herdr.".format(format_argv(argv)),
+                {"command": format_argv(argv)},
+            )
+        return result["text"]
 
     def agent_list(self):
         """Return every live agent record."""
@@ -537,8 +572,8 @@ class HerdrClient:
         return agents
 
     def agent_read(self, name, source=None, lines=None, fmt=None):
-        """Return raw pane text. `agent read` is the one non-JSON command."""
-        return self._run(self.argv_agent_read(name, source=source, lines=lines, fmt=fmt))
+        """Return pane text. Under Herdr `agent read` is the one non-JSON command."""
+        return self._pane_text(self.argv_agent_read(name, source=source, lines=lines, fmt=fmt))
 
     def agent_prompt(self, name, text, wait=False, until=(), timeout_ms=None):
         """Submit message text. Writes to the agent -- gate on status first.
