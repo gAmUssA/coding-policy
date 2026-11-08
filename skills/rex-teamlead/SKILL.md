@@ -13,6 +13,12 @@ description: >
 
 Process steps in order. Do not skip ahead.
 
+Every command below runs the launcher from the repository's own plugin
+install, `.tessl/plugins/gamussa/coding-policy/`. In a checkout of
+coding-policy itself, which has no install, run
+`skills/rex-teamlead/rex-team.sh` from the repository root instead, with the
+same arguments.
+
 Every command below runs `team`, the `rex-team.sh` launcher; its header and
 `skills/rex-teamlead/rexlead/team.py` carry the contract: one JSON object on
 stdout, `{"error":{"code","message"}}` on stderr, exit 0, 1 or 2. Worker state
@@ -27,8 +33,10 @@ pointing the operator at a tab.
 | `spawn` | `--task`, `--role`, `--agent`, optional `--model`, `--effort`, `--ref`, `--read-only`, `--timeout` | `block`, `worktree`, `branch`, `commit`, `state`, `reused`, `tab_label` | Creates or adopts a worktree, opens the worker's tab |
 | `assign` | `--task`, `--role`, `--brief` | `report`, `nonce`, `tab_label` | Pastes the brief plus its delivery section into the worker |
 | `wait` | `--task`, `--role`, optional `--timeout` | `state`, `kind`, `delivered`, `reason`, `report`, `tab_label` | Relabels the tab with the outcome |
+| `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
+| `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict` or `not_delivered` |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered` | None |
-| `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept`, `worktrees_left` | Closes tabs, removes reviewer checkouts, forgets workers |
+| `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
 Exit 0 is success; exit 1 carries an error `code` such as `not_ready`,
 `worker_busy`, `role_taken`, `worktree_conflict`, `rex_failed`, `git_failed`
@@ -70,7 +78,7 @@ Once `state` is `idle`, proceed immediately to Step 4.
 
 ## Step 4 — Write the Developer Brief
 
-Fill `skills/rex-teamlead/templates/brief-developer.md` for this task into a
+Fill `.tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/templates/brief-developer.md` for this task into a
 file outside the repository. `assign` appends the delivery section, report
 path and nonce; the brief never names them. Proceed immediately to Step 5.
 
@@ -95,8 +103,14 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait -
 
 ## Step 7 — Spawn the Reviewer
 
-Use the candidate commit the developer reported, after confirming it is the
-tip of `team/<task>-dev`. `<review-role>` is `review` for the first review
+Confirm the commit the developer reported is the tip of its branch; a
+mismatch stops here and goes back to the developer through Step 5:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh candidate --task <task> --role dev --sha <reported-sha>
+```
+
+The returned `candidate` is the commit under review. `<review-role>` is `review` for the first review
 and `review-<n>` for the `n`th, so each candidate gets a fresh reviewer; use
 the same `<review-role>` through Step 11. The reviewer gets a read-only
 checkout of the candidate:
@@ -111,7 +125,7 @@ Proceed immediately to Step 8.
 
 ## Step 8 — Write the Reviewer Brief
 
-Fill `skills/rex-teamlead/templates/brief-reviewer.md` with the task, the
+Fill `.tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/templates/brief-reviewer.md` with the task, the
 candidate SHA and the base from Step 2 into a file outside the repository.
 Proceed immediately to Step 9.
 
@@ -134,7 +148,15 @@ Route `blocked`, `timeout` and an undelivered report as in Step 6. On
 
 ## Step 11 — Gate the Candidate
 
-Read the review report in full. Its `reviewed:` SHA must equal the candidate.
+Check the report reviews exactly the candidate and carries one verdict, then
+read it in full:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh verdict --task <task> --role <review-role> --candidate <candidate>
+```
+
+`review_mismatch` or `no_verdict` sends the reviewer one correction brief
+through Step 9.
 
 - `verdict: approve` with no blocking finding — proceed immediately to Step 12
 - Blocking findings — run `down --task <task> --role <review-role>`, brief the developer with the findings verbatim (Step 5), then review the new candidate under the next `<review-role>` (Step 7); stop after three such loops and bring the findings to the operator

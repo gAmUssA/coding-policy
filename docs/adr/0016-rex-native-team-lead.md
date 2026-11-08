@@ -30,7 +30,7 @@ Add `skills/rex-teamlead`, with no code shared with the Herdr skills:
 - **Delivery.** A dispatch is delivered when the status reaches `done` after the dispatch and the report file's first line is that dispatch's nonce. No pane text is parsed.
 - **Storage.** One JSON record per task, at `schema_version` 1, owned by `rexlead/team.py`.
 
-The Herdr skills, the ADR 0015 adapter and their hooks are frozen and deprecated, for removal in coding-policy 2.0.0.
+This supersedes ADR 0015: the Herdr-compatible adapter is no longer how team rounds run on Rex. The Herdr skills, that adapter and their hooks are frozen and deprecated, for removal in coding-policy 2.0.0.
 
 ## Consequences
 

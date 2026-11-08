@@ -2,7 +2,7 @@
 
 ## Status
 
-proposed
+superseded by 0016
 
 ## Date
 

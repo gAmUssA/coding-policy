@@ -33,8 +33,9 @@ Worker:
 | `commit` | string | Commit the worktree started at |
 | `dispatches` | array | Each `assign`: `{nonce, report, sent_at}`; the last is current |
 
-`sent_at` is an ISO-8601 UTC timestamp, and the reader refuses one it
-cannot parse. The record's `task` must equal the task it is stored under. A worker's program status counts
+`sent_at` is an ISO-8601 date and time with a UTC offset (`+00:00`); the
+reader refuses a value without a time, without an offset, or at another
+offset. The record's `task` must equal the task it is stored under. A worker's program status counts
 toward `wait` only when its `updated_at` is at or after the current
 dispatch's `sent_at`.
 
@@ -70,4 +71,4 @@ agent and its latest outcome.
 - The record is a last-seen snapshot. `up` re-checks the session is live in Rex, and `assign` re-reads the worker's live status before any input.
 - `up` on a task whose session is gone opens a new session and keeps the base and the workers; their tabs are gone until `down` forgets them.
 - `spawn` of a role whose worker is live reconnects to it; on a path left by an earlier spawn it adopts that worktree; a failed launch removes the worktree and branch it created.
-- `down` closes each live tab, forgets the worker after each one, removes a read-only checkout and keeps a writer's worktree; reports stay.
+- `down` closes each live tab, removes a read-only checkout with `--force`, keeps a writer's worktree, and forgets each worker once its own cleanup succeeded; a checkout it cannot remove keeps its worker recorded and fails the command with `worktree_remove_failed`, so the next `down` retries it. Reports stay.
