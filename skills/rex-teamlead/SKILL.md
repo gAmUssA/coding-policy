@@ -21,6 +21,20 @@ commands name the session, tabs, panes, branches and worktrees as
 `skills/rex-teamlead/state-schema.md` Naming lists; use those names when
 pointing the operator at a tab.
 
+| Command | Reads | stdout fields | Side effects |
+| --- | --- | --- | --- |
+| `up` | `--task`, `--repo` | `session`, `base`, `reused`, `workers`, `tab_label` | Creates or reuses the task's Rex session and state record |
+| `spawn` | `--task`, `--role`, `--agent`, optional `--model`, `--effort`, `--ref`, `--read-only`, `--timeout` | `block`, `worktree`, `branch`, `commit`, `state`, `reused`, `tab_label` | Creates or adopts a worktree, opens the worker's tab |
+| `assign` | `--task`, `--role`, `--brief` | `report`, `nonce`, `tab_label` | Pastes the brief plus its delivery section into the worker |
+| `wait` | `--task`, `--role`, optional `--timeout` | `state`, `kind`, `delivered`, `reason`, `report`, `tab_label` | Relabels the tab with the outcome |
+| `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered` | None |
+| `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept`, `worktrees_left` | Closes tabs, removes reviewer checkouts, forgets workers |
+
+Exit 0 is success; exit 1 carries an error `code` such as `not_ready`,
+`worker_busy`, `role_taken`, `worktree_conflict`, `rex_failed`, `git_failed`
+or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
+Every tab label is cosmetic: `tab_label_error` reports a label Rex refused.
+
 ## Step 1 — Confirm the Round
 
 A round needs a Rex terminal (`REX_SESSION` set), a git repository the
@@ -49,9 +63,10 @@ Provisions a writer worktree on branch `team/<task>-dev` under
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role dev --agent <claude|codex|grok> [--model <id>] [--effort <level>]
 ```
 
-`not_ready` means a startup dialog the agent does not report: tell the
-operator which tab (`<task>-dev`) waits on them. Step 5 refuses a worker that
-is not yet idle, so it is safe to continue. Proceed immediately to Step 4.
+`not_ready` means a startup dialog the agent does not report. Tell the
+operator which tab (`dev · <agent>`) waits on them, then run this step again:
+a repeated `spawn` reconnects to the same worker and reports its `state`.
+Once `state` is `idle`, proceed immediately to Step 4.
 
 ## Step 4 — Write the Developer Brief
 
@@ -81,11 +96,16 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait -
 ## Step 7 — Spawn the Reviewer
 
 Use the candidate commit the developer reported, after confirming it is the
-tip of `team/<task>-dev`. The reviewer gets a read-only checkout of it:
+tip of `team/<task>-dev`. `<review-role>` is `review` for the first review
+and `review-<n>` for the `n`th, so each candidate gets a fresh reviewer; use
+the same `<review-role>` through Step 11. The reviewer gets a read-only
+checkout of the candidate:
 
 ```bash
-bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role review --agent <other-kind> --ref <candidate-sha> --read-only
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role <review-role> --agent <other-kind> --ref <candidate-sha> --read-only
 ```
+
+Handle `not_ready` as in Step 3.
 
 Proceed immediately to Step 8.
 
@@ -98,7 +118,7 @@ Proceed immediately to Step 9.
 ## Step 9 — Dispatch the Reviewer
 
 ```bash
-bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh assign --task <task> --role review --brief <brief-file>
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh assign --task <task> --role <review-role> --brief <brief-file>
 ```
 
 Proceed immediately to Step 10.
@@ -106,7 +126,7 @@ Proceed immediately to Step 10.
 ## Step 10 — Wait for the Reviewer
 
 ```bash
-bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role review
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role <review-role>
 ```
 
 Route `blocked`, `timeout` and an undelivered report as in Step 6. On
@@ -117,7 +137,7 @@ Route `blocked`, `timeout` and an undelivered report as in Step 6. On
 Read the review report in full. Its `reviewed:` SHA must equal the candidate.
 
 - `verdict: approve` with no blocking finding — proceed immediately to Step 12
-- Blocking findings — brief the developer with them verbatim (Step 5), then a fresh reviewer on the new candidate under a new role name such as `review-2` (Step 7); stop after three such loops and bring the findings to the operator
+- Blocking findings — run `down --task <task> --role <review-role>`, brief the developer with the findings verbatim (Step 5), then review the new candidate under the next `<review-role>` (Step 7); stop after three such loops and bring the findings to the operator
 
 ## Step 12 — Close the Round
 

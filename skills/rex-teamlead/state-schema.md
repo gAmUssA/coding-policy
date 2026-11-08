@@ -33,7 +33,8 @@ Worker:
 | `commit` | string | Commit the worktree started at |
 | `dispatches` | array | Each `assign`: `{nonce, report, sent_at}`; the last is current |
 
-`sent_at` is an ISO-8601 UTC timestamp. A worker's program status counts
+`sent_at` is an ISO-8601 UTC timestamp, and the reader refuses one it
+cannot parse. The record's `task` must equal the task it is stored under. A worker's program status counts
 toward `wait` only when its `updated_at` is at or after the current
 dispatch's `sent_at`.
 
