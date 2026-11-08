@@ -26,44 +26,67 @@ AUTH_JSON='{"tokens":{"access_token":"sk-tokenABCDEF0123456789verylong","refresh
 
 with_files() {
   # $1 = output-json contents; echoes "<auth> <out>" temp paths, caller cleans dir
-  local dir; dir=$(mktemp -d)
-  printf '%s' "$AUTH_JSON" > "$dir/auth.json"
-  printf '%s' "$1" > "$dir/out.json"
+  local dir
+  dir=$(mktemp -d) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
+  if ! printf '%s' "$AUTH_JSON" > "$dir/auth.json" || ! printf '%s' "$1" > "$dir/out.json"; then
+    rm -rf "$dir" || echo "warning: could not remove $dir" >&2
+    echo "fatal: cannot write the fixtures under $dir" >&2
+    exit 2
+  fi
   echo "$dir"
 }
 
 t_clean_passes() {
-  local dir; dir=$(with_files '{"summary":"Policy loaded: 21 rule files from rules/. All good.","findings":[]}')
+  local dir; dir=$(with_files '{"summary":"Policy loaded: 21 rule files from rules/. All good.","findings":[]}') || { bad "fixture setup failed"; return; }
   local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then ok "clean output passes"; else bad "clean output passes (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
 t_leaked_access_token_fails() {
-  local dir; dir=$(with_files '{"summary":"here is the token sk-tokenABCDEF0123456789verylong oops","findings":[]}')
+  local dir; dir=$(with_files '{"summary":"here is the token sk-tokenABCDEF0123456789verylong oops","findings":[]}') || { bad "fixture setup failed"; return; }
   local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 1 ]]; then ok "leaked access token -> exit 1"; else bad "leaked access token -> exit 1 (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
 t_leaked_refresh_token_fails() {
-  local dir; dir=$(with_files '{"summary":"rt-9876543210FEDCBAlongtoken","findings":[]}')
+  local dir; dir=$(with_files '{"summary":"rt-9876543210FEDCBAlongtoken","findings":[]}') || { bad "fixture setup failed"; return; }
   local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 1 ]]; then ok "leaked refresh token -> exit 1"; else bad "leaked refresh token -> exit 1 (rc=$rc)"; fi
+  rm -rf "$dir"
+}
+
+# post-review.sh posts decoded JSON strings: an escaped credential must still trip.
+t_escaped_token_fails() {
+  local dir rc payload
+  for payload in '{"summary":"\u0073k-tokenABCDEF0123456789verylong","findings":[]}' \
+                 '{"summary":"ok","findings":[{"rt-9876543210FEDCBA\u006congtoken":1}]}'; do
+    dir=$(with_files "$payload") || { bad "fixture setup failed"; return; }
+    rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]]; then ok "escaped credential ($payload) -> exit 1"; else bad "escaped credential ($payload) -> exit 1 (rc=$rc)"; fi
+    rm -rf "$dir"
+  done
+}
+
+t_unparseable_output_fails_closed() {
+  local dir; dir=$(with_files 'not json at all') || { bad "unparseable: fixture setup failed"; return; }
+  local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then ok "unparseable review output -> exit 2"; else bad "unparseable review output -> exit 2 (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
 # Short auth fields (e.g. "chatgpt") appearing in ordinary prose must NOT trip
 # the guard — only >= 16-char secret material counts.
 t_short_field_in_prose_passes() {
-  local dir; dir=$(with_files '{"summary":"Reviewed the chatgpt workflow auth_mode handling.","findings":[]}')
+  local dir; dir=$(with_files '{"summary":"Reviewed the chatgpt workflow auth_mode handling.","findings":[]}') || { bad "fixture setup failed"; return; }
   local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then ok "short auth field in prose passes"; else bad "short auth field in prose passes (rc=$rc)"; fi
   rm -rf "$dir"
 }
 
 t_missing_files_fail_closed() {
-  local dir rc; dir=$(with_files '{"summary":"ok","findings":[]}')
+  local dir rc; dir=$(with_files '{"summary":"ok","findings":[]}') || { bad "missing-files: fixture setup failed"; return; }
   rc=0; bash "$SCRIPT" "$dir/absent-auth.json" "$dir/absent-out.json" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 2 ]]; then ok "missing files -> exit 2 (fail closed)"; else bad "missing files -> exit 2 (rc=$rc)"; fi
   rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/absent-out.json" >/dev/null 2>&1 || rc=$?
@@ -83,6 +106,8 @@ t_clean_passes
 t_leaked_access_token_fails
 t_leaked_refresh_token_fails
 t_short_field_in_prose_passes
+t_escaped_token_fails
+t_unparseable_output_fails_closed
 t_missing_files_fail_closed
 t_bad_args
 echo "== summary: ${pass} passed, ${fail} failed =="
