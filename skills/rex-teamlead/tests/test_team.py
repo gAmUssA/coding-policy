@@ -615,10 +615,34 @@ class CheckTest(Fixture):
         self.assertEqual(self.invalid("exit 2", "neither pass (0) nor fail (1)")["exit"], 2)
 
     def test_a_command_not_found_is_invalid(self):
-        self.assertEqual(self.invalid("no-such-check-command-xyz", "not found")["exit"], 127)
+        self.assertEqual(self.invalid("no-such-check-command-xyz", "exit 127 is neither pass (0) nor fail (1)")["exit"], 127)
 
     def test_a_command_that_cannot_execute_is_invalid(self):
-        self.assertEqual(self.invalid("/dev/null", "not executable")["exit"], 126)
+        self.assertEqual(self.invalid("/dev/null", "exit 126 is neither pass (0) nor fail (1)")["exit"], 126)
+
+    def ran_then_exited(self, code):
+        run = self.invalid("printf 'actually-%s\\n' ran; exit {}".format(code), "exit {}".format(code))
+        self.assertEqual((run["exit"], run["reason"]), (code, "exit {} is neither pass (0) nor fail (1)".format(code)))
+        self.assertEqual(Path(run["log"]).read_text(), "actually-ran\n")
+        for claim in ("could not", "not found", "not executable", "never"):
+            self.assertNotIn(claim, run["reason"])
+
+    def test_a_command_that_ran_then_exited_126_is_invalid_and_not_called_unrun(self):
+        self.ran_then_exited(126)
+
+    def test_a_command_that_ran_then_exited_127_is_invalid_and_not_called_unrun(self):
+        self.ran_then_exited(127)
+
+    def hide_untracked(self):
+        git("config", "--local", "status.showUntrackedFiles", "no", cwd=self.worktree)
+
+    def test_a_file_left_under_hidden_untracked_files_is_still_invalid(self):
+        fake = FakeRex()
+        self.committed(fake)
+        self.hide_untracked()
+        out = self.check(fake, "echo x > hidden.txt")[1]
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("hidden.txt", out["runs"][0]["reason"])
 
     def test_a_command_killed_by_a_signal_is_invalid(self):
         self.assertIsNone(self.invalid("kill -TERM $$", "SIGTERM")["exit"])
@@ -671,6 +695,16 @@ class CheckTest(Fixture):
         tip = self.committed(fake)
         self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", tip, "--read-only")
         self.refused(fake, "check_mismatch", role="review")
+
+    def test_a_stray_file_under_hidden_untracked_files_is_refused_and_a_clean_tree_runs(self):
+        fake = FakeRex()
+        self.committed(fake)
+        self.hide_untracked()
+        (self.worktree / "stray.txt").write_text("not in the candidate\n")
+        self.refused(fake, "check_dirty")
+        (self.worktree / "stray.txt").unlink()
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
 
     def test_a_dirty_worktree_is_refused_and_a_clean_one_runs(self):
         fake = FakeRex()

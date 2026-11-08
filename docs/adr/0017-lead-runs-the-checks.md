@@ -22,7 +22,7 @@ Options considered:
 
 ## Decision
 
-Add `rex-team.sh check`. The lead names each command with `--run`; nothing is read from a worker's report. The command refuses with `check_mismatch` unless the writer's branch tip and its worktree `HEAD` are the candidate, and with `check_dirty` when the worktree has uncommitted or untracked changes. Each command runs with `bash -c`, no stdin and a per-command timeout, its output to a log under `REX_TEAM_HOME`. Exit 0 is `pass` and exit 1 `fail`. Any other exit, a timeout, a signal, a command that cannot start, or a run that moved `HEAD` or left the tree dirty is `invalid`. The verdict is data: exit 0 once the runs are classified.
+Add `rex-team.sh check`. The lead names each command with `--run`; nothing is read from a worker's report. The command refuses with `check_mismatch` unless the writer's branch tip and its worktree `HEAD` are the candidate, and with `check_dirty` when the worktree has uncommitted or untracked changes. Each command runs with `bash -c`, no stdin and a per-command timeout, its output to a log under `REX_TEAM_HOME`. Exit 0 is `pass` and exit 1 `fail`. Any other exit (126 and 127 included, reported as that status alone), a timeout, a signal, `bash` failing to start, or a run that moved `HEAD` or left the tree dirty is `invalid`. The verdict is data: exit 0 once the runs are classified.
 
 The skill gates the reviewer on `pass`. `fail` returns to the developer with the log paths. `invalid` goes to the operator and never enters the fix loop. The reviewer may rely on the lead's passed check. The worker's latest check is recorded in the state record, which moves to `schema_version` 2.
 

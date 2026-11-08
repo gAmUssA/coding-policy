@@ -224,7 +224,7 @@ def run_check(command, cwd, log, timeout):
             proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT, start_new_session=True)
         except OSError as exc:
-            return ran(None, "invalid", "the command could not start: {}".format(exc.strerror or exc))
+            return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc))
         try:
             code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -239,16 +239,22 @@ def run_check(command, cwd, log, timeout):
         return ran(None, "invalid", "killed by signal {}".format(signal.Signals(-code).name))
     if code in CHECK_EXITS:
         return ran(code, CHECK_EXITS[code], "exit {}".format(code))
-    if code in (126, 127):
-        return ran(code, "invalid", "exit {}: the command could not run ({})".format(code, "not executable" if code == 126 else "not found"))
+    # 126 and 127 included: under `bash -c` the command may have run before
+    # exiting with them, so the reason states only the observed status.
     return ran(code, "invalid", "exit {} is neither pass (0) nor fail (1)".format(code))
+
+
+def changes(worktree):
+    """`git status --porcelain` with every untracked file shown, whatever
+    `status.showUntrackedFiles` the user or repository sets."""
+    return git(worktree, "status", "--porcelain", "--untracked-files=all")
 
 
 def worktree_change(worktree, candidate):
     """Why `worktree` is no longer a clean checkout of `candidate`, or None."""
     try:
         head = git(worktree, "rev-parse", "HEAD")
-        dirty = git(worktree, "status", "--porcelain")
+        dirty = changes(worktree)
     except TeamError as exc:
         return "the worktree is unreadable after the run: " + exc.message
     if head != candidate:
@@ -470,7 +476,7 @@ class Team:
         head = git(worktree, "rev-parse", "HEAD")
         if head != candidate:
             raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
-        dirty = git(worktree, "status", "--porcelain")
+        dirty = changes(worktree)
         if dirty:
             raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
                 role, worktree, "; ".join(dirty.splitlines()[:3])))
