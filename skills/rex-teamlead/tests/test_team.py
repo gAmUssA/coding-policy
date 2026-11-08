@@ -706,6 +706,58 @@ class CheckTest(Fixture):
         self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
         self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
 
+    def with_ignored_submodule(self, fake, where):
+        """A candidate holding submodule `sub`, its changes hidden from a plain
+        `git status` by `submodule.sub.ignore=all` in `where`."""
+        self.committed(fake)
+        source = Path(self.tmp.name) / "sub-source"
+        source.mkdir()
+        git("init", "-q", "-b", "main", cwd=source)
+        (source / "tracked.txt").write_text("original\n")
+        git("add", "-A", cwd=source)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "sub", cwd=source)
+        git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), "sub", cwd=self.worktree)
+        if where == ".gitmodules":
+            git("config", "-f", ".gitmodules", "submodule.sub.ignore", "all", cwd=self.worktree)
+            git("add", ".gitmodules", cwd=self.worktree)
+        else:
+            git("config", "--local", "submodule.sub.ignore", "all", cwd=self.worktree)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "add sub", cwd=self.worktree)
+        self.tip = self.rev("HEAD")
+        hidden = subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True)
+        (self.worktree / "sub" / "tracked.txt").write_text("probe\n")
+        probe = subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True)
+        self.assertEqual((hidden.stdout, probe.stdout), ("", ""), "the fixture's ignore setting must hide the submodule")
+        git("checkout", "--", "tracked.txt", cwd=self.worktree / "sub")
+
+    def submodule_modified_before_the_run_is_refused(self, where):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, where)
+        (self.worktree / "sub" / "tracked.txt").write_text("dirty\n")
+        self.refused(fake, "check_dirty")
+        git("checkout", "--", "tracked.txt", cwd=self.worktree / "sub")
+        self.assertEqual(self.check(fake, "grep -q original sub/tracked.txt")[1]["verdict"], "pass")
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "pass")
+
+    def run_that_modifies_a_submodule_is_invalid(self, where):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, where)
+        out = self.check(fake, "printf 'dirty\\n' > sub/tracked.txt")[1]
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("sub", out["runs"][0]["reason"])
+
+    def test_a_submodule_ignored_in_gitmodules_and_modified_before_the_run_is_refused(self):
+        self.submodule_modified_before_the_run_is_refused(".gitmodules")
+
+    def test_a_submodule_ignored_in_repo_config_and_modified_before_the_run_is_refused(self):
+        self.submodule_modified_before_the_run_is_refused("config")
+
+    def test_a_run_that_modifies_a_submodule_ignored_in_gitmodules_is_invalid(self):
+        self.run_that_modifies_a_submodule_is_invalid(".gitmodules")
+
+    def test_a_run_that_modifies_a_submodule_ignored_in_repo_config_is_invalid(self):
+        self.run_that_modifies_a_submodule_is_invalid("config")
+
     def test_a_dirty_worktree_is_refused_and_a_clean_one_runs(self):
         fake = FakeRex()
         self.committed(fake)

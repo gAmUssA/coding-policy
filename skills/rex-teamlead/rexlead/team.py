@@ -245,9 +245,10 @@ def run_check(command, cwd, log, timeout):
 
 
 def changes(worktree):
-    """`git status --porcelain` with every untracked file shown, whatever
-    `status.showUntrackedFiles` the user or repository sets."""
-    return git(worktree, "status", "--porcelain", "--untracked-files=all")
+    """`git status --porcelain` with every untracked file and every submodule
+    change shown, whatever `status.showUntrackedFiles` or `submodule.<name>.ignore`
+    the user, repository or `.gitmodules` sets."""
+    return git(worktree, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
 
 
 def worktree_change(worktree, candidate):
