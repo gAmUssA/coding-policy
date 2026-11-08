@@ -183,9 +183,11 @@ class UpTest(Fixture):
         record = self.state()
         self.assertEqual((record["schema_version"], record["base"]), (1, out["base"]))
 
-    def test_up_reuses_a_live_session(self):
-        self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))
-        self.assertTrue(self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))[1]["reused"])
+    def test_up_reuses_a_live_session_and_names_its_workers(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        out = self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))[1]
+        self.assertEqual((out["reused"], out["workers"]), (True, ["dev"]))
 
     def test_up_outside_a_git_repo_fails(self):
         code, _, err = self.cli(FakeRex(), "up", "--task", "t1", "--repo", self.tmp.name)
@@ -432,6 +434,69 @@ class TabLabelTest(Fixture):
         self.assertIn("window not found", out["tab_label_error"])
 
 
+class GateTest(Fixture):
+    def committed(self, fake):
+        dev = self.spawned(fake)
+        (Path(dev["worktree"]) / "lib.py").write_text("x = 2\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "change", cwd=dev["worktree"])
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=dev["worktree"], capture_output=True, text=True).stdout.strip()
+
+    def test_the_branch_tip_is_the_candidate(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        code, out, _ = self.cli(fake, "candidate", "--task", "t1", "--role", "dev", "--sha", tip)
+        self.assertEqual((code, out["candidate"]), (0, tip))
+
+    def test_a_reported_sha_that_is_not_the_tip_is_refused(self):
+        fake = FakeRex()
+        self.committed(fake)
+        base = self.state()["base"]
+        for sha in (base, "not-a-sha"):
+            code, _, err = self.cli(fake, "candidate", "--task", "t1", "--role", "dev", "--sha", sha)
+            self.assertEqual((code, err["error"]["code"]), (1, "candidate_mismatch"), sha)
+
+    def reviewed(self, fake, body):
+        tip = self.committed(fake)
+        block = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", tip, "--read-only")[1]["block"]
+        sent = self.cli(fake, "assign", "--task", "t1", "--role", "review", "--brief", str(self.brief))[1]
+        Path(sent["report"]).write_text("task-nonce: {}\n\n{}".format(sent["nonce"], body.format(sha=tip)))
+        fake.queued = [event(block, status("done"))]
+        self.cli(fake, "wait", "--task", "t1", "--role", "review", "--timeout", "5")
+        return tip
+
+    def test_a_review_of_the_candidate_with_a_verdict_passes(self):
+        fake = FakeRex()
+        tip = self.reviewed(fake, "reviewed: `{sha}`\n\nverdict: approve\n")
+        code, out, _ = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((code, out["verdict"], out["reviewed"]), (0, "approve", tip))
+
+    def refused(self, body, code):
+        fake = FakeRex()
+        tip = self.reviewed(fake, body)
+        result = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((result[0], result[2].get("error", {}).get("code")), (1, code), result)
+
+    def test_a_review_of_another_commit_is_refused(self):
+        self.refused("reviewed: " + "0" * 40 + "\nverdict: approve\n", "review_mismatch")
+
+    def test_a_review_naming_no_commit_is_refused(self):
+        self.refused("verdict: approve\n", "review_mismatch")
+
+    def test_a_review_without_a_verdict_is_refused(self):
+        self.refused("reviewed: {sha}\nlooks fine\n", "no_verdict")
+
+    def test_a_review_with_two_verdicts_is_refused(self):
+        self.refused("reviewed: {sha}\nverdict: approve\nverdict: changes-requested\n", "no_verdict")
+
+    def test_an_undelivered_review_has_no_verdict_yet(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", tip, "--read-only")
+        self.cli(fake, "assign", "--task", "t1", "--role", "review", "--brief", str(self.brief))
+        code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "not_delivered"))
+
+
 class StatusDownTest(Fixture):
     def test_down_keeps_the_writer_worktree_and_removes_the_reviewer_checkout(self):
         fake = FakeRex()
@@ -453,13 +518,17 @@ class StatusDownTest(Fixture):
         code, result, _ = self.cli(fake, "down", "--task", "t1", "--role", "review")
         self.assertEqual((code, result["worktrees_removed"]), (0, [review["worktree"]]))
 
-    def test_down_reports_a_checkout_it_cannot_remove_and_still_forgets_the_worker(self):
+    def test_a_checkout_down_cannot_remove_fails_and_is_retried(self):
         fake = FakeRex()
         self.spawned(fake)
         review = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--read-only")[1]
         git("worktree", "lock", review["worktree"], cwd=self.repo)
+        code, _, err = self.cli(fake, "down", "--task", "t1", "--role", "review")
+        self.assertEqual((code, err["error"]["code"]), (1, "worktree_remove_failed"))
+        self.assertIn("review", self.state()["workers"])
+        git("worktree", "unlock", review["worktree"], cwd=self.repo)
         code, result, _ = self.cli(fake, "down", "--task", "t1", "--role", "review")
-        self.assertEqual((code, result["closed"], [left["worktree"] for left in result["worktrees_left"]]), (0, ["review"], [review["worktree"]]))
+        self.assertEqual((code, result["worktrees_removed"]), (0, [review["worktree"]]))
         self.assertNotIn("review", self.state()["workers"])
 
     def test_down_refuses_when_rex_cannot_list_the_blocks(self):
@@ -495,6 +564,9 @@ class StateTest(Fixture):
                  ({**good, "schema_version": True}, "state_corrupt"), ({**good, "task": "t2"}, "state_corrupt"),
                  ({**good, "workers": {"dev": {**worker, "model": 5}}}, "state_corrupt"),
                  ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "yesterday"}]}}}, "state_corrupt"),
+                 ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "2026-11-07T12:00:00"}]}}}, "state_corrupt"),
+                 ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "2026-11-07"}]}}}, "state_corrupt"),
+                 ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "2026-11-07T07:00:00-05:00"}]}}}, "state_corrupt"),
                  ({**good, "schema_version": 0}, "state_corrupt"), ({k: v for k, v in good.items() if k != "base"}, "state_corrupt"),
                  ({**good, "workers": {"dev": {"agent": "claude"}}}, "state_corrupt")]
         for record, code in cases:

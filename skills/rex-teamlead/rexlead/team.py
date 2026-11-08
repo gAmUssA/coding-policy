@@ -1,7 +1,8 @@
 """Rex-native team rounds: one session, one tab per worker, one state file.
 
 Contract:
-  argv  : `up`, `spawn`, `assign`, `wait`, `status`, `down` (see `--help`).
+  argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `verdict`, `status`,
+          `down` (see `--help`).
   stdout: one JSON object per command.
   stderr: `{"error":{"code","message"}}` on failure.
   exit  : 0 success; 1 failure; 2 usage error.
@@ -143,8 +144,9 @@ def invalid(record):
         for dispatch in worker["dispatches"]:
             if not isinstance(dispatch, dict) or any(not isinstance(dispatch.get(f), k) for f, k in DISPATCH_FIELDS.items()):
                 return "worker {} has a dispatch without nonce, report and sent_at".format(role)
-            if parse_time(dispatch["sent_at"]) is None:
-                return "worker {} has a dispatch whose sent_at is not ISO-8601".format(role)
+            sent = parse_time(dispatch["sent_at"])
+            if sent is None or sent.utcoffset() != dt.timedelta(0) or "T" not in dispatch["sent_at"]:
+                return "worker {} has a dispatch whose sent_at is not an ISO-8601 UTC timestamp".format(role)
     return None
 
 
@@ -179,7 +181,7 @@ class Team:
         if record and record["repo"] != str(repo):
             raise TeamError("repo_mismatch", "task {} belongs to {} — use another task id for {}".format(task, record["repo"], repo))
         if record and any(s.get("session_id") == record["session"] for s in self.rex.sessions()):
-            return {"task": task, "session": record["session"], "base": record["base"], "reused": True}
+            return {"task": task, "session": record["session"], "base": record["base"], "reused": True, "workers": sorted(record["workers"])}
         session, window, _ = self.rex.new_session("team-" + task, str(repo))
         shell_tab = "shell · " + repo.name
         try:
@@ -320,6 +322,41 @@ class Team:
         return {"task": task, "role": role, "state": state, "kind": status.get("kind"), "delivered": delivered,
                 "reason": reason, "report": dispatch["report"], **tab}
 
+    def candidate(self, task, role, sha):
+        """Is `sha` the tip of the writer's branch? The gate before review."""
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        if not worker.get("branch"):
+            raise UsageError("{} is a read-only worker; the candidate comes from the developer's branch".format(role))
+        tip = git(Path(record["repo"]), "rev-parse", "refs/heads/" + worker["branch"])
+        try:
+            given = git(Path(record["repo"]), "rev-parse", "--verify", "--quiet", sha + "^{commit}")
+        except TeamError:
+            given = ""
+        if given != tip:
+            raise TeamError("candidate_mismatch", "{} is not the tip of {} ({}) — use the branch tip as the candidate, or ask the developer why its report differs".format(sha, worker["branch"], tip))
+        return {"task": task, "role": role, "branch": worker["branch"], "candidate": tip}
+
+    def verdict(self, task, role, sha):
+        """Read the reviewer's current report: it must review `sha` and give a verdict."""
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        if not worker["dispatches"]:
+            raise TeamError("not_dispatched", "{} has no report yet — `team assign` and `team wait` first".format(role))
+        dispatch = worker["dispatches"][-1]
+        delivered, reason = self._delivery(dispatch)
+        if not delivered:
+            raise TeamError("not_delivered", "{}'s current report is not delivered: {} — `team wait` for it first".format(role, reason))
+        lines = [line.strip() for line in Path(dispatch["report"]).read_text().splitlines()]
+        reviewed = [line[len("reviewed:"):].strip() for line in lines if line.startswith("reviewed:")]
+        verdicts = [line[len("verdict:"):].strip() for line in lines if line.startswith("verdict:")]
+        candidate = git(Path(record["repo"]), "rev-parse", sha)
+        if len(reviewed) != 1 or reviewed[0].strip("`") != candidate:
+            raise TeamError("review_mismatch", "{}'s report does not review exactly {} (found {}) — brief a fresh reviewer on the candidate".format(role, candidate, reviewed or "no `reviewed:` line"))
+        if len(verdicts) != 1 or verdicts[0] not in ("approve", "changes-requested"):
+            raise TeamError("no_verdict", "{}'s report has no single `verdict: approve` or `verdict: changes-requested` line — send it one correction brief".format(role))
+        return {"task": task, "role": role, "reviewed": candidate, "verdict": verdicts[0], "report": dispatch["report"]}
+
     def status(self, task):
         record = self.store.load(task)
         out = {}
@@ -339,25 +376,30 @@ class Team:
             self._worker(record, name)
         live = self.rex.live_blocks(record["session"])
         repo = Path(record["repo"])
-        closed, removed, kept, leftover = [], [], [], []
+        closed, removed, kept, failed = [], [], [], []
         for name in roles:
             worker = record["workers"][name]
             if worker["block"] in live:
                 self.rex.close(record["session"], worker["block"])
             if worker.get("branch") is None and Path(worker["worktree"]).exists():
                 # A read-only checkout is disposable by contract; tests may leave
-                # untracked output in it. A failed removal is reported, never fatal.
+                # untracked output in it, so it is removed with --force.
                 try:
                     git(repo, "worktree", "remove", "--force", worker["worktree"])
-                    removed.append(worker["worktree"])
                 except TeamError as exc:
-                    leftover.append({"worktree": worker["worktree"], "error": exc.message})
+                    # Keep the worker so a later `down` retries the removal.
+                    failed.append({"role": name, "worktree": worker["worktree"], "error": exc.message})
+                    continue
+                removed.append(worker["worktree"])
             elif worker.get("branch") is not None:
                 kept.append(worker["worktree"])
             del record["workers"][name]
             self.store.save(record)
             closed.append(name)
-        return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept, "worktrees_left": leftover}
+        if failed:
+            raise TeamError("worktree_remove_failed", "could not remove {} — fix what git names ({}), then run `team down --task {}` again; the worker stays recorded until it succeeds".format(
+                ", ".join(f["worktree"] for f in failed), "; ".join(f["error"] for f in failed), task))
+        return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept}
 
     def _label(self, record, role, suffix=None):
         """Name the worker's tab `<role> · <agent>[ · <suffix>]` (state-schema.md
@@ -420,6 +462,14 @@ def parser():
     wt.add_argument("--task", required=True)
     wt.add_argument("--role", required=True)
     wt.add_argument("--timeout", type=int, default=DEFAULT_WAIT_TIMEOUT_SEC)
+    cd = sub.add_parser("candidate")
+    cd.add_argument("--task", required=True)
+    cd.add_argument("--role", required=True)
+    cd.add_argument("--sha", required=True)
+    vd = sub.add_parser("verdict")
+    vd.add_argument("--task", required=True)
+    vd.add_argument("--role", required=True)
+    vd.add_argument("--candidate", required=True)
     st = sub.add_parser("status")
     st.add_argument("--task", required=True)
     dn = sub.add_parser("down")
@@ -459,6 +509,10 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow):
             result = team.wait(args.task, args.role, args.timeout)
         elif args.command == "status":
             result = team.status(args.task)
+        elif args.command == "candidate":
+            result = team.candidate(args.task, args.role, args.sha)
+        elif args.command == "verdict":
+            result = team.verdict(args.task, args.role, args.candidate)
         else:
             result = team.down(args.task, args.role)
     except UsageError as exc:
