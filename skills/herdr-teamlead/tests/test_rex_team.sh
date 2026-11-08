@@ -51,10 +51,12 @@ envelope_code() { printf '%s' "$1" | jq -er '.error.code' 2>/dev/null; }
 # shellcheck disable=SC2016 # the line is shell source, expanded later by bash -c
 LAUNCH_LINE='TEAM_ENV="$(bash "$CP/skills/herdr-teamlead/rex-team.sh" | jq -er '"'"'.env | to_entries | map("\(.key)=\(.value)" | @sh) | join(" ")'"'"')" && eval "env $TEAM_ENV claude"'
 
+# Runs from $TMP, so a hostile id that breaks out of its quoting can only
+# create files inside the fixture, where the cases look for them.
 launch() { # <CP> <REX_SESSION> <REX_BLOCK-or-empty> <capture-file>
   local -a assigns=(REX_SESSION="$2")
   [[ -n "$3" ]] && assigns+=(REX_BLOCK="$3")
-  env -u REX_SESSION -u REX_BLOCK "${assigns[@]}" CP="$1" CAPTURE="$4" PATH="$TMP/bin:$PATH" bash -c "$LAUNCH_LINE"
+  (cd "$TMP" && env -u REX_SESSION -u REX_BLOCK "${assigns[@]}" CP="$1" CAPTURE="$4" PATH="$TMP/bin:$PATH" bash -c "$LAUNCH_LINE")
 }
 
 main() {
@@ -68,8 +70,15 @@ main() {
   TMP="$(mktemp -d -t rex-team-test.XXXXXX)" || die "mktemp failed"
   trap cleanup EXIT
   mkdir -p "$TMP/bin" || die "could not create $TMP/bin"
-  # shellcheck disable=SC2016 # $CAPTURE expands inside the fake, not here
-  printf '#!/usr/bin/env bash\nenv > "$CAPTURE"\n' > "$TMP/bin/claude" || die "could not write the fake claude"
+  # The fake records only the variables under test, never the whole
+  # environment, so a failure message cannot print an inherited credential.
+  cat > "$TMP/bin/claude" <<'FAKE' || die "could not write the fake claude"
+#!/usr/bin/env bash
+set -euo pipefail
+for name in HERDR_ENV HERDR_PANE_ID HERDR_WORKSPACE_ID HERDR_BIN TEAMLEAD_HERDR_BIN TEAMLEAD_BACKEND; do
+  printf '%s=%s\n' "$name" "${!name-}"
+done > "$CAPTURE"
+FAKE
   chmod +x "$TMP/bin/claude" || die "could not chmod the fake claude"
 
   FAIL=0; PASS=0
@@ -92,7 +101,7 @@ main() {
   launch "$plugin" session:abc "$hostile" "$capture"
   if [[ -s "$capture" ]] && grep -qxF "HERDR_ENV=1" "$capture" && grep -qxF "HERDR_PANE_ID=${hostile}" "$capture" \
      && grep -qxF "HERDR_WORKSPACE_ID=session:abc" "$capture" && grep -qxF "TEAMLEAD_BACKEND=rex" "$capture" \
-     && grep -qxF "HERDR_BIN=${skill}/rex-herdr.sh" "$capture" && [[ ! -e "$PWD/x" ]]; then
+     && grep -qxF "HERDR_BIN=${skill}/rex-herdr.sh" "$capture" && [[ ! -e "$TMP/x" ]]; then
     pass; else fail "launch line: expected the team env in the started command, got $(cat "$capture" 2>/dev/null)"; fi
 
   # The reference documents exactly the line exercised above.
@@ -107,8 +116,10 @@ main() {
       pass; else fail "outside Rex (only $kept): expected exit 1 and not_in_rex, got RC=$RC OUT=$OUT ERR=$ERR"; fi
   done
   rm -f "$capture" || die "could not remove $capture"
-  launch "$plugin" session:abc "" "$capture" 2>/dev/null
-  if [[ ! -s "$capture" ]]; then pass; else fail "launch line outside Rex: expected nothing started, got $(cat "$capture")"; fi
+  local launch_rc=0
+  launch "$plugin" session:abc "" "$capture" 2>"$TMP/launch-err" || launch_rc=$?
+  if (( launch_rc != 0 )) && [[ ! -s "$capture" ]] && grep -q '"code":"not_in_rex"' "$TMP/launch-err"; then
+    pass; else fail "launch line outside Rex: expected a non-zero exit, the not_in_rex envelope and nothing started, got rc=$launch_rc err=$(cat "$TMP/launch-err") started=$(cat "$capture" 2>/dev/null)"; fi
 
   # 5. Any argument is a usage error.
   local arg
