@@ -124,24 +124,34 @@ class ReleaseRaceTest(unittest.TestCase):
 
 
 class SupervisionBindTest(unittest.TestCase):
-    """`supervision-bind` never binds a Rex lead: Rex carries no agent session."""
+    """`supervision-bind` through HerdrClient over the adapter (ADR 0016)."""
+
+    SESSION_ID = "0b9f3c1e-6a2d-4f8e-9c7b-2d5e8a1f4c3b"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
 
-    def bind(self, environ):
-        return supervision_runtime.bind_current(self.root / "state.json", client_over(FakeRex()), "2026-11-07T12:00:00+00:00",
-                                                environ=environ, cwd=str(self.root), root=self.root / "bindings")
+    def bind(self, environ, rex=None):
+        return supervision_runtime.bind_current(self.root / "state.json", client_over(rex or FakeRex(), backend="rex"),
+                                                "2026-11-07T12:00:00+00:00", environ=environ, cwd=str(self.root),
+                                                root=self.root / "bindings")
 
-    def test_rex_team_round_refuses_with_the_rex_reason(self):
+    def test_claude_lead_binds_its_exported_session(self):
+        row = self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CLAUDE, "TEAMLEAD_BACKEND": "rex",
+                         "CLAUDE_CODE_SESSION_ID": self.SESSION_ID})
+        self.assertEqual((row["source"], row["identity"]["value"], row["identity"]["pane_id"]),
+                         ("claude-code:env", self.SESSION_ID, CLAUDE))
+
+    def test_lead_pane_hosting_another_agent_is_refused(self):
         with self.assertRaises(UsageError) as caught:
-            self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CLAUDE, "TEAMLEAD_BACKEND": "rex"})
-        self.assertIn("Rex records no session id", caught.exception.message)
+            self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CODEX, "TEAMLEAD_BACKEND": "rex",
+                       "CLAUDE_CODE_SESSION_ID": self.SESSION_ID})
+        self.assertIn("does not host Claude Code", caught.exception.message)
         self.assertFalse((self.root / "bindings").exists())
 
-    def test_adapter_pane_without_the_marker_still_offers_no_native_proof(self):
+    def test_adapter_pane_offers_no_herdr_native_proof(self):
         with self.assertRaises(UsageError) as caught:
             self.bind({"HERDR_ENV": "1", "HERDR_PANE_ID": CLAUDE})
         self.assertIn("native session proof", caught.exception.message)

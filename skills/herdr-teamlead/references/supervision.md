@@ -15,7 +15,10 @@ Run `supervision-bind --state <owner-state>` from the lead's own
 Herdr pane. It discovers `HERDR_PANE_ID` through a read-only pane lookup and
 binds that pane's native Claude or Codex session identity. It refuses missing or
 unsupported native proof. Do not bind from a worker pane or substitute a guessed
-session ID. Preserve the canonical owner-state path through resume and handoff.
+session ID. In a Rex team round (`TEAMLEAD_BACKEND=rex`) the proof is the
+`CLAUDE_CODE_SESSION_ID` Claude Code exports, with the adapter confirming
+Claude Code in the lead's pane; a lead that exports none, such as Codex, is
+refused and runs without the Stop backstop. Preserve the canonical owner-state path through resume and handoff.
 
 Binding writes the adjacent supervision document and a discovery record for the
 native Stop hook. `--record <file>` accepts an explicitly verified binding with

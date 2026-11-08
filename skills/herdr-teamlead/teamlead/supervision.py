@@ -20,6 +20,12 @@ from .errors import StateError, UsageError
 from .state import default_state_path, save_state, state_lock
 
 SCHEMA_VERSION = 1
+#: Binding record versions. Version 1 binds Herdr's native session proof and
+#: names no source. Version 2 adds `source` for an identity the agent exported
+#: itself (docs/adr/0016-rex-team-mode-through-herdr-environment.md); only a
+#: Rex team round writes or accepts it.
+BINDING_VERSIONS = (1, 2)
+ENV_SOURCES = ("claude-code:env",)
 DEFAULT_RECHECK_SECONDS = 30
 
 
@@ -109,7 +115,7 @@ def load(state_path):
         for key in ("members", "events", "acknowledgements", "holds", "watchers"):
             if not isinstance(data.get(key), list) or any(not isinstance(row, dict) or row.get("schema_version") != 1 for row in data[key]):
                 raise ValueError("invalid {} rows".format(key))
-        if data.get("binding") is not None and (not isinstance(data["binding"], dict) or data["binding"].get("schema_version") != 1):
+        if data.get("binding") is not None and not valid_binding_version(data["binding"]):
             raise ValueError("invalid binding")
         if data["binding"] is None and any(data[key] for key in ("members", "events", "acknowledgements", "holds", "watchers")):
             raise ValueError("unbound owner contains active history")
@@ -462,7 +468,23 @@ def _refuse_lost_owner(state_path, directory):
             raise StateError("A saved lead discovery record already names the missing supervision owner {}. Restore its owner document before rebinding; do not discard unresolved assignments.".format(store_path(state_path)), {})
 
 
-def bind(state_path, who, at, *, root=None):
+def valid_binding_version(row):
+    """A version-1 row names no source; a version-2 row names an accepted one."""
+    if not isinstance(row, dict) or row.get("schema_version") not in BINDING_VERSIONS:
+        return False
+    if row["schema_version"] == 1:
+        return "source" not in row
+    return row.get("source") in ENV_SOURCES
+
+
+def binding_source(row):
+    """The exported-identity source of a version-2 binding, or None for Herdr's."""
+    return row.get("source") if row.get("schema_version") == 2 else None
+
+
+def bind(state_path, who, at, *, root=None, source=None):
+    if source is not None and source not in ENV_SOURCES:
+        raise UsageError("Binding source must be one of {}.".format(", ".join(ENV_SOURCES)), {})
     if not isinstance(who, dict) or set(who) != {"kind", "value", "cwd", "herdr_env", "pane_id"}:
         raise UsageError("Binding requires the lead's exact native kind/value, cwd, HERDR_ENV, and pane_id.", {})
     who = identity(who["value"], who["cwd"], who["herdr_env"], kind=who["kind"], pane_id=who["pane_id"])
@@ -479,12 +501,16 @@ def bind(state_path, who, at, *, root=None):
         first_use = old is None and not store_path(state_path).exists()
         if first_use:
             _refuse_lost_owner(state_path, path.parent)
-        row = old if old is not None and old["identity"] == who else {
-            "schema_version": 1, "at": at, "identity": who, "state_path": str(canonical(state_path)),
-            "generation": 1 if old is None else old["generation"] + 1}
+        if old is not None and old["identity"] == who and binding_source(old) == source:
+            row = old
+        else:
+            row = {"schema_version": 1 if source is None else 2, "at": at, "identity": who,
+                   "state_path": str(canonical(state_path)), "generation": 1 if old is None else old["generation"] + 1}
+            if source is not None:
+                row["source"] = source
         with state_lock(path):
             previous = read_json(path)
-            if previous is not None and (not isinstance(previous, dict) or previous.get("schema_version") != 1
+            if previous is not None and (not valid_binding_version(previous) or binding_source(previous) != source
                     or previous.get("identity") != who or previous.get("state_path") != row["state_path"]):
                 raise StateError("Lead identity already has a conflicting or unreadable state binding. Preserve it and explicitly reconcile the original state path.", {})
             if first_use:

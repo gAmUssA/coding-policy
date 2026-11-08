@@ -12,6 +12,7 @@ Clock and sleeper are injected by cli.py. Constants here own polling limits.
 
 import hashlib
 import os
+import re
 import subprocess
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from . import supervision as store
 from .errors import HerdrError, StateError, TeamLeadError, UsageError
-from .herdr import HerdrClient, scrub_for_trace
+from .herdr import HerdrClient, default_backend, scrub_for_trace
 
 DEFAULT_INTERVAL = 2.0
 DEFAULT_DURATION = 45.0
@@ -27,6 +28,11 @@ MAX_DURATION = 60.0
 HEARTBEAT_GRACE = 15.0
 READ_LINES = 200
 OBSERVATION_TIMEOUT = 3.0
+#: The session id Claude Code exports to its child processes, the only lead
+#: identity a Rex round can bind (`supervision.ENV_SOURCES`).
+EXPORTED_SESSION_VAR = "CLAUDE_CODE_SESSION_ID"
+EXPORTED_SOURCE = "claude-code:env"
+EXPORTED_SESSION = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 def observation_runner(argv):
@@ -255,10 +261,8 @@ def watch(state_path, client, at, *, clock, sleeper, probe=process_identity,
 def bind_current(state_path, client, at, *, environ=None, cwd=None, root=None):
     environ = os.environ if environ is None else environ
     pane_id = store.text(environ.get("HERDR_PANE_ID"), "HERDR_PANE_ID")
-    if environ.get("TEAMLEAD_BACKEND") == "rex":
-        # Rex records no agent session id, so there is no native proof to bind
-        # (docs/adr/0016-rex-team-mode-through-herdr-environment.md).
-        raise UsageError("A Rex team round has no native agent session to bind: Rex records no session id. Leave this owner state unbound; dispatch runs without the native Stop backstop, so keep supervision-watch in the foreground.", {})
+    if default_backend(environ) == "rex":
+        return bind_exported(state_path, client, at, environ, pane_id, cwd=cwd, root=root)
     pane = client.pane_get(pane_id)
     native = pane.get("agent_session")
     if (pane.get("pane_id") != pane_id or not isinstance(native, dict)
@@ -268,6 +272,24 @@ def bind_current(state_path, client, at, *, environ=None, cwd=None, root=None):
     who = store.identity(native["value"], cwd or str(Path.cwd()), environ.get("HERDR_ENV"),
                          kind=native["kind"], pane_id=pane_id)
     return store.bind(state_path, who, at, root=root)
+
+
+def bind_exported(state_path, client, at, environ, pane_id, *, cwd=None, root=None):
+    """Bind a Rex lead to the session id Claude Code exports to its children.
+
+    Rex records no agent session, so the proof is Claude Code's own
+    `CLAUDE_CODE_SESSION_ID` plus the adapter confirming Claude Code is the
+    lead pane's agent. It is recorded with source `claude-code:env`, never as
+    Herdr's (docs/adr/0016-rex-team-mode-through-herdr-environment.md).
+    """
+    session = environ.get(EXPORTED_SESSION_VAR) or ""
+    if not EXPORTED_SESSION.fullmatch(session):
+        raise UsageError("This Rex lead exports no Claude Code session id ({}); a Codex or other lead has no session to bind. Leave this owner state unbound: dispatch runs without the native Stop backstop, so keep supervision-watch in the foreground.".format(EXPORTED_SESSION_VAR), {})
+    pane = client.pane_get(pane_id)
+    if pane.get("pane_id") != pane_id or pane.get("agent") != "claude":
+        raise UsageError("Rex pane {} does not host Claude Code, so {} is not this lead's session. Run supervision-bind from the lead's own Claude Code session, started through rex-team.sh.".format(pane_id, EXPORTED_SESSION_VAR), {})
+    who = store.identity(session, cwd or str(Path.cwd()), environ.get("HERDR_ENV"), kind="id", pane_id=pane_id)
+    return store.bind(state_path, who, at, root=root, source=EXPORTED_SOURCE)
 
 
 def register_commands(sub, common):

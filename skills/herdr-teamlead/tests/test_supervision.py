@@ -387,14 +387,111 @@ class SupervisionTest(unittest.TestCase):
         result = runtime.bind_current(self.path, self.client, AT, environ=self.environ, cwd=str(self.root), root=self.bindings)
         self.assertEqual(result["identity"], self.who)
 
-    def test_rex_team_round_refuses_bind_without_reading_the_pane(self):
-        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent_session": {**NATIVE, "value": "rex-lead"}}
-        rex_who = store.identity("rex-lead", str(self.root), self.environ["HERDR_ENV"], pane_id="lead-pane")
+    # -- Rex team rounds (docs/adr/0016-rex-team-mode-through-herdr-environment.md) --
+
+    REX_SESSION_ID = "0b9f3c1e-6a2d-4f8e-9c7b-2d5e8a1f4c3b"
+
+    def rex_environ(self, **extra):
+        return {**self.environ, "TEAMLEAD_BACKEND": "rex", "CLAUDE_CODE_SESSION_ID": self.REX_SESSION_ID, **extra}
+
+    def rex_bind(self, environ=None, path=None):
+        self.client.panes["lead-pane"] = self.client.panes.get("lead-pane") or {"pane_id": "lead-pane", "agent": "claude"}
+        return runtime.bind_current(path or self.root / "rex-owner.json", self.client, AT,
+                                    environ=self.rex_environ() if environ is None else environ,
+                                    cwd=str(self.root), root=self.bindings)
+
+    def test_rex_lead_binds_the_exported_session_with_its_true_source(self):
+        row = self.rex_bind()
+        self.assertEqual((row["schema_version"], row["source"]), (2, "claude-code:env"))
+        self.assertEqual(row["identity"], store.identity(self.REX_SESSION_ID, str(self.root), "fixture", pane_id="lead-pane"))
+        self.assertEqual(store.load(self.root / "rex-owner.json")["binding"], row)
+
+    def test_rex_lead_rebind_is_idempotent(self):
+        self.assertEqual(self.rex_bind(), self.rex_bind())
+
+    def test_codex_lead_without_an_exported_session_is_refused(self):
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent": "codex"}
+        environ = {**self.environ, "TEAMLEAD_BACKEND": "rex"}
         with self.assertRaises(UsageError) as caught:
-            runtime.bind_current(self.path, self.client, AT, environ={**self.environ, "TEAMLEAD_BACKEND": "rex"},
-                                 cwd=str(self.root), root=self.bindings)
-        self.assertIn("Rex records no session id", caught.exception.message)
-        self.assertFalse(store.binding_path(rex_who, self.bindings).exists())
+            self.rex_bind(environ)
+        self.assertIn("Codex", caught.exception.message)
+        self.assertFalse((self.root / "rex-owner.json").exists())
+
+    def test_exported_session_from_a_pane_that_is_not_claude_is_refused(self):
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent": "codex"}
+        with self.assertRaises(UsageError) as caught:
+            self.rex_bind()
+        self.assertIn("does not host Claude Code", caught.exception.message)
+
+    def test_malformed_exported_session_is_refused(self):
+        with self.assertRaises(UsageError):
+            self.rex_bind(self.rex_environ(CLAUDE_CODE_SESSION_ID="../../etc"))
+
+    def test_herdr_round_never_binds_from_the_exported_session(self):
+        # Outside Rex the exported id is ignored and Herdr's proof is still required.
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent": "claude"}
+        with self.assertRaises(UsageError) as caught:
+            self.rex_bind({**self.environ, "CLAUDE_CODE_SESSION_ID": self.REX_SESSION_ID})
+        self.assertIn("native session proof", caught.exception.message)
+
+    def test_unknown_backend_is_refused(self):
+        with self.assertRaises(HerdrError):
+            self.rex_bind(self.rex_environ(TEAMLEAD_BACKEND="tmux"))
+
+    def test_binding_rows_carry_a_source_only_at_version_2(self):
+        self.assertTrue(store.valid_binding_version({"schema_version": 1}))
+        self.assertTrue(store.valid_binding_version({"schema_version": 2, "source": "claude-code:env"}))
+        for row in ({"schema_version": 1, "source": "claude-code:env"}, {"schema_version": 2},
+                    {"schema_version": 2, "source": "herdr:claude"}, {"schema_version": 3, "source": "claude-code:env"}):
+            self.assertFalse(store.valid_binding_version(row), row)
+
+    def rex_stop_hook(self, session_id, backend: str | None = "rex"):
+        """Run hooks/herdr-supervision-stop.sh as the native Stop hook invokes it."""
+        script = Path(_ROOT).parent.parent / "hooks" / "herdr-supervision-stop.sh"
+        environment = {key: value for key, value in os.environ.items() if key != "TEAMLEAD_BACKEND"}
+        environment.update(self.environ, XDG_STATE_HOME=str(self.root / "xdg"))
+        if backend is not None:
+            environment["TEAMLEAD_BACKEND"] = backend
+        payload = {**self.payload, "session_id": session_id}
+        return subprocess.run(["bash", str(script)], input=json.dumps(payload), env=environment,
+                              capture_output=True, text=True, check=False)
+
+    def bind_rex_lead_with_active_work(self):
+        path = self.root / "rex-owner.json"
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent": "claude"}
+        runtime.bind_current(path, self.client, AT, environ=self.rex_environ(), cwd=str(self.root),
+                             root=self.root / "xdg" / "teamlead" / "supervision-bindings")
+        store.enroll(path, {"id": "dispatch-w1", "agent": "w1", "task": "task-w1", "report": str(self.root / "w1.md"),
+                            "pane_id": "pane-w1", "native_session": None}, AT)
+
+    def test_stop_hook_blocks_the_bound_rex_lead_with_active_work(self):
+        self.bind_rex_lead_with_active_work()
+        result = self.rex_stop_hook(self.REX_SESSION_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+        self.assertIn("1 active assignment", json.loads(result.stdout)["reason"])
+
+    def test_stop_hook_ignores_another_session_in_a_rex_round(self):
+        self.bind_rex_lead_with_active_work()
+        result = self.rex_stop_hook("some-worker-session")
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+
+    def test_stop_hook_treats_a_forged_source_as_unreadable(self):
+        self.bind_rex_lead_with_active_work()
+        who = store.identity(self.REX_SESSION_ID, str(self.root), "fixture", pane_id="lead-pane")
+        discovery = store.binding_path(who, self.root / "xdg" / "teamlead" / "supervision-bindings")
+        forged = {**json.loads(discovery.read_text()), "source": "herdr:claude"}
+        discovery.write_text(json.dumps(forged))
+        result = self.rex_stop_hook(self.REX_SESSION_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("binding is unreadable", json.loads(result.stdout)["reason"])
+
+    def test_stop_hook_refuses_an_exported_binding_outside_rex(self):
+        self.bind_rex_lead_with_active_work()
+        result = self.rex_stop_hook(self.REX_SESSION_ID, backend=None)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+        self.assertIn("only a Rex team round", json.loads(result.stdout)["reason"])
 
     def test_path_identity_matches_native_hook_transcript_path(self):
         transcript = str(self.root / "native-session.jsonl")

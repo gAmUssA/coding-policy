@@ -590,13 +590,21 @@ retry and unsupported-schema behavior; only their owner commands mutate them.
 `skills/herdr-teamlead/teamlead/supervision.py` owns `<canonical selected state>.supervision.json`.
 The document has `schema_version: 1`, canonical `state_path`, nullable `binding`,
 and arrays `members`, `events`, `acknowledgements`, `holds`, and `watchers`.
-Each array entry, binding, refinement, resolution, disposition, and evidence
-receipt carries `schema_version: 1`. Timestamps are timezone-aware ISO strings.
+Each array entry, refinement, resolution, disposition, and evidence receipt
+carries `schema_version: 1`; a binding carries `1` or `2`. Timestamps are timezone-aware ISO strings.
 Readers reject unsupported versions or corrupt records without migrating or
 replacing them. A missing never-bound store is empty; loss of a bound owner's
 store requires recovery of its history before rebinding or writing.
 
-- `binding`: `{schema_version, at, generation, identity, state_path}`.
+- `binding`: `{schema_version, at, generation, identity, state_path}`, plus
+  `source` at version 2. Version 1 binds Herdr's native session proof and has
+  no `source`. Version 2 binds an identity the agent exported itself; `source`
+  is `claude-code:env`, Claude Code's `CLAUDE_CODE_SESSION_ID`, and only a Rex
+  team round (`TEAMLEAD_BACKEND=rex`) writes or accepts it
+  (`docs/adr/0016-rex-team-mode-through-herdr-environment.md`). The bump is
+  additive: every reader accepts both versions, version 1 is never migrated,
+  a version-1 row with `source` or a version-2 row with another `source` is
+  corrupt, and the Stop hook refuses a version-2 binding outside Rex.
   `generation` is a positive, increasing integer for native lead changes.
   `identity` contains `kind: id|path`, native `value`, canonical `cwd`,
   `herdr_env`, and `pane_id`. Path identities use an absolute native transcript
