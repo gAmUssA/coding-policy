@@ -1,0 +1,36 @@
+# Lead Runs the Checks
+
+## Status
+
+proposed
+
+## Date
+
+2026-11-08
+
+## Context
+
+In a Rex team round (ADR 0016) a developer's delivery is its program status reaching `done` plus a report carrying the dispatch's nonce. That proves the worker stopped and answered this dispatch. It does not prove the work is right: the report's test results are the worker's own word, and the reviewer re-ran the suite on its read-only checkout.
+
+andrebrov/agent-factory-lab experiment 10 set validity rules for agent pipelines. A result counts only when the orchestrator observed it, "never on another agent's word". A run that cannot reach a verdict is invalid, never a failure of the code under test.
+
+Options considered:
+
+- **Trust the report.** The lead reads the developer's test lines. Cheap, and exactly the word the rule refuses.
+- **Leave the checks to the reviewer.** The reviewer runs the suite. A broken environment then reads as a review finding and enters the fix loop as a code defect.
+- **The lead runs the checks** before the reviewer, in the developer's worktree, with commands the lead chose.
+
+## Decision
+
+Add `rex-team.sh check`. The lead names each command with `--run`; nothing is read from a worker's report. The command refuses with `check_mismatch` unless the writer's branch tip and its worktree `HEAD` are the candidate, and with `check_dirty` when the worktree has uncommitted or untracked changes. Each command runs with `bash -c`, no stdin and a per-command timeout, its output to a log under `REX_TEAM_HOME`. Exit 0 is `pass` and exit 1 `fail`. Any other exit, a timeout, a signal, a command that cannot start, or a run that moved `HEAD` or left the tree dirty is `invalid`. The verdict is data: exit 0 once the runs are classified.
+
+The skill gates the reviewer on `pass`. `fail` returns to the developer with the log paths. `invalid` goes to the operator and never enters the fix loop. The reviewer may rely on the lead's passed check. The worker's latest check is recorded in the state record, which moves to `schema_version` 2.
+
+## Consequences
+
+- "Delivered" now also means "verified by the lead" before any reviewer spends a turn.
+- A broken environment surfaces as `invalid` with its reason, not as a code defect.
+- The lead picks the check commands at Step 1 and owns them; a wrong pick yields a wrong `pass`.
+- A check outlasts an agent lead's shell-tool limit at the default budget; the lead runs it with a longer limit or in the background.
+- Background processes a command leaves after a normal exit are not killed; a timed-out command's whole process group is.
+- Later work: JUnit or other structured result parsing, known-red fixture controls proving a check can fail, and a findings ledger across rounds.

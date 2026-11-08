@@ -1,13 +1,15 @@
 """Rex-native team rounds: one session, one tab per worker, one state file.
 
 Contract:
-  argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `verdict`, `status`,
-          `down` (see `--help`).
+  argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `check`, `verdict`,
+          `status`, `down` (see `--help`).
   stdout: one JSON object per command.
   stderr: `{"error":{"code","message"}}` on failure.
-  exit  : 0 success; 1 failure; 2 usage error.
+  exit  : 0 success; 1 failure; 2 usage error. `check` exits 0 once its runs
+          are classified, whatever the verdict: the verdict is data.
   state : `$REX_TEAM_HOME/<task>.json` (default `~/.rex-team`), schema in
-          skills/rex-teamlead/state-schema.md. Reports live beside it.
+          skills/rex-teamlead/state-schema.md. Reports and check logs live
+          beside it, under `$REX_TEAM_HOME/<task>/`.
 
 Workers are interactive agent TUIs in their own Rex tab. A worker's state is
 its own OSC 7501 program status, read from Rex events; delivery is that
@@ -17,21 +19,29 @@ dispatch's nonce. Nothing parses pane text.
 
 import argparse
 import datetime as dt
+import itertools
 import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .rex import FINISHED, READY, Rex, RexError, Timeout
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 READY_TIMEOUT_SEC = 90
 # Below the shell-tool limit of an agent lead (Claude Code's Bash caps at 600 s),
 # so a long turn ends as `state: timeout`, never as a killed command.
 DEFAULT_WAIT_TIMEOUT_SEC = 300
+#: Per-command budget of a `check` run; the lead's shell call needs longer.
+DEFAULT_CHECK_TIMEOUT_SEC = 1800
+#: Exit codes a check command maps to a verdict; every other outcome is `invalid`.
+CHECK_EXITS = {0: "pass", 1: "fail"}
+CHECK_VERDICTS = ("pass", "fail", "invalid")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
     "claude": lambda model, effort: ["claude"] + (["--model", model] if model else []) + (["--effort", effort] if effort else []),
@@ -101,12 +111,18 @@ class Store:
             version = None  # JSON `true` would otherwise compare equal to 1
         if version is not None and version > SCHEMA_VERSION:
             raise TeamError("state_newer", "{} has schema_version {}, newer than this plugin reads ({}) — update coding-policy and retry".format(path, version, SCHEMA_VERSION))
-        if version != SCHEMA_VERSION:
+        if version not in (1, SCHEMA_VERSION):
             # Version 1 has no predecessor, so any other value is corrupt, not older.
             raise TeamError("state_corrupt", "{} has schema_version {!r}, which no writer produced — restore it, or remove it and run `team up` again".format(path, version))
-        problem = invalid(record) or (None if record["task"] == task else "it records task {!r}".format(record["task"]))
+        problem = invalid(record, version) or (None if record["task"] == task else "it records task {!r}".format(record["task"]))
         if problem:
             raise TeamError("state_corrupt", "{} is malformed: {} — restore it, or remove it and run `team up` again".format(path, problem))
+        if version == 1:
+            # The owner migrates: version 2 only adds the optional worker `check`.
+            record["schema_version"] = SCHEMA_VERSION
+            for worker in record["workers"].values():
+                worker["check"] = None
+            self.save(record)
         return record
 
     def save(self, record):
@@ -121,6 +137,19 @@ class Store:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
+    def checks(self, task, role):
+        """A fresh log directory for one `check`: `<task>/checks/<role>-<k>/`."""
+        parent = self.home / task / "checks"
+        parent.mkdir(parents=True, exist_ok=True)
+        for k in itertools.count(1):
+            directory = parent / "{}-{}".format(role, k)
+            try:
+                directory.mkdir()
+            except FileExistsError:
+                continue
+            return directory
+        raise AssertionError("unreachable")
+
 
 RECORD_FIELDS = {"task": str, "repo": str, "base": str, "session": str, "workers": dict}
 WORKER_FIELDS = {"agent": str, "window": str, "block": str, "worktree": str, "commit": str, "dispatches": list}
@@ -129,7 +158,13 @@ OUTCOME_LABELS = {"delivered": "delivered", "undelivered": "no report", "blocked
 DISPATCH_FIELDS = {"nonce": str, "report": str, "sent_at": str}
 
 
-def invalid(record):
+def utc_stamp(text):
+    """Whether `text` is an ISO-8601 date and time at offset +00:00."""
+    stamp = parse_time(text)
+    return stamp is not None and stamp.utcoffset() == dt.timedelta(0) and "T" in text
+
+
+def invalid(record, version=SCHEMA_VERSION):
     """The first contract violation in a task record, or None (state-schema.md)."""
     for field, kind in RECORD_FIELDS.items():
         if not isinstance(record.get(field), kind):
@@ -146,9 +181,15 @@ def invalid(record):
         for dispatch in worker["dispatches"]:
             if not isinstance(dispatch, dict) or any(not isinstance(dispatch.get(f), k) for f, k in DISPATCH_FIELDS.items()):
                 return "worker {} has a dispatch without nonce, report and sent_at".format(role)
-            sent = parse_time(dispatch["sent_at"])
-            if sent is None or sent.utcoffset() != dt.timedelta(0) or "T" not in dispatch["sent_at"]:
+            if not utc_stamp(dispatch["sent_at"]):
                 return "worker {} has a dispatch whose sent_at is not an ISO-8601 UTC timestamp".format(role)
+        check = worker.get("check")
+        if "check" in worker and version < 2:
+            return "worker {} field check predates schema_version 2".format(role)
+        if check is not None and (not isinstance(check, dict) or not isinstance(check.get("candidate"), str)
+                                  or check.get("verdict") not in CHECK_VERDICTS or not isinstance(check.get("checked_at"), str)
+                                  or not utc_stamp(check["checked_at"])):
+            return "worker {} field check is not {{candidate, verdict, checked_at}} with a UTC checked_at".format(role)
     return None
 
 
@@ -166,6 +207,55 @@ def detached_at(repo, path, commit):
     entry = worktree_entry(git(repo, "worktree", "list", "--porcelain"), path)
     lines = entry.splitlines() if entry else []
     return "detached" in lines and "HEAD {}".format(commit) in lines
+
+
+def run_check(command, cwd, log, timeout):
+    """Run one check command with `bash -c` in `cwd`: no stdin, combined output
+    to `log`, its whole process group killed at `timeout` seconds. The run is
+    classified by how the process ended; the caller checks the worktree."""
+    started = time.monotonic()
+
+    def ran(code, verdict, reason):
+        return {"command": command, "exit": code, "verdict": verdict, "reason": reason, "log": str(log),
+                "seconds": round(time.monotonic() - started, 2)}
+
+    with open(log, "wb") as out:
+        try:
+            proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as exc:
+            return ran(None, "invalid", "the command could not start: {}".format(exc.strerror or exc))
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # The leader is not reaped yet, so its process group id is still ours.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # the group ended between the timeout and the kill
+            proc.wait()
+            return ran(None, "invalid", "timed out after {}s and was killed".format(timeout))
+    if code < 0:
+        return ran(None, "invalid", "killed by signal {}".format(signal.Signals(-code).name))
+    if code in CHECK_EXITS:
+        return ran(code, CHECK_EXITS[code], "exit {}".format(code))
+    if code in (126, 127):
+        return ran(code, "invalid", "exit {}: the command could not run ({})".format(code, "not executable" if code == 126 else "not found"))
+    return ran(code, "invalid", "exit {} is neither pass (0) nor fail (1)".format(code))
+
+
+def worktree_change(worktree, candidate):
+    """Why `worktree` is no longer a clean checkout of `candidate`, or None."""
+    try:
+        head = git(worktree, "rev-parse", "HEAD")
+        dirty = git(worktree, "status", "--porcelain")
+    except TeamError as exc:
+        return "the worktree is unreadable after the run: " + exc.message
+    if head != candidate:
+        return "the run moved HEAD to {}".format(head)
+    if dirty:
+        return "the run left uncommitted or untracked changes: {}".format("; ".join(dirty.splitlines()[:3]))
+    return None
 
 
 def check_name(value, what):
@@ -251,7 +341,7 @@ class Team:
                 raise RexError("{} (cleanup also failed: {})".format(exc.message, undo.message)) from None
             raise
         worker = {"agent": agent, "model": model, "effort": effort, "window": window, "block": block, "worktree": str(path),
-                  "branch": branch, "commit": commit, "dispatches": []}
+                  "branch": branch, "commit": commit, "dispatches": [], "check": None}
         record["workers"][role] = worker
         self.store.save(record)
         tab = self._label(record, role)
@@ -359,6 +449,55 @@ class Team:
             raise TeamError("candidate_mismatch", "{} is not the tip of {} ({}) — use the branch tip as the candidate, or ask the developer why its report differs".format(sha, worker["branch"], tip))
         return {"task": task, "role": role, "branch": worker["branch"], "candidate": tip}
 
+    def check(self, task, role, sha, commands, timeout=DEFAULT_CHECK_TIMEOUT_SEC):
+        """Run the lead's own check commands in the writer's worktree at the
+        candidate and classify each run `pass`, `fail` or `invalid`."""
+        if not commands:
+            raise UsageError("name at least one check command with --run")
+        if timeout < 1:
+            raise UsageError("--timeout must be at least 1 second")
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        if not worker.get("branch"):
+            raise TeamError("check_mismatch", "{} is a read-only worker — run the checks in the developer's worktree, `--role` of the writer".format(role))
+        try:
+            candidate = self.candidate(task, role, sha)["candidate"]
+        except TeamError as exc:
+            if exc.code != "candidate_mismatch":
+                raise
+            raise TeamError("check_mismatch", exc.message) from None
+        worktree = Path(worker["worktree"])
+        head = git(worktree, "rev-parse", "HEAD")
+        if head != candidate:
+            raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
+        dirty = git(worktree, "status", "--porcelain")
+        if dirty:
+            raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
+                role, worktree, "; ".join(dirty.splitlines()[:3])))
+        logs = self.store.checks(task, role)
+        runs, changed = [], False
+        for index, command in enumerate(commands, 1):
+            if changed:
+                runs.append({"command": command, "exit": None, "verdict": "invalid", "reason": "not run: an earlier run changed the worktree",
+                             "log": None, "seconds": 0.0})
+                continue
+            run = run_check(command, worktree, logs / "{}.log".format(index), timeout)
+            moved = worktree_change(worktree, candidate)
+            if moved:
+                run.update(verdict="invalid", reason=moved)
+                changed = True
+            runs.append(run)
+        verdicts = {run["verdict"] for run in runs}
+        verdict = next(v for v in ("invalid", "fail", "pass") if v in verdicts)
+        # Re-read before writing: the runs may have taken long.
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        worker["check"] = {"candidate": candidate, "verdict": verdict, "checked_at": self.now().isoformat()}
+        self.store.save(record)
+        n = len(worker["dispatches"])
+        tab = self._label(record, role, ("#{} ".format(n) if n else "") + "checks " + verdict)
+        return {"task": task, "role": role, "candidate": candidate, "verdict": verdict, "runs": runs, **tab}
+
     def verdict(self, task, role, sha):
         """Read the reviewer's current report: it must review `sha` and give a verdict."""
         record = self.store.load(task)
@@ -393,7 +532,8 @@ class Team:
         for role, worker in record["workers"].items():
             state = (self.rex.status(record["session"], worker["block"]) or {}).get("state", "unknown")
             last = worker["dispatches"][-1] if worker["dispatches"] else None
-            out[role] = {"agent": worker["agent"], "state": state, "delivered": self._delivery(last)[0] if last else None}
+            out[role] = {"agent": worker["agent"], "state": state, "delivered": self._delivery(last)[0] if last else None,
+                         "check": worker.get("check")}
         return {"task": task, "session": record["session"], "workers": out}
 
     def down(self, task, role=None):
@@ -501,6 +641,12 @@ def parser():
     cd.add_argument("--task", required=True)
     cd.add_argument("--role", required=True)
     cd.add_argument("--sha", required=True)
+    ck = sub.add_parser("check")
+    ck.add_argument("--task", required=True)
+    ck.add_argument("--role", required=True)
+    ck.add_argument("--candidate", required=True)
+    ck.add_argument("--run", action="append", required=True, help="a check command, run with `bash -c`; repeat for more")
+    ck.add_argument("--timeout", type=int, default=DEFAULT_CHECK_TIMEOUT_SEC, help="seconds per command")
     vd = sub.add_parser("verdict")
     vd.add_argument("--task", required=True)
     vd.add_argument("--role", required=True)
@@ -548,6 +694,8 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow, no
             result = team.status(args.task)
         elif args.command == "candidate":
             result = team.candidate(args.task, args.role, args.sha)
+        elif args.command == "check":
+            result = team.check(args.task, args.role, args.candidate, args.run, args.timeout)
         elif args.command == "verdict":
             result = team.verdict(args.task, args.role, args.candidate)
         else:

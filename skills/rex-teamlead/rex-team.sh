@@ -3,8 +3,8 @@
 # command skills/rex-teamlead/SKILL.md runs.
 #
 # Contract:
-#   argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `verdict`, `status`,
-#           `down`; see rexlead/team.py,
+#   argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `check`, `verdict`,
+#           `status`, `down`; see rexlead/team.py,
 #           forwarded verbatim to `uv run … python -m rexlead`.
 #   stdout: one JSON object per command; nothing on failure.
 #   stderr: `{"error":{"code","message"}}` on every failure, and nothing else:

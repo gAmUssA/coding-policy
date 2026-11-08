@@ -186,7 +186,7 @@ class UpTest(Fixture):
         code, out, _ = self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))
         self.assertEqual((code, out["session"], out["reused"]), (0, SESSION, False))
         record = self.state()
-        self.assertEqual((record["schema_version"], record["base"]), (1, out["base"]))
+        self.assertEqual((record["schema_version"], record["base"]), (2, out["base"]))
 
     def test_up_reuses_a_live_session_and_names_its_workers(self):
         fake = FakeRex()
@@ -552,6 +552,153 @@ class GateTest(Fixture):
         self.assertEqual((code, err["error"]["code"]), (1, "not_delivered"))
 
 
+class CheckTest(Fixture):
+    """`check` runs real `bash -c` commands in the developer's real worktree."""
+
+    def committed(self, fake):
+        dev = self.spawned(fake)
+        self.worktree = Path(dev["worktree"])
+        (self.worktree / "lib.py").write_text("x = 2\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "change", cwd=self.worktree)
+        self.tip = self.rev("HEAD")
+        return self.tip
+
+    def rev(self, ref):
+        return subprocess.run(["git", "rev-parse", ref], cwd=self.worktree, capture_output=True, text=True, check=True).stdout.strip()
+
+    def check(self, fake, *commands, sha=None, role="dev", timeout=None):
+        argv = ["check", "--task", "t1", "--role", role, "--candidate", sha or self.tip]
+        for command in commands:
+            argv += ["--run", command]
+        return self.cli(fake, *argv + (["--timeout", str(timeout)] if timeout else []))
+
+    def test_a_passing_run_writes_its_output_to_a_log_and_records_the_check(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        code, out, err = self.check(fake, "grep -q 'x = 2' lib.py && printf 'out-%s\\n' line && printf 'err-%s\\n' line >&2")
+        self.assertEqual((code, out["candidate"], out["verdict"]), (0, tip, "pass"), err)
+        run = out["runs"][0]
+        self.assertEqual((run["exit"], run["verdict"], run["reason"]), (0, "pass", "exit 0"))
+        self.assertEqual(Path(run["log"]).read_text(), "out-line\nerr-line\n")
+        self.assertTrue(Path(run["log"]).is_relative_to(Path(self.env["REX_TEAM_HOME"]) / "t1"))
+        self.assertNotIn("out-line", json.dumps(out))
+        recorded = {"candidate": tip, "verdict": "pass", "checked_at": "2026-11-07T12:00:00+00:00"}
+        self.assertEqual(self.state()["workers"]["dev"]["check"], recorded)
+        self.assertEqual(self.cli(fake, "status", "--task", "t1")[1]["workers"]["dev"]["check"], recorded)
+
+    def test_the_command_reads_no_stdin(self):
+        fake = FakeRex()
+        self.committed(fake)
+        out = self.check(fake, "read -r line")[1]
+        self.assertEqual((out["verdict"], out["runs"][0]["exit"]), ("fail", 1))
+
+    def test_exit_1_is_a_fail_and_every_command_runs(self):
+        fake = FakeRex()
+        self.committed(fake)
+        code, out, _ = self.check(fake, "echo broken; exit 1", "true")
+        self.assertEqual((code, out["verdict"], [r["verdict"] for r in out["runs"]]), (0, "fail", ["fail", "pass"]))
+        self.assertEqual(Path(out["runs"][0]["log"]).read_text(), "broken\n")
+        self.assertNotEqual(out["runs"][0]["log"], out["runs"][1]["log"])
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "fail")
+
+    def invalid(self, command, reason, timeout=None):
+        fake = FakeRex()
+        self.committed(fake)
+        code, out, err = self.check(fake, command, timeout=timeout)
+        self.assertEqual((code, out.get("verdict")), (0, "invalid"), err)
+        self.assertEqual(out["runs"][0]["verdict"], "invalid")
+        self.assertIn(reason, out["runs"][0]["reason"])
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
+        return out["runs"][0]
+
+    def test_exit_2_is_invalid(self):
+        self.assertEqual(self.invalid("exit 2", "neither pass (0) nor fail (1)")["exit"], 2)
+
+    def test_a_command_not_found_is_invalid(self):
+        self.assertEqual(self.invalid("no-such-check-command-xyz", "not found")["exit"], 127)
+
+    def test_a_command_that_cannot_execute_is_invalid(self):
+        self.assertEqual(self.invalid("/dev/null", "not executable")["exit"], 126)
+
+    def test_a_command_killed_by_a_signal_is_invalid(self):
+        self.assertIsNone(self.invalid("kill -TERM $$", "SIGTERM")["exit"])
+
+    def test_a_command_past_its_timeout_is_killed_and_invalid(self):
+        self.assertIsNone(self.invalid("sleep 30", "timed out after 1s", timeout=1)["exit"])
+
+    def test_a_command_that_commits_is_invalid(self):
+        run = self.invalid("git -c user.email=t@t -c user.name=t commit -q --allow-empty -m sneak && exit 0", "moved HEAD")
+        self.assertEqual(run["exit"], 0)
+
+    def test_a_command_that_leaves_a_file_is_invalid(self):
+        self.assertIn("left.txt", self.invalid("echo x > left.txt", "untracked")["reason"])
+
+    def test_invalid_outranks_fail_and_a_changed_worktree_stops_the_rest(self):
+        fake = FakeRex()
+        self.committed(fake)
+        marker = Path(self.tmp.name) / "ran"
+        out = self.check(fake, "exit 1", "touch stray.txt", "touch {}".format(marker))[1]
+        self.assertEqual((out["verdict"], [r["verdict"] for r in out["runs"]]), ("invalid", ["fail", "invalid", "invalid"]))
+        self.assertEqual((out["runs"][2]["log"], out["runs"][2]["reason"]), (None, "not run: an earlier run changed the worktree"))
+        self.assertFalse(marker.exists())
+
+    def refused(self, fake, code, **kw):
+        marker = Path(self.tmp.name) / "ran"
+        result = self.check(fake, "touch {}".format(marker), **kw)
+        self.assertEqual((result[0], result[2].get("error", {}).get("code")), (1, code), result)
+        self.assertEqual(result[1], {})
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+        self.assertFalse((Path(self.env["REX_TEAM_HOME"]) / "t1" / "checks").exists())
+
+    def test_a_candidate_that_is_not_the_branch_tip_is_refused(self):
+        fake = FakeRex()
+        self.committed(fake)
+        for sha in (self.state()["base"], "not-a-sha"):
+            self.refused(fake, "check_mismatch", sha=sha)
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+
+    def test_a_worktree_whose_head_is_not_the_candidate_is_refused(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        git("checkout", "-q", "--detach", "HEAD~1", cwd=self.worktree)
+        self.refused(fake, "check_mismatch")
+        git("checkout", "-q", "team/t1-dev", cwd=self.worktree)
+        self.assertEqual(self.check(fake, "true")[1]["candidate"], tip)
+
+    def test_a_read_only_worker_is_refused(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", tip, "--read-only")
+        self.refused(fake, "check_mismatch", role="review")
+
+    def test_a_dirty_worktree_is_refused_and_a_clean_one_runs(self):
+        fake = FakeRex()
+        self.committed(fake)
+        for dirty, clean in (((self.worktree / "new.txt").write_text, lambda: (self.worktree / "new.txt").unlink()),
+                             ((self.worktree / "lib.py").write_text, lambda: git("checkout", "--", "lib.py", cwd=self.worktree))):
+            dirty("dirty\n")
+            self.refused(fake, "check_dirty")
+            clean()
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+
+    def test_the_tab_names_the_dispatch_and_the_check_verdict(self):
+        fake = FakeRex()
+        block = self.spawned(fake)["block"]
+        self.worktree = Path(self.state()["workers"]["dev"]["worktree"])
+        self.tip = self.rev("HEAD")
+        self.assertEqual(self.check(fake, "true")[1]["tab_label"], "dev · claude · checks pass")
+        self.cli(fake, "assign", "--task", "t1", "--role", "dev", "--brief", str(self.brief))
+        self.assertEqual(self.check(fake, "exit 1")[1]["tab_label"], "dev · claude · #1 checks fail")
+        self.assertEqual(fake.tab_labels[block.replace("block:", "window:")], "dev · claude · #1 checks fail")
+
+    def test_no_command_and_a_zero_timeout_are_usage_errors(self):
+        fake = FakeRex()
+        self.committed(fake)
+        self.assertEqual(self.cli(fake, "check", "--task", "t1", "--role", "dev", "--candidate", self.tip)[0], 2)
+        self.assertEqual(self.check(fake, "true", timeout="0")[0], 2)
+
+
 class StatusDownTest(Fixture):
     def test_down_keeps_the_writer_worktree_and_removes_the_reviewer_checkout(self):
         fake = FakeRex()
@@ -635,7 +782,7 @@ class StateTest(Fixture):
         path = Path(self.env["REX_TEAM_HOME"]) / "t1.json"
         good = self.state()
         worker = {"agent": "claude", "window": "window:a", "block": "block:a", "worktree": "/w", "commit": "c", "dispatches": []}
-        cases = [({**good, "schema_version": 2}, "state_newer"), ({**good, "schema_version": "1"}, "state_corrupt"),
+        cases = [({**good, "schema_version": 3}, "state_newer"), ({**good, "schema_version": "1"}, "state_corrupt"),
                  ({**good, "schema_version": True}, "state_corrupt"), ({**good, "task": "t2"}, "state_corrupt"),
                  ({**good, "workers": {"dev": {**worker, "model": 5}}}, "state_corrupt"),
                  ({**good, "workers": {"dev": {**worker, "dispatches": [{"nonce": "n", "report": "/r", "sent_at": "yesterday"}]}}}, "state_corrupt"),
@@ -649,6 +796,36 @@ class StateTest(Fixture):
             self.assertEqual(self.cli(fake, "status", "--task", "t1")[2]["error"]["code"], code, record)
         path.write_text(json.dumps(good))
         self.assertEqual(self.cli(fake, "status", "--task", "t1")[0], 0)
+
+    def test_a_version_1_record_is_migrated_and_rewritten_by_the_owner(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        path = Path(self.env["REX_TEAM_HOME"]) / "t1.json"
+        old = self.state()
+        old["schema_version"] = 1
+        del old["workers"]["dev"]["check"]
+        path.write_text(json.dumps(old))
+        code, out, err = self.cli(fake, "status", "--task", "t1")
+        self.assertEqual((code, out["workers"]["dev"]["check"]), (0, None), err)
+        self.assertEqual((self.state()["schema_version"], self.state()["workers"]["dev"]["check"]), (2, None))
+
+    def test_check_records_are_validated(self):
+        fake = FakeRex()
+        self.spawned(fake)
+        path = Path(self.env["REX_TEAM_HOME"]) / "t1.json"
+        good = self.state()
+        dev = good["workers"]["dev"]
+        check = {"candidate": "c", "verdict": "pass", "checked_at": SENT.isoformat()}
+        cases = [{**good, "schema_version": 1, "workers": {"dev": {**dev, "check": check}}},
+                 {**good, "workers": {"dev": {**dev, "check": {**check, "verdict": "green"}}}},
+                 {**good, "workers": {"dev": {**dev, "check": {**check, "checked_at": "2026-11-07"}}}},
+                 {**good, "workers": {"dev": {**dev, "check": {k: v for k, v in check.items() if k != "candidate"}}}},
+                 {**good, "workers": {"dev": {**dev, "check": "pass"}}}]
+        for record in cases:
+            path.write_text(json.dumps(record))
+            self.assertEqual(self.cli(fake, "status", "--task", "t1")[2]["error"]["code"], "state_corrupt", record)
+        path.write_text(json.dumps({**good, "workers": {"dev": {**dev, "check": check}}}))
+        self.assertEqual(self.cli(fake, "status", "--task", "t1")[1]["workers"]["dev"]["check"], check)
 
     def test_a_session_list_rex_did_not_answer_is_a_failure_not_an_empty_list(self):
         self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))
@@ -688,6 +865,24 @@ class EntryPointTest(unittest.TestCase):
             done = subprocess.run([sys.executable, "-m", "rexlead", "status"], cwd=skill, env=env,
                                   capture_output=True, text=True, check=False)
             self.assertEqual((done.returncode, json.loads(done.stderr)["error"]["code"]), (2, "usage_error"))
+
+
+    def test_check_through_python_m_rexlead_exits_0_with_its_verdict(self):
+        fake = FakeRex()
+        fixture = Fixture("run")
+        fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        worktree = fixture.spawned(fake)["worktree"]
+        tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, capture_output=True, text=True, check=True).stdout.strip()
+        env = {"PATH": os.environ.get("PATH", ""), **fixture.env}
+        skill = Path(__file__).resolve().parent.parent
+        for command, verdict in (("true", "pass"), ("exit 3", "invalid")):
+            done = subprocess.run([sys.executable, "-m", "rexlead", "--rex", "/nonexistent/rex", "check", "--task", "t1", "--role", "dev",
+                                   "--candidate", tip, "--run", command], cwd=skill, env=env, capture_output=True, text=True, check=False)
+            self.assertEqual((done.returncode, done.stderr), (0, ""))
+            out = json.loads(done.stdout)
+            self.assertEqual(out["verdict"], verdict)
+            self.assertIn("tab_label_error", out)
 
 
 class RexClientTest(unittest.TestCase):
