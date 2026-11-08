@@ -39,6 +39,9 @@ POLL_INTERVAL_SEC = 0.25
 DEFAULT_WAIT_TIMEOUT_MS = 600_000
 DEFAULT_START_TIMEOUT_MS = 30_000
 PROMPT_STALL_MS = 5_000
+#: Extra snapshot reads when a foreground process Rex named has exited before
+#: `ps` could describe it, as an agent does while it is being stopped.
+SNAPSHOT_RACE_RETRIES = 3
 #: Bytes of a failing tool's stderr kept in a diagnostic, after redaction.
 STDERR_CAP_BYTES = 300
 
@@ -179,6 +182,21 @@ class Rex:
             raise AdapterError("rex_malformed", "rex do returned {} bytes of non-JSON output — the adapter needs Rex 0.1.0 (1853) or later; update Rex and retry".format(len(out))) from None
 
     def snapshot(self):
+        """The session's blocks, each terminal annotated with `fg_ps`.
+
+        Rex and `ps` are read one after the other, so a foreground process can
+        exit in between. The whole snapshot is re-read until every foreground
+        `ps` describes is still running, so callers see either the exiting
+        process or the pane after it, never a pane with an unknown foreground.
+        """
+        value = self.snapshot_once()
+        for _ in range(SNAPSHOT_RACE_RETRIES):
+            if all(block["fg_ps"] is not None for block in terminals(value) if foreground(block)):
+                break
+            value = self.snapshot_once()
+        return value
+
+    def snapshot_once(self):
         value = self.lua(SNAPSHOT_LUA)
         if not isinstance(value, dict):
             raise AdapterError("rex_failed", "rex returned no session snapshot for {} — set REX_SESSION to a live session from `rex ls`".format(self.session))

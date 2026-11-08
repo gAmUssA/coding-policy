@@ -24,7 +24,7 @@ from teamlead.errors import HerdrError
 from teamlead.herdr import HerdrClient, default_backend
 
 from tests.fakes import FakeCompleted
-from tests.test_rex_herdr import CLAUDE, SESSION, SHELL, Clock, FakeRex, agent_process, record, team_snapshot
+from tests.test_rex_herdr import CLAUDE, SESSION, SHELL, Clock, FakeRex, agent_process, record, shell_process, team_snapshot
 
 
 def client_over(rex, backend="rex"):
@@ -94,6 +94,17 @@ class RestorationTest(unittest.TestCase):
         after["blocks"][0]["process"] = {"child": {"argv0": None, "name": "login", "pid": 99},
                                          "foreground": {"argv0": "-zsh", "name": "zsh", "pid": 100, "cwd": "/repo"}}
         released = restoration.await_release(client_over(FakeRex(after)), "claude", CLAUDE, archived, 101, sleep=lambda _: None)
+        self.assertEqual(released, {"attempts": 1, "shell_pid": 100})
+
+
+class ReleaseRaceTest(unittest.TestCase):
+    def test_release_settles_when_the_agent_exits_between_rex_and_ps(self):
+        # The first read catches Claude mid-exit: Rex still names it, `ps`
+        # no longer lists it. The release wait must see the shell, not fail.
+        exited = team_snapshot()
+        exited["blocks"][0]["process"] = shell_process(100)
+        rex = FakeRex(team_snapshot(), exited, ps_misses=1)
+        released = restoration.await_release(client_over(rex), "claude", CLAUDE, 100, 101, sleep=lambda _: None)
         self.assertEqual(released, {"attempts": 1, "shell_pid": 100})
 
 

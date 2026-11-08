@@ -74,7 +74,7 @@ class FakeRex:
     """The `rex` and `ps` executables. Snapshots are served from a queue (the
     last one repeats); `do` label scripts and terminal writes are recorded."""
 
-    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None, ps_result=None, raises=None, fail_verb=None):
+    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None, ps_result=None, raises=None, fail_verb=None, ps_misses=0):
         self.snapshots = [copy.deepcopy(s) for s in snapshots] or [team_snapshot()]
         self.screens = screens or {}
         self.ps = ps or {}
@@ -82,6 +82,9 @@ class FakeRex:
         self.raises = raises
         self.fail = fail
         self.fail_verb = fail_verb
+        #: The next N `ps` calls omit every non-shell pid, as if each agent
+        #: exited between Rex's read and `ps`.
+        self.ps_misses = ps_misses
         self.on_send = on_send
         self.calls, self.writes = [], []
 
@@ -111,6 +114,9 @@ class FakeRex:
             if self.ps_result is not None:
                 return self.ps_result
             lines = [line for line in (self.ps_line(int(pid)) for pid in argv[-1].split(",")) if line]
+            if self.ps_misses:
+                self.ps_misses -= 1
+                lines = [line for line in lines if line.split()[2].lstrip("-") in rex_herdr.SHELLS]
             return FakeCompleted(0 if len(lines) == len(argv[-1].split(",")) else 1, "".join(lines), "")
         if self.fail and self.fail_verb in (None, argv[1]):
             return FakeCompleted(1, "", self.fail)
@@ -472,6 +478,18 @@ class PaneTest(unittest.TestCase):
         for rex in (FakeRex(ps_result=FakeCompleted(2, "", "ps: illegal option")), FakeRex(raises=("ps", FileNotFoundError("ps")))):
             code, out, err = run(rex, "agent", "list")
             self.assertEqual((code, out, error_code(err)), (1, "", "ps_failed"))
+
+    def test_agent_exiting_between_rex_and_ps_reads_the_pane_after(self):
+        exited = team_snapshot()
+        exited["blocks"][0]["process"] = shell_process(100)
+        rex = FakeRex(team_snapshot(), exited, ps_misses=1)
+        code, out, err = run(rex, "pane", "process-info", "--pane", CLAUDE)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(result(out)["process_info"], {"pane_id": CLAUDE, "shell_pid": 100, "foreground_processes": [{"pid": 100, "name": "zsh"}]})
+
+    def test_foreground_ps_never_describes_is_process_gone(self):
+        code, _, err = run(FakeRex(ps_misses=10), "pane", "process-info", "--pane", CLAUDE)
+        self.assertEqual((code, error_code(err)), (1, "process_gone"))
 
     def test_send_text_and_keys(self):
         rex = FakeRex()
