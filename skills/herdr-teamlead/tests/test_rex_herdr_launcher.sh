@@ -28,6 +28,8 @@
 #                         the warning is not forwarded.
 #   9. Control bytes   -> a path holding a tab and a newline still yields one
 #                         valid JSON envelope.
+#  10. Clean success   -> the module's stdout passes through byte for byte and
+#                         a uv warning on stderr is not forwarded.
 #
 # Run: bash skills/herdr-teamlead/tests/test_rex_herdr_launcher.sh
 set -uo pipefail
@@ -52,6 +54,7 @@ if [[ -n "${FAKE_UV_STDERR:-}" ]]; then
   printf '%s\n' "$FAKE_UV_STDERR" >&2
   exit "${FAKE_UV_RC:-0}"
 fi
+if [[ -n "${FAKE_UV_WARN:-}" ]]; then printf '%s\n' "$FAKE_UV_WARN" >&2; fi
 printf 'ARGV: %s\n' "$*"
 printf 'PYTHONPATH: %s\n' "${PYTHONPATH:-}"
 exit "${FAKE_UV_RC:-0}"
@@ -132,6 +135,11 @@ main() {
   out="$(env UV_BIN="$fakeuv" bash "$odd/rex-herdr.sh" agent list 2>&1 >/dev/null)"; rc=$?
   if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e --arg dir "$odd" '.error.code == "setup_error" and (.error.message | contains($dir))' >/dev/null; then
     pass; else fail "control bytes: expected one valid setup_error envelope naming the path, got rc=$rc out=$out"; fi
+
+  # 10. Success: stdout intact, stderr empty even when uv warned.
+  stdout_only="$(env UV_BIN="$fakeuv" FAKE_UV_WARN="warning: token ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" bash "$skill/rex-herdr.sh" agent list 2>"$TMP/err10")"; rc=$?
+  if [[ $rc -eq 0 && ! -s "$TMP/err10" ]] && printf '%s' "$stdout_only" | grep -qx -- "ARGV: run --no-project --no-python-downloads --python >=3.11 python -m teamlead.rex_herdr agent list"; then
+    pass; else fail "clean success: expected stdout passthrough and empty stderr, got rc=$rc stdout=$stdout_only err=$(cat "$TMP/err10")"; fi
 
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))

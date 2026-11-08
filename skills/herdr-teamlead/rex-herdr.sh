@@ -45,19 +45,12 @@ setup_error() { # <message>
   printf '{"error":{"code":"setup_error","message":"%s"}}\n' "$(json_escape "$1")" >&2
 }
 
-ERRFILE=""
-
-# An EXIT trap's last status becomes the script's (rules/error-handling.md).
-cleanup() {
-  if [[ -n "$ERRFILE" ]] && ! rm -f "$ERRFILE"; then
-    echo "rex-herdr: could not remove ${ERRFILE}" >&2
-  fi
-  return 0
-}
-
 main() {
   local skill_dir
-  skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if ! skill_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; then
+    setup_error "rex-herdr: cannot resolve the launcher's own directory — run it by its full path from the installed plugin"
+    return 1
+  fi
 
   if ! command -v "$UV_BIN" >/dev/null 2>&1; then
     setup_error "rex-herdr: '${UV_BIN}' not found on PATH — install uv (https://docs.astral.sh/uv/getting-started/installation/) or point UV_BIN at it"
@@ -69,16 +62,15 @@ main() {
   fi
 
   export PYTHONPATH="${skill_dir}${PYTHONPATH:+:${PYTHONPATH}}"
-  ERRFILE="$(mktemp -t rex-herdr.XXXXXX)" || { setup_error "rex-herdr: mktemp failed — check that \$TMPDIR is writable"; return 1; }
-  trap cleanup EXIT
-  local rc=0 last
-  "$UV_BIN" run --no-project --no-python-downloads --python '>=3.11' python -m teamlead.rex_herdr "$@" 2>"$ERRFILE" || rc=$?
+  local rc=0 err last
+  # stdout passes straight through on fd 3; stderr is captured, never forwarded.
+  { err="$("$UV_BIN" run --no-project --no-python-downloads --python '>=3.11' python -m teamlead.rex_herdr "$@" 2>&1 1>&3 3>&-)" || rc=$?; } 3>&1
   if (( rc == 0 )); then
     return 0
   fi
   # The module ends every failure with one JSON-encoded envelope line; uv or
   # interpreter warnings may precede it. No envelope means uv failed first.
-  last="$(tail -n 1 "$ERRFILE")"
+  last="${err##*$'\n'}"
   if [[ "$last" == '{"error":'* ]]; then
     printf '%s\n' "$last" >&2
     return "$rc"
