@@ -28,8 +28,11 @@ with_files() {
   # $1 = output-json contents; echoes "<auth> <out>" temp paths, caller cleans dir
   local dir
   dir=$(mktemp -d) || { echo "fatal: mktemp -d failed — check that \$TMPDIR is writable" >&2; exit 2; }
-  printf '%s' "$AUTH_JSON" > "$dir/auth.json" || { echo "fatal: cannot write $dir/auth.json" >&2; exit 2; }
-  printf '%s' "$1" > "$dir/out.json"        || { echo "fatal: cannot write $dir/out.json" >&2; exit 2; }
+  if ! printf '%s' "$AUTH_JSON" > "$dir/auth.json" || ! printf '%s' "$1" > "$dir/out.json"; then
+    rm -rf "$dir" || echo "warning: could not remove $dir" >&2
+    echo "fatal: cannot write the fixtures under $dir" >&2
+    exit 2
+  fi
   echo "$dir"
 }
 
