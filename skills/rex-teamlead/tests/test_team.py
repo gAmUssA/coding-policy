@@ -20,6 +20,7 @@ import itertools
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -574,46 +575,21 @@ class CheckTest(Fixture):
             argv += ["--run", command]
         return self.cli(fake, *argv + (["--timeout", str(timeout)] if timeout else []))
 
-    def test_a_passing_run_writes_its_output_to_a_log_and_records_the_check(self):
+    def test_a_passing_run_keeps_no_output_and_records_the_check(self):
         fake = FakeRex()
         tip = self.committed(fake)
         code, out, err = self.check(fake, "grep -q 'x = 2' lib.py && printf 'out-%s\\n' line && printf 'err-%s\\n' line >&2")
         self.assertEqual((code, out["candidate"], out["verdict"]), (0, tip, "pass"), err)
         run = out["runs"][0]
         self.assertEqual((run["exit"], run["verdict"], run["reason"]), (0, "pass", "exit 0"))
-        self.assertEqual(Path(run["log"]).read_text(), "out-line\nerr-line\n")
-        self.assertTrue(Path(run["log"]).is_relative_to(Path(self.env["REX_TEAM_HOME"]) / "t1"))
-        self.assertNotIn("out-line", json.dumps(out))
+        self.assertNotIn("log", run)
+        self.assertNotIn("out-line", json.dumps([out, err]))
+        home = Path(self.env["REX_TEAM_HOME"])
+        self.assertEqual([p for p in home.rglob("*") if p.is_file() and "out-line" in p.read_text(errors="replace")], [])
+        self.assertFalse((home / "t1" / "checks").exists())
         recorded = {"candidate": tip, "verdict": "pass", "checked_at": "2026-11-07T12:00:00+00:00"}
         self.assertEqual(self.state()["workers"]["dev"]["check"], recorded)
         self.assertEqual(self.cli(fake, "status", "--task", "t1")[1]["workers"]["dev"]["check"], recorded)
-
-    def test_secrets_in_a_runs_output_are_redacted_from_its_log(self):
-        fake = FakeRex()
-        self.committed(fake)
-        # Fixture values built at runtime, so no credential-shaped literal sits in the source.
-        token = "fixture-token-value-0123"
-        github = "gh" + "p_" + "A" * 36
-        key = "-----BEGIN " + "RSA PRIVATE KEY-----\nMIIfixture\n-----END " + "RSA PRIVATE KEY-----"
-        command = ('printf "out %s\\n" "$REX_FIXTURE_API_TOKEN"; printf "err %s\\n" "$REX_FIXTURE_API_TOKEN" >&2; '
-                   'printf "%s\\n" "$REX_FIXTURE_GH" "$REX_FIXTURE_KEY" "kept words"')
-        env = {"REX_FIXTURE_API_TOKEN": token, "REX_FIXTURE_GH": github, "REX_FIXTURE_KEY": key}
-        with mock.patch.dict(os.environ, env):
-            out = self.check(fake, command)[1]
-        log = Path(out["runs"][0]["log"]).read_text()
-        for secret in (token, github, "MIIfixture"):
-            self.assertNotIn(secret, log)
-        self.assertEqual(log.count("[REDACTED]"), 4)
-        self.assertIn("out [REDACTED]\n", log)
-        self.assertIn("err [REDACTED]\n", log)
-        self.assertIn("kept words\n", log)
-
-    def test_a_log_without_secrets_is_left_as_written(self):
-        fake = FakeRex()
-        self.committed(fake)
-        with mock.patch.dict(os.environ, {"REX_FIXTURE_API_TOKEN": "fixture-token-value-0123", "REX_FIXTURE_NAME": "fixture-name-value"}):
-            out = self.check(fake, 'printf "%s\\n" "$REX_FIXTURE_NAME" "short sk-1 AKIA"')[1]
-        self.assertEqual(Path(out["runs"][0]["log"]).read_text(), "fixture-name-value\nshort sk-1 AKIA\n")
 
     def test_the_command_reads_no_stdin(self):
         fake = FakeRex()
@@ -626,8 +602,7 @@ class CheckTest(Fixture):
         self.committed(fake)
         code, out, _ = self.check(fake, "echo broken; exit 1", "true")
         self.assertEqual((code, out["verdict"], [r["verdict"] for r in out["runs"]]), (0, "fail", ["fail", "pass"]))
-        self.assertEqual(Path(out["runs"][0]["log"]).read_text(), "broken\n")
-        self.assertNotEqual(out["runs"][0]["log"], out["runs"][1]["log"])
+        self.assertEqual(out["runs"][0]["reason"], "exit 1")
         self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "fail")
 
     def invalid(self, command, reason, timeout=None):
@@ -640,27 +615,50 @@ class CheckTest(Fixture):
         self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
         return out["runs"][0]
 
-    def test_exit_2_is_invalid(self):
-        self.assertEqual(self.invalid("exit 2", "neither pass (0) nor fail (1)")["exit"], 2)
+    def failed(self, command, code):
+        fake = FakeRex()
+        self.committed(fake)
+        result, out, err = self.check(fake, command)
+        self.assertEqual((result, out.get("verdict")), (0, "fail"), err)
+        run = out["runs"][0]
+        self.assertEqual((run["exit"], run["verdict"], run["reason"]), (code, "fail", "exit {}".format(code)))
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "fail")
+        return run
 
-    def test_a_command_not_found_is_invalid(self):
-        self.assertEqual(self.invalid("no-such-check-command-xyz", "exit 127 is neither pass (0) nor fail (1)")["exit"], 127)
+    def test_exit_2_is_a_fail(self):
+        self.failed("exit 2", 2)
 
-    def test_a_command_that_cannot_execute_is_invalid(self):
-        self.assertEqual(self.invalid("/dev/null", "exit 126 is neither pass (0) nor fail (1)")["exit"], 126)
+    def test_a_runners_own_failure_exit_is_a_fail(self):
+        self.failed("exit 101", 101)
+
+    def test_a_command_not_found_is_a_fail(self):
+        self.failed("no-such-check-command-xyz", 127)
+
+    def test_a_command_that_cannot_execute_is_a_fail(self):
+        self.failed("/dev/null", 126)
 
     def ran_then_exited(self, code):
-        run = self.invalid("printf 'actually-%s\\n' ran; exit {}".format(code), "exit {}".format(code))
-        self.assertEqual((run["exit"], run["reason"]), (code, "exit {} is neither pass (0) nor fail (1)".format(code)))
-        self.assertEqual(Path(run["log"]).read_text(), "actually-ran\n")
+        marker = Path(self.tmp.name) / "ran-{}".format(code)
+        run = self.failed("touch {}; exit {}".format(marker, code), code)
+        self.assertTrue(marker.exists())
         for claim in ("could not", "not found", "not executable", "never"):
             self.assertNotIn(claim, run["reason"])
 
-    def test_a_command_that_ran_then_exited_126_is_invalid_and_not_called_unrun(self):
+    def test_a_command_that_ran_then_exited_126_is_a_fail_and_not_called_unrun(self):
         self.ran_then_exited(126)
 
-    def test_a_command_that_ran_then_exited_127_is_invalid_and_not_called_unrun(self):
+    def test_a_command_that_ran_then_exited_127_is_a_fail_and_not_called_unrun(self):
         self.ran_then_exited(127)
+
+    def test_bash_that_cannot_start_is_invalid(self):
+        # Only the run itself sees the empty PATH: `check`'s own git reads need the real one.
+        with mock.patch.dict(os.environ, {"PATH": str(Path(self.tmp.name) / "empty-path")}):
+            run, stop = teammod.run_check("true", self.tmp.name, 5)
+        self.assertEqual((run["exit"], run["verdict"], stop), (None, "invalid", None))
+        self.assertIn("bash could not start", run["reason"])
+        with mock.patch.dict(os.environ, {"PATH": os.environ.get("PATH", "")}):
+            run, stop = teammod.run_check("true", self.tmp.name, 5)
+        self.assertEqual((run["exit"], run["verdict"], stop), (0, "pass", None))
 
     def hide_untracked(self):
         git("config", "--local", "status.showUntrackedFiles", "no", cwd=self.worktree)
@@ -690,13 +688,52 @@ class CheckTest(Fixture):
     def test_a_command_that_leaves_a_file_is_invalid(self):
         self.assertIn("left.txt", self.invalid("echo x > left.txt", "untracked")["reason"])
 
+    @staticmethod
+    def running(pid):
+        """Whether `pid` is a live process; a zombie awaiting its reaper is not."""
+        done = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+        return done.returncode == 0 and not done.stdout.strip().startswith("Z")
+
+    def test_a_command_that_leaves_a_background_process_is_invalid_and_it_is_killed(self):
+        fake = FakeRex()
+        self.committed(fake)
+        pidfile, marker = Path(self.tmp.name) / "background.pid", Path(self.tmp.name) / "ran"
+        code, out, err = self.check(fake, "sleep 30 & echo $! > {}".format(pidfile), "touch {}".format(marker))
+        pid = int(pidfile.read_text())
+        self.addCleanup(lambda: self.running(pid) and os.kill(pid, signal.SIGKILL))
+        self.assertEqual((code, out.get("verdict")), (0, "invalid"), err)
+        run = out["runs"][0]
+        self.assertEqual((run["exit"], run["verdict"], run["reason"]), (0, "invalid", "left background processes running (killed): {}".format(pid)))
+        self.assertEqual((out["runs"][1]["exit"], out["runs"][1]["reason"]), (None, "not run: an earlier run left background processes running"))
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
+        self.assertFalse(self.running(pid))
+
+    def test_a_command_that_waits_for_its_own_background_job_passes(self):
+        fake = FakeRex()
+        self.committed(fake)
+        out = self.check(fake, "sleep 0.2 & wait")[1]
+        self.assertEqual((out["verdict"], out["runs"][0]["reason"]), ("pass", "exit 0"))
+
+    def test_a_python_without_waitid_is_a_setup_error_before_any_run(self):
+        fake = FakeRex()
+        self.committed(fake)
+        marker = Path(self.tmp.name) / "ran"
+        with mock.patch.dict(os.__dict__):
+            del os.waitid
+            code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "setup_error"))
+        self.assertIn("os.waitid", err["error"]["message"])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+
     def test_invalid_outranks_fail_and_a_changed_worktree_stops_the_rest(self):
         fake = FakeRex()
         self.committed(fake)
         marker = Path(self.tmp.name) / "ran"
         out = self.check(fake, "exit 1", "touch stray.txt", "touch {}".format(marker))[1]
         self.assertEqual((out["verdict"], [r["verdict"] for r in out["runs"]]), ("invalid", ["fail", "invalid", "invalid"]))
-        self.assertEqual((out["runs"][2]["log"], out["runs"][2]["reason"]), (None, "not run: an earlier run changed the worktree"))
+        self.assertEqual((out["runs"][2]["exit"], out["runs"][2]["reason"]), (None, "not run: an earlier run changed the worktree"))
         self.assertFalse(marker.exists())
 
     def refused(self, fake, code, **kw):
@@ -706,7 +743,6 @@ class CheckTest(Fixture):
         self.assertEqual(result[1], {})
         self.assertFalse(marker.exists())
         self.assertIsNone(self.state()["workers"]["dev"]["check"])
-        self.assertFalse((Path(self.env["REX_TEAM_HOME"]) / "t1" / "checks").exists())
 
     def test_a_candidate_that_is_not_the_branch_tip_is_refused(self):
         fake = FakeRex()
@@ -1241,7 +1277,7 @@ class EntryPointTest(unittest.TestCase):
         tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, capture_output=True, text=True, check=True).stdout.strip()
         env = {"PATH": os.environ.get("PATH", ""), **fixture.env}
         skill = Path(__file__).resolve().parent.parent
-        for command, verdict in (("true", "pass"), ("exit 3", "invalid")):
+        for command, verdict in (("true", "pass"), ("exit 3", "fail"), ("kill -TERM $$", "invalid")):
             done = subprocess.run([sys.executable, "-m", "rexlead", "--rex", "/nonexistent/rex", "check", "--task", "t1", "--role", "dev",
                                    "--candidate", tip, "--run", command], cwd=skill, env=env, capture_output=True, text=True, check=False)
             self.assertEqual((done.returncode, done.stderr), (0, ""))

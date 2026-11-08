@@ -31,14 +31,14 @@ skills/rex-teamlead/state-schema.md
 | `assign` | `--task`, `--role`, `--brief` | `report`, `nonce`, `tab_label` | Pastes the brief plus its delivery section into the worker |
 | `wait` | `--task`, `--role`, optional `--timeout` | `state`, `kind`, `delivered`, `reason`, `report`, `tab_label` | Relabels the tab with the outcome |
 | `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
-| `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `log`, `seconds`; `tab_label` | Runs each command in the writer's worktree, writes its log under `REX_TEAM_HOME`, records the check; exit 1 `check_mismatch`, `check_unsupported` or `check_dirty` before any run |
+| `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `seconds`; `tab_label` | Runs each command in the writer's worktree, keeps none of its output, kills processes it leaves behind, records the check; exit 1 `check_mismatch`, `check_unsupported`, `check_dirty` or `setup_error` before any run |
 | `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict`, `not_delivered`, or `candidate_mismatch` once the developer's branch moved |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered`, `check` | None |
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
 Exit 0 is success; exit 1 carries an error `code` such as `not_ready`,
 `agent_failed`, `not_independent`, `worker_busy`, `role_taken`,
-`worktree_conflict`, `check_mismatch`, `check_unsupported`, `check_dirty`, `rex_failed`, `git_failed` or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
+`worktree_conflict`, `check_mismatch`, `check_unsupported`, `check_dirty`, `setup_error`, `rex_failed`, `git_failed` or `state_corrupt`, with the fix in its `message`; exit 2 is `usage_error`.
 Every tab label is cosmetic: `tab_label_error` reports a label Rex refused.
 
 ## Step 1 — Confirm the Round
@@ -49,17 +49,12 @@ and finish here. An agent's trust prompt for a new worktree surfaces at
 spawn as `not_ready` (Step 3).
 
 Pick a short task id (`[a-z][a-z0-9-]{0,30}`) and the agents: the reviewer is
-a different agent kind from the developer. Pick the repository's check
-commands: the test, lint and diagnostics commands its CI runs, as its
-`CLAUDE.md`, `AGENTS.md` or CI workflow names them. Each command honors the
-`check` exit contract:
+a different agent kind from the developer. Pick the repository's own check
+entry points: the test, lint and diagnostics commands its CI runs, as its CI
+workflow, `CLAUDE.md` or `AGENTS.md` names them.
 
-- Exit 0 only when it passed and every test command ran at least one test
-- Exit 1 on a code failure: a failing test, a lint or diagnostics finding
-- Any other exit means the check itself is broken
-- Wrap a command whose runner breaks the contract in `bash -c`
-- The wrapper maps the runner's failure exits to 1, such as `cargo test`'s 101 or `make`'s 2
-- The wrapper fails a run whose output reports zero tests
+- Pass each entry point to `--run` verbatim (Step 8)
+- Never compose, wrap or rewrite a command
 
 Proceed immediately to Step 2.
 
@@ -162,8 +157,9 @@ developer as a correction:
 Route on `verdict`:
 
 - `pass` — proceed immediately to Step 9
-- `fail` — send the developer one correction brief through Step 5, naming each failed command and its `log` path
-- A second `fail` in a row goes to the operator with its `log` paths
+- `fail` — send the developer one correction brief through Step 5, naming each failed command and its `exit`
+- The brief tells the developer to rerun each failed command in its own worktree to see its output
+- A second `fail` in a row goes to the operator with each failed command and its `exit`
 - `invalid` — the check itself is broken, never a code defect for the fix loop
 - Tell the operator each invalid command and its `reason`
 - Stop until the operator reports the environment repaired

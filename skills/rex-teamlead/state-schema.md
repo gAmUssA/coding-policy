@@ -4,9 +4,7 @@ Owner: `skills/rex-teamlead/rexlead/team.py` (the `team` command). It is the
 only writer and the only reader. One record per task at
 `$REX_TEAM_HOME/<task>.json` (default `~/.rex-team/<task>.json`), written
 whole and atomically through a temporary file and `os.replace`. Report files
-live in `$REX_TEAM_HOME/<task>/reports/`; `check` logs live in
-`$REX_TEAM_HOME/<task>/checks/<role>-<k>/<i>.log`, one directory per `check`
-and one log per `--run`, numbered from 1.
+live in `$REX_TEAM_HOME/<task>/reports/`. `check` keeps no command output.
 
 ## Record, `schema_version` 2
 

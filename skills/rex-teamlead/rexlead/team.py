@@ -8,8 +8,8 @@ Contract:
   exit  : 0 success; 1 failure; 2 usage error. `check` exits 0 once its runs
           are classified, whatever the verdict: the verdict is data.
   state : `$REX_TEAM_HOME/<task>.json` (default `~/.rex-team`), schema in
-          skills/rex-teamlead/state-schema.md. Reports and check logs live
-          beside it, under `$REX_TEAM_HOME/<task>/`.
+          skills/rex-teamlead/state-schema.md. Reports live beside it,
+          under `$REX_TEAM_HOME/<task>/`. `check` keeps no command output.
 
 Workers are interactive agent TUIs in their own Rex tab. A worker's state is
 its own OSC 7501 program status, read from Rex events; delivery is that
@@ -19,7 +19,6 @@ dispatch's nonce. Nothing parses pane text.
 
 import argparse
 import datetime as dt
-import itertools
 import json
 import os
 import re
@@ -41,8 +40,10 @@ READY_TIMEOUT_SEC = 90
 DEFAULT_WAIT_TIMEOUT_SEC = 300
 #: Per-command budget of a `check` run; the lead's shell call needs longer.
 DEFAULT_CHECK_TIMEOUT_SEC = 1800
-#: Exit codes a check command maps to a verdict; every other outcome is `invalid`.
-CHECK_EXITS = {0: "pass", 1: "fail"}
+#: How often a check polls a command's leader for its exit, and how long it
+#: waits for a killed process group to end.
+CHECK_POLL_SEC = 0.05
+CHECK_KILL_SETTLE_SEC = 5
 CHECK_VERDICTS = ("pass", "fail", "invalid")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
@@ -139,19 +140,6 @@ class Store:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def checks(self, task, role):
-        """A fresh log directory for one `check`: `<task>/checks/<role>-<k>/`."""
-        parent = self.home / task / "checks"
-        parent.mkdir(parents=True, exist_ok=True)
-        for k in itertools.count(1):
-            directory = parent / "{}-{}".format(role, k)
-            try:
-                directory.mkdir()
-            except FileExistsError:
-                continue
-            return directory
-        raise AssertionError("unreachable")
-
 
 RECORD_FIELDS = {"task": str, "repo": str, "base": str, "session": str, "workers": dict}
 WORKER_FIELDS = {"agent": str, "window": str, "block": str, "worktree": str, "commit": str, "dispatches": list}
@@ -223,77 +211,105 @@ def signal_name(number):
         return str(number)
 
 
-#: Environment variables whose values are redacted from check logs: a name
-#: segment that marks a credential (GITHUB_TOKEN, OPENAI_API_KEY, DB_PASSWORD).
-SECRET_ENV_NAME = re.compile(r"(?i)(?:^|_)(?:token|secret|password|passwd|api_?key|private_?key|access_?key|credentials?)(?:$|_)")
-
-#: Credential-shaped values redacted from check logs whatever printed them.
-SECRET_VALUE = re.compile(
-    r"AIza[0-9A-Za-z_-]{20,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z]{32,}"
-    r"|AKIA[0-9A-Z]{16}|gh[pousr]_[0-9A-Za-z]{30,}|xox[abprs]-[0-9A-Za-z-]{20,}"
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}[A-Za-z0-9._-]*")
-
-#: Shorter environment values are skipped so ordinary words are never redacted.
-SECRET_MIN_LENGTH = 8
-
-REDACTED = "[REDACTED]"
+def require_waitid():
+    """Refuse a check on a Python without `os.waitid`: without it the leader
+    cannot be waited for unreaped, so background survivors go unseen."""
+    if not hasattr(os, "waitid"):
+        raise TeamError("setup_error", "this Python ({}) has no os.waitid, which `check` needs to find a command's background processes — run the team command with Python 3.13 or later on macOS".format(sys.version.split()[0]))
 
 
-def redact_log(log, env):
-    """Rewrite `log` with secret environment values and credential-shaped
-    strings replaced by REDACTED, so a check's output never keeps a secret."""
-    text = Path(log).read_bytes().decode("utf-8", "surrogateescape")
-    values = sorted({value for name, value in env.items()
-                     if SECRET_ENV_NAME.search(name) and len(value) >= SECRET_MIN_LENGTH}, key=len, reverse=True)
-    clean = text
-    for value in values:
-        clean = clean.replace(value, REDACTED)
-    clean = SECRET_VALUE.sub(REDACTED, clean)
-    if clean != text:
-        Path(log).write_bytes(clean.encode("utf-8", "surrogateescape"))
+def exited_unreaped(pid, deadline):
+    """Whether the child `pid` exited before `deadline` (a `time.monotonic()`
+    value). It is never reaped: an unreaped leader's pid, and so its process
+    group id, cannot be reused, which keeps signalling the group safe."""
+    while True:
+        if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(CHECK_POLL_SEC)
 
 
-def run_check(command, cwd, log, timeout, env=None):
-    """Run one check command with `bash -c` in `cwd`: no stdin, combined output
-    to `log`, its whole process group killed at `timeout` seconds. The run is
-    classified by how the process ended; the caller checks the worktree. The
-    log is redacted (`redact_log`) before the result is returned."""
-    result = _run_check(command, cwd, log, timeout)
-    redact_log(log, os.environ if env is None else env)
-    return result
+def group_survivors(pgid):
+    """Pids of live processes in group `pgid` other than its leader `pgid`.
+    Zombies are ignored: `kill(-pgid, 0)` would count them. Raises OSError
+    when `ps` cannot list the processes."""
+    done = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise OSError("`ps -A -o pid=,pgid=,stat=` exited {}: {}".format(done.returncode, done.stderr.strip()[:300]))
+    pids = []
+    for line in done.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 3 or not (fields[0].isdigit() and fields[1].isdigit()):
+            raise OSError("`ps` printed an unreadable line: {!r}".format(line[:200]))
+        pid, group, stat = int(fields[0]), int(fields[1]), fields[2]
+        if group == pgid and pid != pgid and not stat.startswith("Z"):
+            pids.append(pid)
+    return pids
 
 
-def _run_check(command, cwd, log, timeout):
+def kill_group(pgid):
+    """SIGKILL group `pgid` while its leader is unreaped, then wait up to
+    CHECK_KILL_SETTLE_SEC for its other members to end. Returns the pids
+    still alive afterwards."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return []  # the group ended before the kill
+    deadline = time.monotonic() + CHECK_KILL_SETTLE_SEC
+    while True:
+        alive = group_survivors(pgid)
+        if not alive or time.monotonic() >= deadline:
+            return alive
+        time.sleep(CHECK_POLL_SEC)
+
+
+def run_check(command, cwd, timeout):
+    """Run one check command with `bash -c` in `cwd` in its own session: no
+    stdin, its output discarded, its whole process group killed at `timeout`
+    seconds or when it leaves processes behind. Returns the run and, when the
+    remaining runs must stop, why; the caller checks the worktree."""
     started = time.monotonic()
 
     def ran(code, verdict, reason):
-        return {"command": command, "exit": code, "verdict": verdict, "reason": reason, "log": str(log),
+        return {"command": command, "exit": code, "verdict": verdict, "reason": reason,
                 "seconds": round(time.monotonic() - started, 2)}
 
-    with open(log, "wb") as out:
+    try:
+        proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc)), None
+    if not exited_unreaped(proc.pid, started + timeout):
         try:
-            proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=out,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
-        except OSError as exc:
-            return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc))
-        try:
-            code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            # The leader is not reaped yet, so its process group id is still ours.
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # the group ended between the timeout and the kill
-            proc.wait()
-            return ran(None, "invalid", "timed out after {}s and was killed".format(timeout))
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # the group ended between the timeout and the kill
+        proc.wait()
+        return ran(None, "invalid", "timed out after {}s and was killed".format(timeout)), None
+    try:
+        survivors = group_survivors(proc.pid)
+    except OSError as exc:
+        kill_group(proc.pid)
+        proc.wait()
+        return ran(None, "invalid", "could not list the command's processes ({}) — check that `ps` runs on this machine".format(exc)), \
+            "not run: an earlier run's processes could not be listed"
+    stop = None
+    if survivors:
+        alive = kill_group(proc.pid)
+        stop = "not run: an earlier run left background processes running"
+    code = proc.wait()
+    reasons = []
     if code < 0:
-        return ran(None, "invalid", "killed by signal {}".format(signal_name(-code)))
-    if code in CHECK_EXITS:
-        return ran(code, CHECK_EXITS[code], "exit {}".format(code))
-    # 126 and 127 included: under `bash -c` the command may have run before
-    # exiting with them, so the reason states only the observed status.
-    return ran(code, "invalid", "exit {} is neither pass (0) nor fail (1)".format(code))
+        reasons.append("killed by signal {}".format(signal_name(-code)))
+    if survivors:
+        reasons.append("left background processes running (killed): {}".format(" ".join(map(str, survivors)))
+                       + ("; still alive after SIGKILL: {}".format(" ".join(map(str, alive))) if alive else ""))
+    if reasons:
+        return ran(code if code >= 0 else None, "invalid", "; ".join(reasons)), stop
+    # Any non-zero exit is a failure, 126 and 127 included: the command
+    # launched, so `bash` started and the command's own status stands.
+    return ran(code, "pass" if code == 0 else "fail", "exit {}".format(code)), None
 
 
 #: Forced on every content read: `core.fileMode=false` would make `git add -A`
@@ -579,6 +595,7 @@ class Team:
             raise UsageError("name at least one check command with --run")
         if timeout < 1:
             raise UsageError("--timeout must be at least 1 second")
+        require_waitid()
         record = self.store.load(task)
         worker = self._worker(record, role)
         if not worker.get("branch"):
@@ -602,18 +619,16 @@ class Team:
         if dirty:
             raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
                 role, worktree, "; ".join(dirty.splitlines()[:3])))
-        logs = self.store.checks(task, role)
-        runs, changed = [], False
-        for index, command in enumerate(commands, 1):
-            if changed:
-                runs.append({"command": command, "exit": None, "verdict": "invalid", "reason": "not run: an earlier run changed the worktree",
-                             "log": None, "seconds": 0.0})
+        runs, stopped = [], None
+        for command in commands:
+            if stopped:
+                runs.append({"command": command, "exit": None, "verdict": "invalid", "reason": stopped, "seconds": 0.0})
                 continue
-            run = run_check(command, worktree, logs / "{}.log".format(index), timeout)
+            run, stopped = run_check(command, worktree, timeout)
             moved = worktree_change(worktree, candidate)
             if moved:
-                run.update(verdict="invalid", reason=moved)
-                changed = True
+                run.update(verdict="invalid", reason=moved if run["verdict"] != "invalid" else run["reason"] + "; " + moved)
+                stopped = "not run: an earlier run changed the worktree"
             runs.append(run)
         verdicts = {run["verdict"] for run in runs}
         verdict = next(v for v in ("invalid", "fail", "pass") if v in verdicts)
