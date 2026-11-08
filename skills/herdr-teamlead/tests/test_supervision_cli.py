@@ -118,6 +118,65 @@ class SupervisionCliTest(fixture.CliCase):
         self.assertEqual(member["id"], "dispatch-fixture:judge")
         self.assertEqual(supervision.expected_assignment(member)["native_session"]["value"], "judge-native")
 
+    # -- Rex team rounds dispatch only from their bound Claude Code lead (ADR 0016) --
+
+    REX_SESSION_ID = "0b9f3c1e-6a2d-4f8e-9c7b-2d5e8a1f4c3b"
+
+    def rex_env(self, **overrides):
+        values = {"TEAMLEAD_BACKEND": "rex", "HERDR_ENV": "fixture", "HERDR_PANE_ID": "lead-pane",
+                  "CLAUDE_CODE_SESSION_ID": self.REX_SESSION_ID, **overrides}
+        environment = patch.dict(os.environ, {k: v for k, v in values.items() if v is not None})
+        environment.start()
+        self.addCleanup(environment.stop)
+        for key, value in values.items():
+            if value is None:
+                os.environ.pop(key, None)
+
+    def bind_rex_lead(self):
+        who = supervision.identity(self.REX_SESSION_ID, str(self.tmp), "fixture", pane_id="lead-pane")
+        supervision.bind(self.state, who, AT, root=self.bindings, source=supervision.EXPORTED_SOURCE)
+
+    def test_rex_apply_from_the_bound_claude_code_lead_dispatches(self):
+        self.bind_rex_lead()
+        client = self._client({"grok": "idle"})
+        self.rex_env()
+        code, out, err = self.invoke(self.apply_arguments(), client)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(json.loads(out)["applied"]), 1)
+
+    def test_rex_apply_refuses_a_lead_bound_another_way_before_any_input(self):
+        # setUp's binding is an operator record, which never authorizes Rex dispatch.
+        client = self._client({"grok": "idle"})
+        self.rex_env()
+        code, _, err = self.invoke(self.apply_arguments(), client)
+        self.assertNotEqual(code, 0)
+        self.assertIn("A Rex team round needs a bound Claude Code lead", err)
+        self.assertIn("Codex and other leads are not supported on Rex", err)
+        self.assertEqual(self.runner.calls, [])
+        self.assertFalse(self.saved()["members"])
+
+    def test_rex_apply_refuses_another_session_in_the_lead_pane(self):
+        self.bind_rex_lead()
+        client = self._client({"grok": "idle"})
+        self.rex_env(CLAUDE_CODE_SESSION_ID="a-different-session")
+        code, _, err = self.invoke(self.apply_arguments(), client)
+        self.assertNotEqual(code, 0)
+        self.assertIn("not the bound lead's session", err)
+        self.assertFalse(self.saved()["members"])
+
+    def test_rex_dry_run_stays_available_unbound(self):
+        client = self._client({})
+        self.rex_env()
+        code, out, err = self.invoke(self.apply_arguments(dry_run=True), client)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)["dry_run"])
+
+    def test_rex_codex_lead_bind_is_refused_through_the_cli(self):
+        self.rex_env(CLAUDE_CODE_SESSION_ID=None)
+        code, _, err = self.invoke(["supervision-bind"], self._client({}))
+        self.assertNotEqual(code, 0)
+        self.assertIn("Codex and other leads are not supported on Rex", err)
+
     def test_bound_dry_run_remains_read_only(self):
         before = supervision.store_path(self.state).read_bytes()
         client = self._client({})

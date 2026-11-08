@@ -13,6 +13,7 @@ I/O contract:
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from contextlib import nullcontext
@@ -30,6 +31,7 @@ from .herdr import (
     DEFAULT_MARKER_TIMEOUT_MS,
     DEFAULT_SETTLE_TIMEOUT_MS,
     HerdrClient,
+    default_backend,
     trace_enabled_in_env,
 )
 from .composer import COMPOSER_SETTLE_SEC, DEFAULT_START_TIMEOUT_MS
@@ -818,7 +820,11 @@ def cmd_apply(args, client=None, warn=None, trace=None):
         raise UsageError("Saved plan and apply name different task, count or correction bounds; replan from the current ledger.", {})
     paths = resolve_paths(assignments, _parse_briefs(args.briefs), args.common)
     reports = _parse_reports(args.reports, assignments)
-    supervised = supervision.dispatch_binding(state_path) is not None
+    binding = supervision.dispatch_binding(state_path)
+    supervised = binding is not None
+    if not args.dry_run and default_backend(os.environ) == "rex":
+        # A Rex round has no legacy unbound mode (docs/adr/0016-rex-team-mode-through-herdr-environment.md).
+        supervision_runtime.require_rex_lead(binding, os.environ)
     if requirements and not args.dry_run and not supervised:
         raise UsageError("Bind the lead with supervision-bind before dispatching specialist requirements; every specialist needs durable observation ownership.", {})
     if supervised and (not args.task or set(reports) != set(assignments)):

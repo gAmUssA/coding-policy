@@ -493,9 +493,12 @@ Mapping:
   80×24 and worker TUIs wrap a long `REPORT: <path>` row.
 - `supervision-bind` binds a Claude Code lead to the session id Claude Code
   exports as `CLAUDE_CODE_SESSION_ID`, recorded with source `claude-code:env`;
-  the native Stop hook enforces it exactly as under Herdr. A lead without that
-  variable, such as a Codex lead, is refused and runs without the Stop
-  backstop, keeping `supervision-watch` in the foreground.
+  the native Stop hook enforces it exactly as under Herdr.
+- A Rex team round needs that bound Claude Code lead. Codex and other leads
+  export no session id and are not supported on Rex: their `supervision-bind`
+  is refused, and `apply` refuses any dispatch unless the caller is the lead
+  the owner state binds, for this pane and this session. `apply --dry-run`
+  sends nothing and stays available.
 - `label-workspaces.sh` refuses: one session holds the whole team and block
   labels are agent names. Skip the layout-labelling step.
 - Poll budgets and the lookup tables are named constants at the top of
