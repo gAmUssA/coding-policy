@@ -10,8 +10,8 @@ description: Herdr team rounds — the mode switch, the worker essentials, and w
 - **Standalone** — one agent working a task on its own, with no Herdr session around it. `HERDR_ENV` is unset
 - **Herdr team round** — a lead dispatching work across separate Herdr worker panes. `HERDR_ENV` is set
 - Read `HERDR_ENV` to tell the modes apart
-- A Herdr team round also runs inside Rex when its lead starts through `skills/herdr-teamlead/rex-team.sh`, which sets `HERDR_ENV`
-- `REX_SESSION` alone never marks a team round; Rex sets it in every terminal
+- A Herdr team round also runs inside Rex when the lead's environment comes from `skills/herdr-teamlead/rex-team.sh`, which supplies `HERDR_ENV`
+- `REX_SESSION` alone never marks a team round
 - Never infer the mode from how large or careful the task is
 - **Every section below, and `skills/herdr-teamlead/references/team-operation.md`, governs a Herdr team round only**
 - In standalone mode none of it applies — no roles, no rotation, no briefs, no report files, no worktree-per-writer, no judge seat
