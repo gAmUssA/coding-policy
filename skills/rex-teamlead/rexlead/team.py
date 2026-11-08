@@ -368,6 +368,11 @@ class Team:
         reviewed = [line[len("reviewed:"):].strip() for line in lines if line.startswith("reviewed:")]
         verdicts = [line[len("verdict:"):].strip() for line in lines if line.startswith("verdict:")]
         candidate = git(Path(record["repo"]), "rev-parse", sha)
+        # The release ships the writer's branch, so it must still end at the reviewed commit.
+        writers = [name for name, w in record["workers"].items() if w.get("branch")]
+        if len(writers) != 1:
+            raise TeamError("candidate_mismatch", "the task has {} writers ({}), not one — the verdict needs exactly one developer branch".format(len(writers), ", ".join(writers) or "none"))
+        self.candidate(task, writers[0], candidate)
         # The recorded commit is a hint; the live checkout must still be the candidate.
         if worker.get("branch") is None and not detached_at(Path(record["repo"]), worker["worktree"], candidate):
             raise TeamError("review_mismatch", "{}'s checkout at {} is no longer a detached checkout of the candidate {} — spawn a fresh reviewer with `--ref {}`".format(role, worker["worktree"], candidate, candidate))

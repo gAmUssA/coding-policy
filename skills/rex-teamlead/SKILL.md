@@ -28,7 +28,7 @@ pointing the operator at a tab.
 | `assign` | `--task`, `--role`, `--brief` | `report`, `nonce`, `tab_label` | Pastes the brief plus its delivery section into the worker |
 | `wait` | `--task`, `--role`, optional `--timeout` | `state`, `kind`, `delivered`, `reason`, `report`, `tab_label` | Relabels the tab with the outcome |
 | `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
-| `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict` or `not_delivered` |
+| `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict`, `not_delivered`, or `candidate_mismatch` once the developer's branch moved |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered` | None |
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
@@ -69,7 +69,7 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn 
 `not_ready` means a startup dialog the agent does not report. Tell the
 operator which tab (`dev · <agent>`) waits on them, then run this step again:
 a repeated `spawn` reconnects to the same worker and reports its `state`.
-Once `state` is `idle`, proceed immediately to Step 4.
+Once `state` is `idle` or `done`, proceed immediately to Step 4.
 
 ## Step 4 — Write the Developer Brief
 
@@ -98,6 +98,7 @@ limit than that budget.
 - `delivered: true` — read the report in full; proceed immediately to Step 7
 - `state: blocked` — relay the `kind` and tab to the operator; once answered, run this step again
 - `delivered: false` with `state: done` — the worker stopped without a valid report; send one correction brief through Step 5
+- `state: error` — the agent itself failed; tell the operator which tab, and once they report it recovered, send one correction brief through Step 5
 - `state: timeout` — the worker is still working; run this step again
 
 ## Step 7 — Confirm the Candidate
@@ -123,9 +124,8 @@ checkout of the candidate:
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role <review-role> --agent <other-kind> --ref <candidate-sha> --read-only
 ```
 
-Handle `not_ready` as in Step 3.
-
-Proceed immediately to Step 9.
+Handle `not_ready` as in Step 3. Once `state` is `idle` or `done`, proceed
+immediately to Step 9.
 
 ## Step 9 — Write the Reviewer Brief
 
@@ -147,7 +147,8 @@ Proceed immediately to Step 11.
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role <review-role>
 ```
 
-Route `blocked`, `timeout` and an undelivered report as in Step 6. On
+Route `blocked`, `timeout`, `error` and an undelivered report as in Step 6,
+with the correction brief through Step 10. On
 `delivered: true`, proceed immediately to Step 12.
 
 ## Step 12 — Gate the Candidate
@@ -160,7 +161,9 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh verdic
 ```
 
 `review_mismatch` or `no_verdict` sends the reviewer one correction brief
-through Step 10.
+through Step 10. `candidate_mismatch` means the developer's branch moved past
+the reviewed commit: run `down --task <task> --role <review-role>`, then
+review the new tip under the next `<review-role>` from Step 7.
 
 Classify each finding yourself by `rules/review-severity.md`; the
 classification routes the round, never the `verdict:` word:

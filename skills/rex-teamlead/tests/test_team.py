@@ -211,7 +211,7 @@ class SpawnTest(Fixture):
     def test_reader_gets_a_detached_checkout_at_the_candidate(self):
         fake = FakeRex()
         self.spawned(fake)
-        candidate = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True, text=True).stdout.strip()
+        candidate = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True, text=True, check=True).stdout.strip()
         code, out, err = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", candidate, "--read-only")
         self.assertEqual(code, 0, err)
         self.assertEqual((out["branch"], out["commit"]), (None, candidate))
@@ -251,7 +251,7 @@ class SpawnTest(Fixture):
         self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
         code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")
         self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
-        branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True).stdout
+        branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True, check=True).stdout
         self.assertEqual(branches, "")
         self.assertFalse((Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev").exists())
         fake.fail_run = False
@@ -280,7 +280,7 @@ class SpawnTest(Fixture):
         code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")
         self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
         self.assertIn("launch failed", err["error"]["message"])
-        branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True).stdout
+        branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True, check=True).stdout
         self.assertIn("team/t1-dev", branches)
 
     def test_a_foreign_directory_at_the_worktree_path_is_refused(self):
@@ -426,9 +426,8 @@ class TabLabelTest(Fixture):
                 self.cli(fake, "wait", "--task", "t1", "--role", "dev", "--timeout", "5")
                 self.assertEqual(self.tab(fake, block), label)
                 self.cli(fake, "down", "--task", "t1")
-                subprocess.run(["git", "branch", "-D", "team/t1-dev"], cwd=self.repo, capture_output=True, check=False)
-                subprocess.run(["git", "worktree", "remove", "--force", str(Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev")],
-                               cwd=self.repo, capture_output=True, check=False)
+                git("worktree", "remove", "--force", str(Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev"), cwd=self.repo)
+                git("branch", "-D", "team/t1-dev", cwd=self.repo)
 
     def test_a_label_failure_never_fails_the_command(self):
         fake = FakeRex(fail_label=True)
@@ -443,7 +442,7 @@ class GateTest(Fixture):
         dev = self.spawned(fake)
         (Path(dev["worktree"]) / "lib.py").write_text("x = 2\n")
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "change", cwd=dev["worktree"])
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=dev["worktree"], capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=dev["worktree"], capture_output=True, text=True, check=True).stdout.strip()
 
     def test_the_branch_tip_is_the_candidate(self):
         fake = FakeRex()
@@ -510,6 +509,13 @@ class GateTest(Fixture):
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "drift", cwd=review)
         code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
         self.assertEqual((code, err["error"]["code"]), (1, "review_mismatch"))
+
+    def test_a_developer_branch_that_moved_past_the_review_is_refused(self):
+        fake = FakeRex()
+        tip = self.reviewed(fake, "reviewed: {sha}\nverdict: approve\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "late", cwd=self.state()["workers"]["dev"]["worktree"])
+        code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "candidate_mismatch"))
 
     def test_an_undelivered_review_has_no_verdict_yet(self):
         fake = FakeRex()
