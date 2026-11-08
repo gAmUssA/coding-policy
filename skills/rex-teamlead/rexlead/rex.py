@@ -141,8 +141,10 @@ class Rex:
     def wait_status(self, session, block, accept, timeout_sec):
         """Block until `accept(record)` holds for the block's program status.
 
-        The event stream opens before the current status is read, so a change
-        between the two is never missed. Returns the accepted record.
+        Events arrive as they happen. The stream subscribes asynchronously, so
+        a change made before it connects would be missed; the status is also
+        re-read whenever no event arrives within a second, which bounds that
+        gap. Returns the accepted record.
         """
         stream = self.events([self.binary, "events", "-s", session, "--json"])
         try:
@@ -151,7 +153,7 @@ class Rex:
                 return record
             deadline = self.clock() + timeout_sec
             for line in self._lines(stream, deadline):
-                record = self._status_event(line, block)
+                record = self.status(session, block) if line is None else self._status_event(line, block)
                 if record is not None and accept(record):
                     return record
             raise Timeout("block {} did not reach the awaited state within {}s".format(block, timeout_sec))
@@ -159,7 +161,8 @@ class Rex:
             stream.terminate()
 
     def _lines(self, stream, deadline):
-        """Lines from the stream until `deadline`.
+        """Lines from the stream until `deadline`, and None after each quiet
+        second so the caller can re-read the status.
 
         Reads the raw descriptor: a buffered `readline` would pull several
         events into Python's buffer, and `select` on the emptied descriptor
@@ -174,11 +177,13 @@ class Rex:
             if left <= 0:
                 return
             ready, _, _ = select.select([fd], [], [], min(left, 1.0))
-            if ready:
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    raise RexError("the Rex event stream closed — check the server with `rex whoami`, then wait again")
-                pending += chunk
+            if not ready:
+                yield None
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                raise RexError("the Rex event stream closed — check the server with `rex whoami`, then wait again")
+            pending += chunk
 
     @staticmethod
     def _status_event(line, block):

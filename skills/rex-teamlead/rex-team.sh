@@ -3,7 +3,8 @@
 # command skills/rex-teamlead/SKILL.md runs.
 #
 # Contract:
-#   argv  : `up`, `spawn`, `assign`, `wait`, `status`, `down`; see rexlead/team.py,
+#   argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `verdict`, `status`,
+#           `down`; see rexlead/team.py,
 #           forwarded verbatim to `uv run … python -m rexlead`.
 #   stdout: one JSON object per command; nothing on failure.
 #   stderr: `{"error":{"code","message"}}` on every failure, and nothing else:
@@ -12,7 +13,7 @@
 #           module answers, use code `setup_error`. Raw uv or interpreter
 #           stderr is never forwarded, as it may echo arguments.
 #   exit  : 0 success; 1 Rex-side or setup failure; 2 usage error.
-#   env   : REX_TEAM_HOME, REX_TEAM_WORKTREES, REX_TEAM_REX_BIN, UV_BIN
+#   env   : HOME (worktrees go under ~/.worktrees), REX_TEAM_HOME, REX_TEAM_REX_BIN, UV_BIN
 #           (default uv). The module runs through `uv run` per
 #           rules/dependency-management.md Python Execution, standard library
 #           only, Python 3.11+. PYTHONPATH is prefixed, never replaced.

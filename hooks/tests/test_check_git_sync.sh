@@ -202,6 +202,14 @@ main() {
      && [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1r" && ! -e "$TMP/s1r" ]]; then
     pass; else fail "rex worker session: expected a no-sync notice and no fetch, got RC=$RC OUT=$OUT"; fi
 
+  # 1b-rex-main. The Rex marker alone marks a worker, even in the main
+  # checkout: still no fetch.
+  local ref1m; ref1m="$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" || die "r1b rex-main rev-parse failed"
+  run "$TMP/r1b" "$TMP/s1m" REX_TEAM_TASK=t1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Do not sync")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1m" ]]; then
+    pass; else fail "rex marker in the main checkout: expected no fetch, got RC=$RC OUT=$OUT"; fi
+
   # 1c. The same drift from the MAIN checkout with HERDR_ENV set is the lead:
   # it fetches and fast-forwards.
   run "$TMP/r1b" "$TMP/s1c" HERDR_ENV=1

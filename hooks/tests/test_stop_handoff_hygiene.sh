@@ -329,11 +329,12 @@ main() {
   if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees"; then
     pass; else fail "lead session: expected the worktree block, got RC=$RC OUT=$OUT"; fi
 
-  # 4c-rex. The marker alone never suppresses the lead's checkout.
+  # 4c-rex. The Rex marker alone marks a worker, even in the main checkout:
+  # no lead-only worktree block.
   OUT="$(cd "$TMP/r4" && printf '%s' '{"stop_hook_active":false}' \
     | REX_TEAM_TASK=t1 bash "$HOOK" 2>/dev/null)"; RC=$?
-  if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees"; then
-    pass; else fail "rex marker in the main checkout: expected the worktree block, got RC=$RC OUT=$OUT"; fi
+  if [[ $RC -eq 0 ]] && ! reason_has "Orphaned worktrees"; then
+    pass; else fail "rex marker in the main checkout: expected no worktree block, got RC=$RC OUT=$OUT"; fi
 
   # 5. dirty tree only -> allow (report-only).
   mk_origin o5; clone_from "$BARE" "$TMP/r5"

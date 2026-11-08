@@ -85,12 +85,14 @@ in_list() { # <needle> <haystack...>
 # linked worktree. In a linked worktree `--git-dir` and `--git-common-dir`
 # resolve differently; in the main checkout they are the same.
 #
-# 0 = a team worker, Herdr (`HERDR_ENV`) or Rex (`REX_TEAM_TASK`), in a linked
-# worktree (suppress lead-only advice), 1 = the lead, a standalone
+# 0 = a team worker: any session with `REX_TEAM_TASK`, or a Herdr session
+# (`HERDR_ENV`) in a linked worktree (suppress lead-only advice), 1 = the lead, a standalone
 # agent, or anything this cannot determine. Fail open: a hook that goes silent
 # because a git command failed would be worse than one that speaks up.
 is_herdr_worker() {
-  [[ -n "${HERDR_ENV:-}" || -n "${REX_TEAM_TASK:-}" ]] || return 1
+  # Rex sets REX_TEAM_TASK only on the workers it starts: the marker alone proves it.
+  [[ -z "${REX_TEAM_TASK:-}" ]] || return 0
+  [[ -n "${HERDR_ENV:-}" ]] || return 1
 
   local git_dir common_dir rc=0
   git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)" || rc=$?

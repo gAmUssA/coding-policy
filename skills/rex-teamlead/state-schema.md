@@ -55,7 +55,7 @@ add who the tab is and how its last assignment ended.
 | Tab after `wait` | `<role> · <agent> · #<n> delivered`, `· #<n> no report`, `· #<n> blocked: <kind>` or `· #<n> error` | `wait` |
 | Pane (block) | `<task>-<role>`, the stable handle for `rex -b` | `spawn` |
 | Branch | `team/<task>-<role>` (writers only) | `spawn` |
-| Worktree | `$REX_TEAM_WORKTREES/<repo>/<task>-<role>` (default `~/.worktrees/`) | `spawn` |
+| Worktree | `~/.worktrees/<repo>/<task>-<role>` | `spawn` |
 
 A tab label is cosmetic: a failure to set it comes back as `tab_label_error`
 in the command's JSON and never fails the command. Roles are lowercase
@@ -71,4 +71,4 @@ agent and its latest outcome.
 - The record is a last-seen snapshot. `up` re-checks the session is live in Rex, and `assign` re-reads the worker's live status before any input.
 - `up` on a task whose session is gone opens a new session and keeps the base and the workers; their tabs are gone until `down` forgets them.
 - `spawn` of a role whose worker is live reconnects to it; on a path left by an earlier spawn it adopts that worktree; a failed launch removes the worktree and branch it created.
-- `down` closes each live tab, removes a read-only checkout with `--force`, keeps a writer's worktree, and forgets each worker once its own cleanup succeeded; a checkout it cannot remove keeps its worker recorded and fails the command with `worktree_remove_failed`, so the next `down` retries it. Reports stay.
+- `down` closes each live tab, removes a read-only checkout with `--force` only after `git worktree list` shows it is still detached at the recorded `commit`, keeps a writer's worktree, and forgets each worker once its own cleanup succeeded; a checkout it cannot remove keeps its worker recorded and fails the command with `worktree_remove_failed`, so the next `down` retries it. Reports stay.

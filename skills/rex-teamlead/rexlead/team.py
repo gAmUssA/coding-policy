@@ -150,6 +150,14 @@ def invalid(record):
     return None
 
 
+def worktree_entry(listing, path):
+    """`path`'s block in `git worktree list --porcelain` output, or None.
+    Git reports resolved paths (`/private/var/…` for `/var/…`), so compare resolved."""
+    target = Path(path).resolve()
+    return next((block for block in listing.split("\n\n")
+                 if block.startswith("worktree ") and Path(block.split("\n", 1)[0][len("worktree "):]).resolve() == target), None)
+
+
 def check_name(value, what):
     if not NAME.fullmatch(value):
         raise UsageError("{} must match [a-z][a-z0-9-]{{0,30}}".format(what))
@@ -244,10 +252,7 @@ class Team:
         """Create the worker's worktree, or adopt the one an interrupted spawn
         or an earlier session left at `path`. True when this call created it."""
         listing = git(repo, "worktree", "list", "--porcelain")
-        # Git reports resolved paths (`/private/var/…` for `/var/…`), so compare resolved.
-        target = path.resolve()
-        entry = next((block for block in listing.split("\n\n")
-                      if block.startswith("worktree ") and Path(block.split("\n", 1)[0][len("worktree "):]).resolve() == target), None)
+        entry = worktree_entry(listing, path)
         if entry is not None:
             on_branch = "branch refs/heads/{}".format(branch) in entry if branch else "detached" in entry
             at_commit = branch is not None or "HEAD {}".format(commit) in entry
@@ -351,6 +356,8 @@ class Team:
         reviewed = [line[len("reviewed:"):].strip() for line in lines if line.startswith("reviewed:")]
         verdicts = [line[len("verdict:"):].strip() for line in lines if line.startswith("verdict:")]
         candidate = git(Path(record["repo"]), "rev-parse", sha)
+        if worker.get("branch") is None and worker["commit"] != candidate:
+            raise TeamError("review_mismatch", "{}'s checkout is at {}, not the candidate {} — spawn a fresh reviewer with `--ref {}`".format(role, worker["commit"], candidate, candidate))
         if len(reviewed) != 1 or reviewed[0].strip("`") != candidate:
             raise TeamError("review_mismatch", "{}'s report does not review exactly {} (found {}) — brief a fresh reviewer on the candidate".format(role, candidate, reviewed or "no `reviewed:` line"))
         if len(verdicts) != 1 or verdicts[0] not in ("approve", "changes-requested"):
@@ -383,7 +390,13 @@ class Team:
                 self.rex.close(record["session"], worker["block"])
             if worker.get("branch") is None and Path(worker["worktree"]).exists():
                 # A read-only checkout is disposable by contract; tests may leave
-                # untracked output in it, so it is removed with --force.
+                # untracked output in it, so it is removed with --force — but only
+                # once live git confirms it is still this worker's checkout.
+                entry = worktree_entry(git(repo, "worktree", "list", "--porcelain"), worker["worktree"])
+                if entry is None or "detached" not in entry or "HEAD {}".format(worker["commit"]) not in entry:
+                    failed.append({"role": name, "worktree": worker["worktree"],
+                                   "error": "it is no longer this worker's detached checkout at {}".format(worker["commit"])})
+                    continue
                 try:
                     git(repo, "worktree", "remove", "--force", worker["worktree"])
                 except TeamError as exc:
@@ -497,7 +510,8 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow):
         envelope(stderr, "usage_error", str(exc))
         return 2
     home = env.get("REX_TEAM_HOME") or str(Path.home() / ".rex-team")
-    team = Team(rex or Rex(binary=args.rex), Store(home), env.get("REX_TEAM_WORKTREES") or str(Path.home() / ".worktrees"), now=now)
+    # Worker checkouts live under ~/.worktrees/ (rules/agent-team-operation.md Workers).
+    team = Team(rex or Rex(binary=args.rex), Store(home), str(Path(env.get("HOME") or Path.home()) / ".worktrees"), now=now)
     try:
         if args.command == "up":
             result = team.up(args.task, args.repo)

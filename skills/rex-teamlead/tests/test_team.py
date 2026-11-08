@@ -156,7 +156,7 @@ class Fixture(unittest.TestCase):
         (self.repo / "lib.py").write_text("x = 1\n")
         git("add", "-A", cwd=self.repo)
         git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init", cwd=self.repo)
-        self.env = {"REX_TEAM_HOME": str(root / "state"), "REX_TEAM_WORKTREES": str(root / "wt")}
+        self.env = {"REX_TEAM_HOME": str(root / "state"), "HOME": str(root / "home")}
         self.brief = root / "brief.md"
         self.brief.write_text("# Brief\n\nAdd a function.\n")
 
@@ -249,7 +249,7 @@ class SpawnTest(Fixture):
         self.assertEqual((code, err["error"]["code"]), (1, "rex_failed"))
         branches = subprocess.run(["git", "branch", "--list", "team/t1-dev"], cwd=self.repo, capture_output=True, text=True).stdout
         self.assertEqual(branches, "")
-        self.assertFalse((Path(self.env["REX_TEAM_WORKTREES"]) / "repo" / "t1-dev").exists())
+        self.assertFalse((Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev").exists())
         fake.fail_run = False
         self.assertEqual(self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")[0], 0)
 
@@ -282,7 +282,7 @@ class SpawnTest(Fixture):
     def test_a_foreign_directory_at_the_worktree_path_is_refused(self):
         fake = FakeRex()
         self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
-        (Path(self.env["REX_TEAM_WORKTREES"]) / "repo" / "t1-dev").mkdir(parents=True)
+        (Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev").mkdir(parents=True)
         code, _, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")
         self.assertEqual((code, err["error"]["code"]), (1, "worktree_conflict"))
 
@@ -423,7 +423,7 @@ class TabLabelTest(Fixture):
                 self.assertEqual(self.tab(fake, block), label)
                 self.cli(fake, "down", "--task", "t1")
                 subprocess.run(["git", "branch", "-D", "team/t1-dev"], cwd=self.repo, capture_output=True, check=False)
-                subprocess.run(["git", "worktree", "remove", "--force", str(Path(self.env["REX_TEAM_WORKTREES"]) / "repo" / "t1-dev")],
+                subprocess.run(["git", "worktree", "remove", "--force", str(Path(self.env["HOME"]) / ".worktrees" / "repo" / "t1-dev")],
                                cwd=self.repo, capture_output=True, check=False)
 
     def test_a_label_failure_never_fails_the_command(self):
@@ -488,6 +488,17 @@ class GateTest(Fixture):
     def test_a_review_with_two_verdicts_is_refused(self):
         self.refused("reviewed: {sha}\nverdict: approve\nverdict: changes-requested\n", "no_verdict")
 
+    def test_a_review_from_a_checkout_of_another_commit_is_refused(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        block = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--read-only")[1]["block"]
+        sent = self.cli(fake, "assign", "--task", "t1", "--role", "review", "--brief", str(self.brief))[1]
+        Path(sent["report"]).write_text("task-nonce: {}\n\nreviewed: {}\nverdict: approve\n".format(sent["nonce"], tip))
+        fake.queued = [event(block, status("done"))]
+        self.cli(fake, "wait", "--task", "t1", "--role", "review", "--timeout", "5")
+        code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "review_mismatch"))
+
     def test_an_undelivered_review_has_no_verdict_yet(self):
         fake = FakeRex()
         tip = self.committed(fake)
@@ -530,6 +541,23 @@ class StatusDownTest(Fixture):
         code, result, _ = self.cli(fake, "down", "--task", "t1", "--role", "review")
         self.assertEqual((code, result["worktrees_removed"]), (0, [review["worktree"]]))
         self.assertNotIn("review", self.state()["workers"])
+
+    def moved_checkout_is_kept(self, *move):
+        fake = FakeRex()
+        self.spawned(fake)
+        review = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--read-only")[1]
+        git(*move, cwd=review["worktree"])
+        (Path(review["worktree"]) / "notes.txt").write_text("unsaved\n")
+        code, _, err = self.cli(fake, "down", "--task", "t1", "--role", "review")
+        self.assertEqual((code, err["error"]["code"]), (1, "worktree_remove_failed"))
+        self.assertTrue((Path(review["worktree"]) / "notes.txt").exists())
+        self.assertIn("review", self.state()["workers"])
+
+    def test_down_keeps_a_reviewer_checkout_someone_put_on_a_branch(self):
+        self.moved_checkout_is_kept("checkout", "-q", "-b", "keep-me")
+
+    def test_down_keeps_a_reviewer_checkout_with_a_new_commit(self):
+        self.moved_checkout_is_kept("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "work")
 
     def test_down_refuses_when_rex_cannot_list_the_blocks(self):
         fake = FakeRex()
@@ -625,6 +653,19 @@ class RexClientTest(unittest.TestCase):
         fake = FakeRex(statuses={LEAD: status("working")})
         with self.assertRaises(Timeout):
             fake.client().wait_status(SESSION, LEAD, lambda r: r.get("state") == "done", 0)
+
+    def test_wait_status_rereads_a_change_the_stream_missed(self):
+        reads = []
+
+        def runner(argv):
+            if argv[1] == "do":
+                reads.append(argv)
+                return Done(0, json.dumps({"records": [status("done" if len(reads) > 1 else "working")]}))
+            raise AssertionError(argv)
+
+        rex = Rex(binary="rex", runner=runner, events=lambda argv: Stream([], close=False))
+        record = rex.wait_status(SESSION, LEAD, lambda r: r.get("state") == "done", 5) or {}
+        self.assertEqual((record.get("state"), len(reads)), ("done", 2))
 
     def test_child_records_do_not_count(self):
         line = json.loads(event(LEAD, status("done")))

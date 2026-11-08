@@ -119,7 +119,9 @@ emit_notice() { # <notice-text>
 herdr_role() {
   ROLE_WHY=""
   local portable=0
-  if [[ -z "${HERDR_ENV:-}" && -z "${REX_TEAM_TASK:-}" ]]; then
+  # Rex sets REX_TEAM_TASK only on the workers it starts: the marker alone proves it.
+  [[ -z "${REX_TEAM_TASK:-}" ]] || return 0
+  if [[ -z "${HERDR_ENV:-}" ]]; then
     [[ "${SESSION_START_MODE:-}" == portable ]] || return 1
     portable=1
   fi
