@@ -13,7 +13,8 @@
     "skills/release",
     "skills/onboard-repo",
     "skills/herdr-teamlead",
-    "skills/herdr-standup"
+    "skills/herdr-standup",
+    "skills/rex-teamlead"
   ],
   "rules": [
     "rules/commit-conventions.md",

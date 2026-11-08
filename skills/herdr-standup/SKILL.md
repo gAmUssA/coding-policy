@@ -1,6 +1,7 @@
 ---
 name: herdr-standup
 description: >
+  Deprecated: removed in coding-policy 2.0.0; Rex rounds use rex-teamlead.
   Hold a daily standup with the named Herdr agents and print a table the
   operator can find while scrolling back through a long session: ask each idle
   worker for four lines (DONE / PLAN / BLOCKED / REPORT), fill the busy ones

@@ -139,9 +139,9 @@ main() {
   export HOME="$TMP/home"
   mkdir -p "$HOME" || die "could not create isolated HOME at $HOME"
   export GIT_CONFIG_NOSYSTEM=1
-  # The operator's session may itself run under Herdr or with a custom ssh;
-  # every case sets these explicitly.
-  unset HERDR_ENV SESSION_START_MODE GIT_SSH_COMMAND GIT_SSH
+  # The operator's session may itself run under Herdr, as a Rex team worker
+  # or with a custom ssh; every case sets these explicitly.
+  unset HERDR_ENV REX_TEAM_TASK REX_TEAM_ROLE SESSION_START_MODE GIT_SSH_COMMAND GIT_SSH
   export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
   FAIL=0; PASS=0
@@ -188,10 +188,27 @@ main() {
   commit_push "$SEED" "c2"
   local ref1b; ref1b="$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" || die "r1b rev-parse failed"
   run "$TMP/r1b-wt" "$TMP/s1b" HERDR_ENV=1
-  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Herdr worker session") and test("Do not sync") and test("as last fetched") and (test("fast-forwarded") | not)' >/dev/null 2>&1; then
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("team worker session") and test("Do not sync") and test("as last fetched") and (test("fast-forwarded") | not)' >/dev/null 2>&1; then
     pass; else fail "worker session: expected a no-sync notice, got RC=$RC OUT=$OUT"; fi
   if [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1b" && ! -e "$TMP/s1b" ]]; then
     pass; else fail "worker session: expected no fetch and no throttle stamp"; fi
+
+  # 1b-rex. A Rex team worker (REX_TEAM_TASK set, linked worktree, no
+  # HERDR_ENV) is a worker too: no fetch, no throttle stamp, the no-sync notice.
+  commit_push "$SEED" "c3"
+  local ref1r; ref1r="$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" || die "r1b rex rev-parse failed"
+  run "$TMP/r1b-wt" "$TMP/s1r" REX_TEAM_TASK=t1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("team worker session") and test("Do not sync")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1r" && ! -e "$TMP/s1r" ]]; then
+    pass; else fail "rex worker session: expected a no-sync notice and no fetch, got RC=$RC OUT=$OUT"; fi
+
+  # 1b-rex-main. The Rex marker alone marks a worker, even in the main
+  # checkout: still no fetch.
+  local ref1m; ref1m="$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" || die "r1b rex-main rev-parse failed"
+  run "$TMP/r1b" "$TMP/s1m" REX_TEAM_TASK=t1
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.additionalContext | test("Do not sync")' >/dev/null 2>&1 \
+     && [[ "$(git -C "$TMP/r1b" rev-parse refs/remotes/origin/main)" == "$ref1m" ]]; then
+    pass; else fail "rex marker in the main checkout: expected no fetch, got RC=$RC OUT=$OUT"; fi
 
   # 1c. The same drift from the MAIN checkout with HERDR_ENV set is the lead:
   # it fetches and fast-forwards.

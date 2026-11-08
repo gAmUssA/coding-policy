@@ -37,6 +37,9 @@ set -uo pipefail
 # here prints an empty token and never stands in for this one.
 SUMMARY_TOKEN="${TEST_SUMMARY_TOKEN:-}"
 unset TEST_SUMMARY_TOKEN
+# A Rex team worker runs this suite with the worker marker set; every case
+# that needs the marker sets it explicitly.
+unset REX_TEAM_TASK REX_TEAM_ROLE
 
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/stop-handoff-hygiene.sh"
 
@@ -304,6 +307,13 @@ main() {
   if [[ $RC -eq 0 && -z "$OUT" ]]; then
     pass; else fail "worker session: expected silence, got RC=$RC OUT=$OUT"; fi
 
+  # 4b-rex. A Rex team worker (REX_TEAM_TASK set, no HERDR_ENV) in a linked
+  # worktree is a worker too: no lead-only worktree block.
+  OUT="$(cd "$TMP/r4-wt" && printf '%s' '{"stop_hook_active":false}' \
+    | REX_TEAM_TASK=t1 bash "$HOOK" 2>/dev/null)"; RC=$?
+  if [[ $RC -eq 0 && -z "$OUT" ]]; then
+    pass; else fail "rex worker session: expected silence, got RC=$RC OUT=$OUT"; fi
+
   # 4b-ii. A worker's OWN changed files still gate: only branch/worktree
   # cleanup is suppressed, never the diagnostics its handoff depends on.
   # An unused variable is a warning-tier finding (SC2034), so the real engine
@@ -321,6 +331,13 @@ main() {
     | HERDR_ENV=1 bash "$HOOK" 2>/dev/null)"; RC=$?
   if [[ $RC -eq 0 ]] && reason_has "Orphaned worktrees"; then
     pass; else fail "lead session: expected the worktree block, got RC=$RC OUT=$OUT"; fi
+
+  # 4c-rex. The Rex marker alone marks a worker, even in the main checkout:
+  # no lead-only worktree block.
+  OUT="$(cd "$TMP/r4" && printf '%s' '{"stop_hook_active":false}' \
+    | REX_TEAM_TASK=t1 bash "$HOOK" 2>/dev/null)"; RC=$?
+  if [[ $RC -eq 0 ]] && ! reason_has "Orphaned worktrees"; then
+    pass; else fail "rex marker in the main checkout: expected no worktree block, got RC=$RC OUT=$OUT"; fi
 
   # 5. dirty tree only -> allow (report-only).
   mk_origin o5; clone_from "$BARE" "$TMP/r5"

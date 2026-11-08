@@ -1,6 +1,7 @@
 ---
 name: herdr-teamlead
 description: >
+  Deprecated: removed in coding-policy 2.0.0; Rex rounds use rex-teamlead.
   Run Herdr rounds with on-demand specialists, model tiers, bounded briefs,
   report verification, and release gates. Use for requests to dispatch the Herdr
   team, balance worker usage, collect reports, run or retrieve retrospectives,

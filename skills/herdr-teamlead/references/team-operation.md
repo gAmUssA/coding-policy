@@ -1,6 +1,6 @@
 # Team Operation
 
-The Herdr team contract. `rules/agent-team-operation.md` loads in every session and carries only the mode switch and the worker essentials. Every section of this file binds every team round.
+The Herdr team contract. `rules/agent-team-operation.md` loads in every session and carries only the mode switch and the worker essentials. Every section of this file binds every Herdr team round.
 
 ## Reading This Contract
 

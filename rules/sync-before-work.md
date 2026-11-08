@@ -11,8 +11,8 @@ description: Sync the local checkout with the remote default branch before readi
 - Run `git fetch origin` before the first read — not after the first failure
 - The default branch you start from must match what the remote currently has, not whatever the local clone was left at
 - `hooks/check-git-sync.sh` fetches at session start and fast-forwards a clean checked-out default branch that is strictly behind
-- A standalone agent or a Herdr lead syncs any drift the hook reports instead
-- A Herdr worker only reports that drift, never syncs it (`rules/agent-team-operation.md` Workers)
+- A standalone agent or a team lead syncs any drift the hook reports instead
+- A team worker only reports that drift, never syncs it (`rules/agent-team-operation.md` Workers)
 
 ## Land on the Fresh Default
 

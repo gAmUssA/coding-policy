@@ -29,6 +29,12 @@
       "extraPaths": [
         "skills/herdr-standup"
       ]
+    },
+    {
+      "root": "skills/rex-teamlead",
+      "extraPaths": [
+        "skills/rex-teamlead"
+      ]
     }
   ]
 }
