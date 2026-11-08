@@ -41,7 +41,10 @@ main() {
   local decoded
   decoded=$(jq -r '(.. | strings), (.. | objects | keys_unsorted[])' "$out") \
     || { echo "error: could not parse ${out} as JSON — cannot verify the decoded review output is credential-free; failing closed" >&2; exit 2; }
-  out_contents="$(cat "$out")"$'\n'"${decoded}"
+  local raw
+  raw=$(cat "$out") \
+    || { echo "error: could not read ${out} — cannot verify the review output is credential-free; failing closed" >&2; exit 2; }
+  out_contents="${raw}"$'\n'"${decoded}"
 
   # Every string value >= 16 chars anywhere in auth.json is treated as secret
   # material. Short strings (field names, "chatgpt", timestamps) are ignored so
