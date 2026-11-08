@@ -52,13 +52,6 @@ description: Deterministic operations → script, reasoning → LLM, the regex t
   2. Failure emits no path, exits non-zero, and writes an actionable diagnostic to stderr
   3. The package contains the resolved commit range, commit list, diff stat, and patch
 - Every other skill script retains the JSON-producing requirement
-- Narrow exception for `skills/herdr-teamlead/rex-herdr.sh` pane-text stdout.
-- Preconditions (all required):
-  1. Only its `agent read` and `pane read` commands emit text: the requested pane rows ending in a newline, the output `herdr agent read` and `herdr pane read` give the same callers
-  2. A failed read emits nothing on stdout, exits non-zero, and writes the `{"error":{"code","message"}}` envelope to stderr
-  3. Every other command emits one `{"result": ...}` JSON object
-  4. `skills/herdr-teamlead/tests/test_rex_herdr.py` tests preconditions 1 and 2
-- Every other skill script retains the JSON-producing requirement
 - Narrow exception for `hooks/bounded-run.sh` transparent deadline-wrapper stdout.
 - Preconditions (all required):
   1. The script only runs another command under a deadline and passes that command's stdout and stderr through unmodified
