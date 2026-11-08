@@ -11,6 +11,9 @@ description: Review findings carry a severity — blocking gates the merge, advi
 - The test is behavioral — does fixing the finding change what an agent or the pipeline does?
 - Blocking: the fix changes behavior or closes a contract gap
 - Advisory: the fix changes only presentation
+- In a Rex team round, the independent reviewer applies this test to each finding
+- The reviewer's classification binds the round
+- Only the operator reclassifies a finding the reviewer marked blocking
 
 ## Blocking — Gates the Merge
 

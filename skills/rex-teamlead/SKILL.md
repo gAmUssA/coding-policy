@@ -226,16 +226,14 @@ The reviewer's `verdict:` binds the round. Only the operator overrides it:
 - Stop after three such loops
 - Bring the remaining findings to the operator
 
-The lead never loosens the verdict on its own:
+The reviewer's classification of each finding binds (`rules/review-severity.md` Two Tiers):
 
-- You may treat an advisory finding as blocking
-- An advisory you treat as blocking routes the round as `changes-requested`
-- You may judge a finding marked `blocking` presentation-only by `rules/review-severity.md`
-- Then ask the operator to downgrade it, naming the finding and your reason
-- Downgrade it to advisory only on the operator's explicit approval
-- Record each approved downgrade in the PR body at release: the finding, your reason and the operator's approval
+- Never reclassify a finding on your own
+- Disagree with a `blocking` classification: ask the operator to reclassify it, naming the finding and your reason
+- Reclassify it as advisory only on the operator's explicit approval
+- Record each approved reclassification in the PR body at release: the finding, your reason and the operator's approval
 - Without approval, the finding stays blocking
-- A `changes-requested` whose every blocking finding the operator downgraded proceeds as an `approve`
+- A `changes-requested` whose every blocking finding the operator reclassified proceeds as an `approve`
 
 ## Step 14 — Close the Round
 
