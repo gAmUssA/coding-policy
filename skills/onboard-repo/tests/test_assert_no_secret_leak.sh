@@ -53,6 +53,25 @@ t_leaked_refresh_token_fails() {
   rm -rf "$dir"
 }
 
+# post-review.sh posts decoded JSON strings: an escaped credential must still trip.
+t_escaped_token_fails() {
+  local dir rc payload
+  for payload in '{"summary":"\u0073k-tokenABCDEF0123456789verylong","findings":[]}' \
+                 '{"summary":"ok","findings":[{"rt-9876543210FEDCBA\u006congtoken":1}]}'; do
+    dir=$(with_files "$payload")
+    rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]]; then ok "escaped credential ($payload) -> exit 1"; else bad "escaped credential ($payload) -> exit 1 (rc=$rc)"; fi
+    rm -rf "$dir"
+  done
+}
+
+t_unparseable_output_fails_closed() {
+  local dir; dir=$(with_files 'not json at all')
+  local rc=0; bash "$SCRIPT" "$dir/auth.json" "$dir/out.json" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then ok "unparseable review output -> exit 2"; else bad "unparseable review output -> exit 2 (rc=$rc)"; fi
+  rm -rf "$dir"
+}
+
 # Short auth fields (e.g. "chatgpt") appearing in ordinary prose must NOT trip
 # the guard — only >= 16-char secret material counts.
 t_short_field_in_prose_passes() {
@@ -83,6 +102,8 @@ t_clean_passes
 t_leaked_access_token_fails
 t_leaked_refresh_token_fails
 t_short_field_in_prose_passes
+t_escaped_token_fails
+t_unparseable_output_fails_closed
 t_missing_files_fail_closed
 t_bad_args
 echo "== summary: ${pass} passed, ${fail} failed =="

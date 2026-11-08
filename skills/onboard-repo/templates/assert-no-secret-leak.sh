@@ -34,7 +34,14 @@ main() {
   local tokens out_contents
   tokens=$(jq -r '.. | strings' "$auth") \
     || { echo "error: could not parse ${auth} as JSON to extract secret strings" >&2; exit 2; }
-  out_contents=$(cat "$out")
+  # post-review.sh posts DECODED string values (and may render a malformed
+  # finding's keys via tojson), so a credential written with JSON escapes
+  # (\u0073k-...) is invisible in the raw bytes. Scan the raw file plus every
+  # decoded string value and object key; output that is not JSON fails closed.
+  local decoded
+  decoded=$(jq -r '(.. | strings), (.. | objects | keys_unsorted[])' "$out") \
+    || { echo "error: could not parse ${out} as JSON — cannot verify the decoded review output is credential-free; failing closed" >&2; exit 2; }
+  out_contents="$(cat "$out")"$'\n'"${decoded}"
 
   # Every string value >= 16 chars anywhere in auth.json is treated as secret
   # material. Short strings (field names, "chatgpt", timestamps) are ignored so
