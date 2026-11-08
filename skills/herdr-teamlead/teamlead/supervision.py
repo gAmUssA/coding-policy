@@ -13,6 +13,7 @@ Resolving enrollment ends observation only and grants no task completion.
 
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -20,12 +21,21 @@ from .errors import StateError, UsageError
 from .state import default_state_path, save_state, state_lock
 
 SCHEMA_VERSION = 1
-#: Binding record versions. Version 1 binds Herdr's native session proof and
-#: names no source. Version 2 adds `source` for an identity the agent exported
-#: itself (docs/adr/0016-rex-team-mode-through-herdr-environment.md); only a
-#: Rex team round writes or accepts it.
-BINDING_VERSIONS = (1, 2)
-ENV_SOURCES = ("claude-code:env",)
+#: The binding record version this owner writes. Version 2 added `source`,
+#: naming what proved the lead's identity
+#: (docs/adr/0016-rex-team-mode-through-herdr-environment.md). Version 1 rows
+#: carry no source and are upgraded on owner load; see `upgrade_binding`.
+BINDING_VERSION = 2
+#: Herdr's native session proof, as `bind_current` reads it from the lead pane.
+HERDR_SOURCES = ("herdr:claude", "herdr:codex")
+#: A version-1 row upgraded by the owner. Every version-1 binding predates the
+#: Rex backend, so it came from Herdr; which agent proved it was not recorded.
+UNRECORDED_SOURCE = "herdr:unrecorded"
+#: An operator-verified `supervision-bind --record` file.
+RECORD_SOURCE = "operator:record"
+#: The session id Claude Code exports to its children; a Rex team round only.
+EXPORTED_SOURCE = "claude-code:env"
+BINDING_SOURCES = HERDR_SOURCES + (UNRECORDED_SOURCE, RECORD_SOURCE, EXPORTED_SOURCE)
 DEFAULT_RECHECK_SECONDS = 30
 
 
@@ -103,11 +113,61 @@ def empty(state_path):
             "members": [], "events": [], "acknowledgements": [], "holds": [], "watchers": []}
 
 
-def load(state_path):
+class OlderBinding(StateError):
+    """A version-1 binding read by a non-owner, which must not migrate it."""
+
+
+#: Owner stores whose lock this process holds; their own save persists an
+#: in-memory binding upgrade (`state_lock` is not re-entrant).
+_HELD = set()
+
+
+@contextmanager
+def _owner_lock(path):
+    with state_lock(path):
+        _HELD.add(str(path))
+        try:
+            yield
+        finally:
+            _HELD.discard(str(path))
+
+
+def load(state_path, *, migrate=True):
+    """Read the owner document. The owner upgrades a version-1 binding and
+    rewrites it; a reader passing `migrate=False` gets `OlderBinding` instead."""
     path = store_path(state_path)
     data = read_json(path)
     if data is None:
         return empty(state_path)
+    older = isinstance(data, dict) and is_older_binding(data.get("binding"))
+    if older and not migrate:
+        raise OlderBinding("Supervision owner {} holds a version-1 binding that only its owner upgrades. Run any supervision command for this state, such as supervision-status, to upgrade it.".format(path), {})
+    if older:
+        data["binding"] = upgrade_binding(data["binding"])
+    data = _validated(state_path, path, data)
+    if older and str(path) not in _HELD:
+        _persist_upgrade(state_path, path)
+    return data
+
+
+def _persist_upgrade(state_path, path):
+    """Rewrite an upgraded binding, and its discovery record, under the owner lock."""
+    try:
+        with _owner_lock(path):
+            data = load(state_path)
+            save_state(path, data)
+            discovery = binding_path(data["binding"]["identity"])
+            with state_lock(discovery):
+                prior = read_json(discovery)
+                if (isinstance(prior, dict) and is_older_binding(prior) and prior.get("identity") == data["binding"]["identity"]
+                        and prior.get("state_path") == data["binding"]["state_path"]):
+                    save_state(discovery, upgrade_binding(prior))
+    except StateError:
+        # Another owner command holds the lock; its own save persists the upgrade.
+        return
+
+
+def _validated(state_path, path, data):
     try:
         if (not isinstance(data, dict) or data.get("schema_version") != 1
                 or data.get("state_path") != str(canonical(state_path))):
@@ -115,7 +175,7 @@ def load(state_path):
         for key in ("members", "events", "acknowledgements", "holds", "watchers"):
             if not isinstance(data.get(key), list) or any(not isinstance(row, dict) or row.get("schema_version") != 1 for row in data[key]):
                 raise ValueError("invalid {} rows".format(key))
-        if data.get("binding") is not None and not valid_binding_version(data["binding"]):
+        if data.get("binding") is not None and not valid_binding(data["binding"]):
             raise ValueError("invalid binding")
         if data["binding"] is None and any(data[key] for key in ("members", "events", "acknowledgements", "holds", "watchers")):
             raise ValueError("unbound owner contains active history")
@@ -214,7 +274,7 @@ def validate_receipts(rows):
 
 def transaction(state_path, mutate):
     path = store_path(state_path)
-    with state_lock(path):
+    with _owner_lock(path):
         data = load(state_path)
         if data["binding"] is None:
             raise StateError("Supervision owner state is missing or unbound. Run supervision-bind for first use; restore a previously bound owner document before resuming its obligations.", {})
@@ -468,23 +528,25 @@ def _refuse_lost_owner(state_path, directory):
             raise StateError("A saved lead discovery record already names the missing supervision owner {}. Restore its owner document before rebinding; do not discard unresolved assignments.".format(store_path(state_path)), {})
 
 
-def valid_binding_version(row):
-    """A version-1 row names no source; a version-2 row names an accepted one."""
-    if not isinstance(row, dict) or row.get("schema_version") not in BINDING_VERSIONS:
-        return False
-    if row["schema_version"] == 1:
-        return "source" not in row
-    return row.get("source") in ENV_SOURCES
+def valid_binding(row):
+    """A current binding: this version, naming a known source."""
+    return (isinstance(row, dict) and row.get("schema_version") == BINDING_VERSION
+            and row.get("source") in BINDING_SOURCES)
 
 
-def binding_source(row):
-    """The exported-identity source of a version-2 binding, or None for Herdr's."""
-    return row.get("source") if row.get("schema_version") == 2 else None
+def is_older_binding(row):
+    """A version-1 binding, which predates `source`."""
+    return isinstance(row, dict) and row.get("schema_version") == 1 and "source" not in row
 
 
-def bind(state_path, who, at, *, root=None, source=None):
-    if source is not None and source not in ENV_SOURCES:
-        raise UsageError("Binding source must be one of {}.".format(", ".join(ENV_SOURCES)), {})
+def upgrade_binding(row):
+    """Version 1 -> 2: stamp the version and the truthful, unrecorded source."""
+    return {**row, "schema_version": BINDING_VERSION, "source": UNRECORDED_SOURCE}
+
+
+def bind(state_path, who, at, *, root=None, source=RECORD_SOURCE):
+    if source not in BINDING_SOURCES:
+        raise UsageError("Binding source must be one of {}.".format(", ".join(BINDING_SOURCES)), {})
     if not isinstance(who, dict) or set(who) != {"kind", "value", "cwd", "herdr_env", "pane_id"}:
         raise UsageError("Binding requires the lead's exact native kind/value, cwd, HERDR_ENV, and pane_id.", {})
     who = identity(who["value"], who["cwd"], who["herdr_env"], kind=who["kind"], pane_id=who["pane_id"])
@@ -495,22 +557,21 @@ def bind(state_path, who, at, *, root=None, source=None):
     # Discovery precedes bound owner. A higher-generation discovery
     # record makes an interrupted handoff block the new lead, while older
     # sessions can stop once the owner has committed a newer binding.
-    with state_lock(store_path(state_path)):
+    with _owner_lock(store_path(state_path)):
         data = load(state_path)
         old = data["binding"]
         first_use = old is None and not store_path(state_path).exists()
         if first_use:
             _refuse_lost_owner(state_path, path.parent)
-        if old is not None and old["identity"] == who and binding_source(old) == source:
+        if old is not None and old["identity"] == who and old["source"] == source:
             row = old
         else:
-            row = {"schema_version": 1 if source is None else 2, "at": at, "identity": who,
+            row = {"schema_version": BINDING_VERSION, "at": at, "identity": who, "source": source,
                    "state_path": str(canonical(state_path)), "generation": 1 if old is None else old["generation"] + 1}
-            if source is not None:
-                row["source"] = source
         with state_lock(path):
             previous = read_json(path)
-            if previous is not None and (not valid_binding_version(previous) or binding_source(previous) != source
+            # The owner rewrites its own discovery record, an older version included.
+            if previous is not None and (not (valid_binding(previous) or is_older_binding(previous))
                     or previous.get("identity") != who or previous.get("state_path") != row["state_path"]):
                 raise StateError("Lead identity already has a conflicting or unreadable state binding. Preserve it and explicitly reconcile the original state path.", {})
             if first_use:

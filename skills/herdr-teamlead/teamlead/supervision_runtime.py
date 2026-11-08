@@ -29,10 +29,13 @@ HEARTBEAT_GRACE = 15.0
 READ_LINES = 200
 OBSERVATION_TIMEOUT = 3.0
 #: The session id Claude Code exports to its child processes, the only lead
-#: identity a Rex round can bind (`supervision.ENV_SOURCES`).
+#: identity a Rex round can bind (`supervision.EXPORTED_SOURCE`).
 EXPORTED_SESSION_VAR = "CLAUDE_CODE_SESSION_ID"
-EXPORTED_SOURCE = "claude-code:env"
+EXPORTED_SOURCE = store.EXPORTED_SOURCE
 EXPORTED_SESSION = re.compile(r"[A-Za-z0-9_-]{1,128}")
+REX_LEAD_REQUIRED = ("A Rex team round needs a bound Claude Code lead, and {}. Codex and other leads are not supported on Rex. "
+                     "Start Claude Code with the rex-team.sh environment (skills/herdr-teamlead/references/herdr.md Running on Rex) "
+                     "and run supervision-bind from it before dispatching.")
 
 
 def observation_runner(argv):
@@ -271,7 +274,7 @@ def bind_current(state_path, client, at, *, environ=None, cwd=None, root=None):
         raise UsageError("This lead pane lacks supported Claude/Codex native session proof. Restore Herdr's session identity before binding the native Stop backstop.", {})
     who = store.identity(native["value"], cwd or str(Path.cwd()), environ.get("HERDR_ENV"),
                          kind=native["kind"], pane_id=pane_id)
-    return store.bind(state_path, who, at, root=root)
+    return store.bind(state_path, who, at, root=root, source=native["source"])
 
 
 def bind_exported(state_path, client, at, environ, pane_id, *, cwd=None, root=None):
@@ -284,12 +287,32 @@ def bind_exported(state_path, client, at, environ, pane_id, *, cwd=None, root=No
     """
     session = environ.get(EXPORTED_SESSION_VAR) or ""
     if not EXPORTED_SESSION.fullmatch(session):
-        raise UsageError("This Rex lead exports no Claude Code session id ({}); a Codex or other lead has no session to bind. Leave this owner state unbound: dispatch runs without the native Stop backstop, so keep supervision-watch in the foreground.".format(EXPORTED_SESSION_VAR), {})
+        raise UsageError(REX_LEAD_REQUIRED.format("this lead exports no Claude Code session id ({})".format(EXPORTED_SESSION_VAR)), {})
     pane = client.pane_get(pane_id)
     if pane.get("pane_id") != pane_id or pane.get("agent") != "claude":
         raise UsageError("Rex pane {} does not host Claude Code, so {} is not this lead's session. Run supervision-bind from the lead's own Claude Code session, started with the rex-team.sh environment.".format(pane_id, EXPORTED_SESSION_VAR), {})
     who = store.identity(session, cwd or str(Path.cwd()), environ.get("HERDR_ENV"), kind="id", pane_id=pane_id)
     return store.bind(state_path, who, at, root=root, source=EXPORTED_SOURCE)
+
+
+def require_rex_lead(binding, environ):
+    """Refuse Rex dispatch unless the caller is the lead the owner state binds.
+
+    A Rex round dispatches only from its bound Claude Code lead: the binding
+    must carry `claude-code:env` for this pane and this exported session.
+    """
+    who = (binding or {}).get("identity") or {}
+    if binding is None:
+        reason = "this owner state has no supervision binding"
+    elif binding.get("source") != EXPORTED_SOURCE:
+        reason = "this owner state is bound from {}, not from a Claude Code lead in Rex".format(binding.get("source"))
+    elif who.get("pane_id") != environ.get("HERDR_PANE_ID"):
+        reason = "this pane is not the bound lead's pane {}".format(who.get("pane_id"))
+    elif who.get("value") != environ.get(EXPORTED_SESSION_VAR):
+        reason = "this session is not the bound lead's session"
+    else:
+        return
+    raise UsageError(REX_LEAD_REQUIRED.format(reason), {})
 
 
 def register_commands(sub, common):

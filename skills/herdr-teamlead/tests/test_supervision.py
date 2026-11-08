@@ -438,12 +438,122 @@ class SupervisionTest(unittest.TestCase):
         with self.assertRaises(HerdrError):
             self.rex_bind(self.rex_environ(TEAMLEAD_BACKEND="tmux"))
 
-    def test_binding_rows_carry_a_source_only_at_version_2(self):
-        self.assertTrue(store.valid_binding_version({"schema_version": 1}))
-        self.assertTrue(store.valid_binding_version({"schema_version": 2, "source": "claude-code:env"}))
-        for row in ({"schema_version": 1, "source": "claude-code:env"}, {"schema_version": 2},
-                    {"schema_version": 2, "source": "herdr:claude"}, {"schema_version": 3, "source": "claude-code:env"}):
-            self.assertFalse(store.valid_binding_version(row), row)
+    def test_current_binding_is_version_2_with_a_known_source(self):
+        for source in ("herdr:claude", "herdr:codex", "herdr:unrecorded", "operator:record", "claude-code:env"):
+            self.assertTrue(store.valid_binding({"schema_version": 2, "source": source}), source)
+        for row in ({"schema_version": 1}, {"schema_version": 2}, {"schema_version": 2, "source": "forged:source"},
+                    {"schema_version": 3, "source": "claude-code:env"}):
+            self.assertFalse(store.valid_binding(row), row)
+        self.assertTrue(store.is_older_binding({"schema_version": 1}))
+        self.assertFalse(store.is_older_binding({"schema_version": 1, "source": "herdr:claude"}))
+
+    # -- Binding version 1 -> 2: the owner migrates, the Stop hook never does --
+
+    def test_writer_never_emits_version_1(self):
+        herdr_who = store.identity("herdr-lead", str(self.root), "fixture", pane_id="lead-pane")
+        self.client.panes["lead-pane"] = {"pane_id": "lead-pane", "agent_session": {**NATIVE, "value": "herdr-lead"}}
+        written = [
+            store.bind(self.root / "record-owner.json", store.identity("record-lead", str(self.root), "fixture", pane_id="lead-pane"),
+                       AT, root=self.bindings),
+            runtime.bind_current(self.root / "herdr-owner.json", self.client, AT, environ=self.environ,
+                                 cwd=str(self.root), root=self.bindings),
+        ]
+        self.assertEqual([(row["schema_version"], row["source"]) for row in written],
+                         [(2, "operator:record"), (2, "herdr:codex")])
+        self.assertEqual(json.loads(store.binding_path(herdr_who, self.bindings).read_text())["schema_version"], 2)
+        self.assertEqual(json.loads(store.store_path(self.root / "herdr-owner.json").read_text())["binding"]["schema_version"], 2)
+
+    def downgrade_to_version_1(self, state_path, discovery):
+        """Rewrite an owner store and its discovery record as a pre-v2 release wrote them."""
+        for path in (store.store_path(state_path), discovery):
+            document = json.loads(path.read_text())
+            row = document["binding"] if "binding" in document else document
+            row["schema_version"] = 1
+            row.pop("source")
+            path.write_text(json.dumps(document))
+
+    def version_1_lead(self):
+        """A bound lead with active work whose records a pre-v2 release wrote."""
+        xdg = self.root / "xdg"
+        environment = patch.dict(os.environ, {"XDG_STATE_HOME": str(xdg)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        path = self.root / "v1-owner.json"
+        who = store.identity("v1-lead", str(self.root), "fixture", pane_id="lead-pane")
+        store.bind(path, who, AT)
+        store.enroll(path, {"id": "dispatch-v1", "agent": "w1", "task": "task-v1", "report": str(self.root / "w1.md"),
+                            "pane_id": "pane-w1", "native_session": None}, AT)
+        discovery = store.binding_path(who)
+        self.downgrade_to_version_1(path, discovery)
+        return path, discovery
+
+    def test_owner_load_upgrades_version_1_and_rewrites_it(self):
+        path, discovery = self.version_1_lead()
+        data = store.load(path)
+        self.assertEqual((data["binding"]["schema_version"], data["binding"]["source"]), (2, "herdr:unrecorded"))
+        on_disk = json.loads(store.store_path(path).read_text())["binding"]
+        self.assertEqual((on_disk["schema_version"], on_disk["source"]), (2, "herdr:unrecorded"))
+        self.assertEqual(json.loads(discovery.read_text())["source"], "herdr:unrecorded")
+        self.assertEqual([row["id"] for row in data["members"]], ["dispatch-v1"])
+
+    def test_owner_migration_is_idempotent(self):
+        path, discovery = self.version_1_lead()
+        store.load(path)
+        before = (store.store_path(path).read_bytes(), discovery.read_bytes())
+        store.load(path)
+        self.assertEqual((store.store_path(path).read_bytes(), discovery.read_bytes()), before)
+
+    def test_owner_transaction_persists_the_upgrade_under_its_own_lock(self):
+        path, _ = self.version_1_lead()
+        store.enroll(path, {"id": "dispatch-v1b", "agent": "w2", "task": "task-v1", "report": str(self.root / "w2.md"),
+                            "pane_id": "pane-w2", "native_session": None}, AT)
+        on_disk = json.loads(store.store_path(path).read_text())
+        self.assertEqual(on_disk["binding"]["schema_version"], 2)
+        self.assertEqual(len(on_disk["members"]), 2)
+
+    def test_rebind_upgrades_a_version_1_discovery_record(self):
+        path, discovery = self.version_1_lead()
+        row = store.bind(path, store.identity("v1-lead", str(self.root), "fixture", pane_id="lead-pane"), AT)
+        self.assertEqual((row["schema_version"], json.loads(discovery.read_text())["schema_version"]), (2, 2))
+
+    def test_reader_that_must_not_migrate_gets_older_binding(self):
+        path, _ = self.version_1_lead()
+        before = store.store_path(path).read_bytes()
+        with self.assertRaises(store.OlderBinding):
+            store.load(path, migrate=False)
+        self.assertEqual(store.store_path(path).read_bytes(), before)
+
+    def v1_stop_hook(self, session_id="v1-lead"):
+        script = Path(_ROOT).parent.parent / "hooks" / "herdr-supervision-stop.sh"
+        environment = {**os.environ, **self.environ}
+        payload = {**self.payload, "session_id": session_id}
+        return subprocess.run(["bash", str(script)], input=json.dumps(payload), env=environment,
+                              capture_output=True, text=True, check=False)
+
+    def test_stop_hook_lets_a_version_1_lead_stop_and_never_migrates(self):
+        path, discovery = self.version_1_lead()
+        before = (store.store_path(path).read_bytes(), discovery.read_bytes())
+        result = self.v1_stop_hook()
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+        self.assertIn("version-1 binding this hook does not migrate", result.stderr)
+        self.assertIn("supervision-status", result.stderr)
+        self.assertEqual((store.store_path(path).read_bytes(), discovery.read_bytes()), before)
+
+    def test_stop_hook_reads_an_unmigrated_owner_as_no_prior_state(self):
+        # The discovery record is current but the owner store is still version 1.
+        path, discovery = self.version_1_lead()
+        current = json.loads(discovery.read_text())
+        discovery.write_text(json.dumps(store.upgrade_binding(current)))
+        result = self.v1_stop_hook()
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+        self.assertIn("version-1 binding", result.stderr)
+
+    def test_stop_hook_blocks_again_once_the_owner_upgrades(self):
+        path, _ = self.version_1_lead()
+        store.load(path)
+        result = self.v1_stop_hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
 
     def rex_stop_hook(self, session_id, backend: str | None = "rex"):
         """Run hooks/herdr-supervision-stop.sh as the native Stop hook invokes it."""
@@ -480,7 +590,7 @@ class SupervisionTest(unittest.TestCase):
         self.bind_rex_lead_with_active_work()
         who = store.identity(self.REX_SESSION_ID, str(self.root), "fixture", pane_id="lead-pane")
         discovery = store.binding_path(who, self.root / "xdg" / "teamlead" / "supervision-bindings")
-        forged = {**json.loads(discovery.read_text()), "source": "herdr:claude"}
+        forged = {**json.loads(discovery.read_text()), "source": "forged:source"}
         discovery.write_text(json.dumps(forged))
         result = self.rex_stop_hook(self.REX_SESSION_ID)
         self.assertEqual(result.returncode, 0, result.stderr)

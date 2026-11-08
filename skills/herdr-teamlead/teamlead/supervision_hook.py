@@ -24,6 +24,13 @@ def block(reason):
     return {"decision": "block", "reason": "Herdr supervision — " + reason}
 
 
+def older_record(path):
+    # A non-owner never migrates (rules/stateful-artifacts.md Migration Policy):
+    # a version-1 binding is no usable prior state, and the stop proceeds. The
+    # owner upgrades it on the lead's next supervision command.
+    print("herdr-supervision-stop: {} holds a version-1 binding this hook does not migrate; the stop proceeds unchecked. Run supervision-status for that owner state to upgrade it and restore the Stop backstop.".format(path), file=sys.stderr)
+
+
 def check(payload, environ, at, *, root=None, probe=runtime.process_identity):
     if not environ.get("HERDR_ENV") or not environ.get("HERDR_PANE_ID") or not isinstance(payload, dict):
         return None
@@ -39,13 +46,20 @@ def check(payload, environ, at, *, root=None, probe=runtime.process_identity):
             binding = store.read_json(path)
             if binding is None:
                 continue
-            if (not store.valid_binding_version(binding)
+            if store.is_older_binding(binding):
+                older_record(path)
+                continue
+            if (not store.valid_binding(binding)
                     or binding.get("identity") != who or not isinstance(binding.get("state_path"), str)
                     or type(binding.get("generation")) is not int or binding["generation"] < 1):
                 return block("The exact lead binding is unreadable. Restore {} and reconcile its saved state before stopping.".format(path))
-            if store.binding_source(binding) is not None and default_backend(environ) != "rex":
+            if binding["source"] == store.EXPORTED_SOURCE and default_backend(environ) != "rex":
                 return block("This lead was bound from the session id Claude Code exports ({}), which only a Rex team round, its environment from rex-team.sh, accepts. Restart the lead with the rex-team.sh environment, or rebind it from Herdr's native session proof, before stopping.".format(binding["source"]))
-            data = store.load(binding["state_path"])
+            try:
+                data = store.load(binding["state_path"], migrate=False)
+            except store.OlderBinding:
+                older_record(store.store_path(binding["state_path"]))
+                continue
             if data["binding"] is None:
                 return block("This bound lead's supervision state is missing. Restore {} before stopping; missing state cannot prove its work was resolved.".format(store.store_path(binding["state_path"])))
             if data["binding"]["identity"] != who:
