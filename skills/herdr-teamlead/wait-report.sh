@@ -80,6 +80,9 @@
 #             move to another provider is dispatch-recovery.md's Wait
 #             outcomes, enforced by `apply`.
 #   env   : HERDR_ENV must be 1. HERDR_BIN overrides the herdr binary.
+#           TEAMLEAD_BACKEND=rex reads pane text from the Rex adapter's
+#           `{"result":{"type":"pane_text","text"}}`; unset or `herdr` reads
+#           Herdr's raw rows; any other value is a usage error (exit 2).
 #           Poll interval, give-up budget, and the pane-probe parameters are
 #           the named constants below (rules/ci-safety.md Always Watch CI —
 #           poll interval and budget are script-owned, never agent-chosen);
@@ -135,6 +138,9 @@ TEAMLEAD_PROBE_TIMEOUT_MS="${TEAMLEAD_PROBE_TIMEOUT_MS:-2000}"
 # render on the alternate screen, so rows that scrolled off are unrecoverable;
 # the marker is the LAST line of the final message and stays on screen.
 TEAMLEAD_PROBE_LINES="${TEAMLEAD_PROBE_LINES:-40}"
+
+# Which multiplexer answers HERDR_BIN (header env).
+TEAMLEAD_BACKEND="${TEAMLEAD_BACKEND:-herdr}"
 # Seconds between the two reads that a `blocked` verdict has to survive. Herdr
 # flickered `blocked` for a single read on a Codex pane running in Full Access,
 # where a permission prompt resolves itself before anything can see it; the
@@ -270,9 +276,7 @@ marker_seen() { # <pane-id> <absolute-report-path>
   # announces. `pane read` is used rather than `agent read`, which refuses with
   # `agent_not_idle` on exactly the working pane this has to inspect.
   rc=0
-  text="$("$HERDR_BIN" pane read "$1" \
-    --source visible \
-    --lines "$TEAMLEAD_PROBE_LINES" 2>"$ERRFILE")" || rc=$?
+  text="$(read_pane_text "$1")" || rc=$?
   if (( rc != 0 )); then
     warn "\`${HERDR_BIN} pane read $1\` failed (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — the marker was seen but could not be confirmed"
     return 2
@@ -296,6 +300,23 @@ marker_seen() { # <pane-id> <absolute-report-path>
   return 1
 }
 
+# Visible pane rows for <pane-id>. Herdr prints them; under
+# TEAMLEAD_BACKEND=rex the adapter's answer must be a pane_text result, and
+# anything else is a failed read. Failures land in $ERRFILE.
+read_pane_text() { # <pane-id>
+  local raw rc=0
+  raw="$("$HERDR_BIN" pane read "$1" --source visible --lines "$TEAMLEAD_PROBE_LINES" 2>"$ERRFILE")" || rc=$?
+  if (( rc != 0 )); then return "$rc"; fi
+  if [[ "$TEAMLEAD_BACKEND" != rex ]]; then
+    printf '%s' "$raw"
+    return 0
+  fi
+  if ! printf '%s' "$raw" | jq -je 'if .result.type == "pane_text" and (.result.text | type) == "string" then .result.text else error("not a pane_text result") end' 2>>"$ERRFILE"; then
+    printf 'not a pane_text result under TEAMLEAD_BACKEND=rex — point HERDR_BIN at skills/herdr-teamlead/rex-herdr.sh\n' >>"$ERRFILE"
+    return 1
+  fi
+}
+
 # Does the visible pane show a dialog waiting on a human?
 #
 # 0 = a marker is on screen, 1 = none, 2 = the pane could not be read. A pane
@@ -303,9 +324,7 @@ marker_seen() { # <pane-id> <absolute-report-path>
 # flickered `blocked` into a terminal one.
 dialog_on_screen() { # <pane-id>
   local rc=0 text marker
-  text="$("$HERDR_BIN" pane read "$1" \
-    --source visible \
-    --lines "$TEAMLEAD_PROBE_LINES" 2>"$ERRFILE")" || rc=$?
+  text="$(read_pane_text "$1")" || rc=$?
   if (( rc != 0 )); then
     warn "\`${HERDR_BIN} pane read $1\` failed (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — cannot confirm whether a dialog is on screen"
     return 2
@@ -411,7 +430,7 @@ terminal_refusal_on_screen() { # <visible-pane-text>
 
 read_refusal_view() { # <pane-id>
   local text rc=0
-  text="$("$HERDR_BIN" pane read "$1" --source visible --lines "$TEAMLEAD_PROBE_LINES" 2>"$ERRFILE")" || rc=$?
+  text="$(read_pane_text "$1")" || rc=$?
   if (( rc != 0 )); then
     warn "cannot inspect ${1} for a terminal provider notice (exit ${rc}): $(tr '\n' ' ' < "$ERRFILE") — restore the pane connection before deciding this attempt's outcome"
     return 2
@@ -735,6 +754,10 @@ main() {
   validate_nonneg_int TEAMLEAD_REFUSAL_CONFIRM_SEC "$TEAMLEAD_REFUSAL_CONFIRM_SEC" || return 2
   validate_positive_int TEAMLEAD_PROBE_TIMEOUT_MS "$TEAMLEAD_PROBE_TIMEOUT_MS" || return 2
   validate_positive_int TEAMLEAD_PROBE_LINES "$TEAMLEAD_PROBE_LINES" || return 2
+  case "$TEAMLEAD_BACKEND" in
+    herdr|rex) ;;
+    *) warn "TEAMLEAD_BACKEND='${TEAMLEAD_BACKEND}' is not a backend — set it to herdr or rex, or unset it"; return 2 ;;
+  esac
   # Normalize to decimal once: a validated `08` would otherwise be reparsed as
   # octal by every later bare arithmetic expansion.
   TEAMLEAD_UNCONFIRMED_IDLE_READS=$(( 10#$TEAMLEAD_UNCONFIRMED_IDLE_READS ))

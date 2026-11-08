@@ -42,6 +42,10 @@
 #  21d. Zero as `00`    -> refused too; the count is compared in base 10.
 #  21e. `02` is two     -> a leading zero is decimal, never octal, downstream.
 #  21f. Bad budget      -> the seconds knobs are validated the same way.
+#  22. Rex pane text    -> TEAMLEAD_BACKEND=rex confirms the marker from the
+#                         adapter's pane_text result.
+#  22b. Rex, raw rows   -> under rex, raw rows are a failed read (exit 2).
+#  22c. Bad backend     -> an unknown TEAMLEAD_BACKEND is exit 2.
 #
 # Run: bash skills/herdr-teamlead/tests/test_wait_report.sh
 set -uo pipefail
@@ -896,6 +900,26 @@ ${base}"
   OUT="$(env HERDR_ENV=1 HERDR_BIN="$FAKE" bash "$SCRIPT" --worktree </dev/null 2>"$TMP/stall-usage")"; RC=$?
   if [[ $RC -eq 2 && -z "$OUT" ]] && grep -q "worktree" "$TMP/stall-usage"; then
     pass; else fail "--worktree without a value must be a usage error: RC=$RC"; fi
+
+  # 22. The Rex adapter wraps the rows in a pane_text result; the marker is
+  #     confirmed from its text.
+  report="$TMP/rex-report.md"
+  printf 'done\n' > "$report" || die "could not write $report"
+  local wrapped
+  wrapped="$(jq -nc --arg t "REPORT: ${report}" '{result:{type:"pane_text",pane_id:"block:1",text:($t + "\n")}}')" || die "jq failed"
+  run "$report" TEAMLEAD_BACKEND=rex FAKE_MARKER=found FAKE_STATUS=done FAKE_PANE_TEXT="$wrapped"
+  if [[ $RC -eq 0 ]] && printf '%s' "$OUT" | jq -e '.found == true' >/dev/null 2>&1; then
+    pass; else fail "rex pane text: expected found true, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # 22b. Under rex, Herdr's raw rows are not an answer: the confirming read fails.
+  run "$report" TEAMLEAD_BACKEND=rex FAKE_MARKER=found FAKE_STATUS=done
+  if [[ $RC -eq 2 ]] && printf '%s' "$ERRTEXT" | grep -q "pane_text"; then
+    pass; else fail "rex raw rows: expected exit 2 naming pane_text, got RC=$RC OUT=$OUT ERR=$ERRTEXT"; fi
+
+  # 22c. An unknown backend is refused before any read.
+  run "$report" TEAMLEAD_BACKEND=tmux FAKE_MARKER=found FAKE_STATUS=done
+  if [[ $RC -eq 2 ]] && printf '%s' "$ERRTEXT" | grep -q "TEAMLEAD_BACKEND='tmux'"; then
+    pass; else fail "bad backend: expected exit 2 naming the value, got RC=$RC ERR=$ERRTEXT"; fi
 
   echo "─────────────────────────────────────────────" >&2
   if [[ $FAIL -gt 0 ]]; then echo "FAILED: ${FAIL} failed, ${PASS} passed" >&2; exit 1; fi
