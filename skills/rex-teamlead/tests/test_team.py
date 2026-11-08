@@ -850,19 +850,6 @@ class CheckTest(Fixture):
         (self.worktree / "lib.py").write_text("x = 2\n")
         self.assertEqual(self.check(fake, "grep -q 'x = 2' lib.py")[1]["verdict"], "pass")
 
-    def test_a_same_size_rewrite_under_trustctime_false_is_invalid(self):
-        fake = FakeRex()
-        self.committed(fake)
-        git("config", "--local", "core.trustctime", "false", cwd=self.worktree)
-        stamp = "touch -t 202001010000 lib.py"
-        subprocess.run(["bash", "-c", stamp], cwd=self.worktree, check=True)
-        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
-        # Git compares whole-second ctimes, so the rewrite lands in a later second.
-        out = self.check(fake, "sleep 1; printf 'x = 3\\n' > lib.py && " + stamp)[1]
-        self.assertEqual(self.old_status(), "", "core.trustctime=false must hide the rewrite")
-        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
-        self.assertIn("lib.py", out["runs"][0]["reason"])
-
     def test_an_executable_bit_change_under_filemode_false_is_invalid(self):
         fake = FakeRex()
         self.committed(fake)
@@ -872,18 +859,175 @@ class CheckTest(Fixture):
         self.assertEqual(self.old_status(), "", "core.fileMode=false must hide the mode change")
         self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
 
-    def test_assume_unchanged_and_skip_worktree_entries_are_refused(self):
+    def plain_status(self):
+        return subprocess.run(["git", "status", "--porcelain"], cwd=self.worktree, capture_output=True, text=True, check=True).stdout
+
+    #: A same-size rewrite of lib.py that puts back its primed mtime.
+    REWRITE = "printf 'x = 3\\n' > lib.py && touch -t 202001010000 lib.py"
+
+    def primed(self, fake):
+        """The real index's cached stat data for lib.py matches the file after
+        REWRITE: mtime pinned, size equal, inode kept, ctime not trusted."""
+        self.committed(fake)
+        git("config", "--local", "core.trustctime", "false", cwd=self.worktree)
+        subprocess.run(["bash", "-c", "touch -t 202001010000 lib.py"], cwd=self.worktree, check=True)
+        git("update-index", "--refresh", cwd=self.worktree)
+
+    def test_a_rewrite_the_stat_cache_misses_is_refused_before_the_run(self):
+        fake = FakeRex()
+        self.primed(fake)
+        subprocess.run(["bash", "-c", self.REWRITE], cwd=self.worktree, check=True)
+        self.assertEqual(self.plain_status(), "", "the primed stat data must hide the rewrite")
+        self.refused(fake, "check_dirty")
+        (self.worktree / "lib.py").write_text("x = 2\n")  # `git checkout` would trust the same stale stat data
+        self.accepted(fake)
+
+    def test_a_rewrite_the_stat_cache_misses_is_invalid_after_the_run(self):
+        fake = FakeRex()
+        self.primed(fake)
+        out = self.check(fake, self.REWRITE)[1]
+        self.assertEqual(self.plain_status(), "", "the primed stat data must hide the rewrite")
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("M lib.py", out["runs"][0]["reason"])
+
+    def accepted(self, fake):
+        out = self.check(fake, "grep -q 'x = 2' lib.py")[1]
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("pass", "pass"))
+
+    def test_clean_content_under_assume_unchanged_is_accepted(self):
         fake = FakeRex()
         self.committed(fake)
-        for bit in ("assume-unchanged", "skip-worktree"):
-            with self.subTest(bit=bit):
-                git("update-index", "--" + bit, "lib.py", cwd=self.worktree)
-                (self.worktree / "lib.py").write_text("x = 9\n")
-                self.assertEqual(self.old_status(), "", "the index bit must hide the change")
-                self.refused(fake, "check_dirty")
-                git("update-index", "--no-" + bit, "lib.py", cwd=self.worktree)
-                (self.worktree / "lib.py").write_text("x = 2\n")
-        self.assertEqual(self.check(fake, "grep -q 'x = 2' lib.py")[1]["verdict"], "pass")
+        git("update-index", "--assume-unchanged", "lib.py", cwd=self.worktree)
+        self.accepted(fake)
+
+    def test_clean_content_under_skip_worktree_is_accepted(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("update-index", "--skip-worktree", "lib.py", cwd=self.worktree)
+        self.accepted(fake)
+
+    def test_clean_content_under_core_ignorestat_is_accepted(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("config", "--local", "core.ignoreStat", "true", cwd=self.worktree)
+        git("update-index", "--really-refresh", cwd=self.worktree)
+        flags = subprocess.run(["git", "ls-files", "-v", "lib.py"], cwd=self.worktree, capture_output=True, text=True, check=True).stdout
+        self.assertEqual(flags, "h lib.py\n", "core.ignoreStat must set the assume-unchanged bit")
+        self.accepted(fake)
+
+    def test_an_empty_deinitialized_submodule_marked_skip_worktree_is_accepted(self):
+        fake = FakeRex()
+        self.with_ignored_submodule(fake, "config")
+        git("submodule", "deinit", "-q", "-f", "sub", cwd=self.worktree)
+        git("update-index", "--skip-worktree", "sub", cwd=self.worktree)
+        self.assertEqual(list((self.worktree / "sub").iterdir()), [])
+        self.accepted(fake)
+        (self.worktree / "sub").rmdir()
+        self.accepted(fake)
+
+    #: Changes to lib.py, each hidden from `git status` by its skip-worktree bit.
+    FLAGGED = {"dangling symlink": "rm lib.py && ln -s missing-target lib.py",
+               "modified file": "printf 'x = 9\\n' > lib.py",
+               "type change": "rm lib.py && ln -s lib-target.txt lib.py"}
+
+    def flagged_change(self, name, before):
+        fake = FakeRex()
+        self.committed(fake)
+        git("update-index", "--skip-worktree", "lib.py", cwd=self.worktree)
+        target = Path(self.tmp.name) / "lib-target.txt"
+        target.write_text("x = 2\n")
+        command = self.FLAGGED[name].replace("lib-target.txt", str(target))
+        if before:
+            subprocess.run(["bash", "-c", command], cwd=self.worktree, check=True)
+            self.assertEqual(self.plain_status(), "", "skip-worktree must hide the change")
+            self.refused(fake, "check_dirty")
+            return
+        out = self.check(fake, command)[1]
+        self.assertEqual(self.plain_status(), "", "skip-worktree must hide the change")
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("lib.py", out["runs"][0]["reason"])
+
+    def test_a_dangling_symlink_under_skip_worktree_is_refused_before_the_run(self):
+        self.flagged_change("dangling symlink", before=True)
+
+    def test_a_dangling_symlink_under_skip_worktree_is_invalid_after_the_run(self):
+        self.flagged_change("dangling symlink", before=False)
+
+    def test_a_modified_file_under_skip_worktree_is_refused_before_the_run(self):
+        self.flagged_change("modified file", before=True)
+
+    def test_a_modified_file_under_skip_worktree_is_invalid_after_the_run(self):
+        self.flagged_change("modified file", before=False)
+
+    def test_a_type_change_under_skip_worktree_is_refused_before_the_run(self):
+        self.flagged_change("type change", before=True)
+
+    def test_a_type_change_under_skip_worktree_is_invalid_after_the_run(self):
+        self.flagged_change("type change", before=False)
+
+    def test_a_sparse_checkout_is_refused_with_its_reason(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("sparse-checkout", "set", "--no-cone", "/lib.py", cwd=self.worktree)
+        marker = Path(self.tmp.name) / "ran"
+        code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, err["error"]["code"], out), (1, "check_dirty", {}))
+        self.assertIn("sparse checkout: the check cannot see the candidate's full tree", err["error"]["message"])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+        git("sparse-checkout", "disable", cwd=self.worktree)
+        self.accepted(fake)
+
+    def test_a_run_that_makes_the_checkout_sparse_is_invalid(self):
+        fake = FakeRex()
+        self.committed(fake)
+        out = self.check(fake, "git sparse-checkout set --no-cone /lib.py")[1]
+        self.assertEqual((out["verdict"], self.state()["workers"]["dev"]["check"]["verdict"]), ("invalid", "invalid"))
+        self.assertIn("sparse checkout", out["runs"][0]["reason"])
+
+    def test_a_check_never_writes_the_real_index(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("update-index", "--assume-unchanged", "lib.py", cwd=self.worktree)
+        (self.worktree / "stray.txt").write_text("untracked\n")
+        index = Path(subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=self.worktree,
+                                    capture_output=True, text=True, check=True).stdout.strip())
+
+        def snapshot():
+            listing = subprocess.run(["git", "ls-files", "-v", "-s"], cwd=self.worktree, capture_output=True, text=True, check=True).stdout
+            return index.read_bytes(), listing
+
+        before = snapshot()
+        self.assertEqual(self.check(fake, "true")[2]["error"]["code"], "check_dirty")
+        (self.worktree / "stray.txt").unlink()
+        self.assertEqual(self.check(fake, "true")[1]["verdict"], "pass")
+        self.assertEqual(snapshot(), before)
+
+    def test_a_clean_filter_keeps_a_filtered_candidate_clean(self):
+        fake = FakeRex()
+        self.committed(fake)
+        git("config", "--local", "filter.upper.clean", "tr a-z A-Z", cwd=self.worktree)
+        (self.worktree / ".gitattributes").write_text("*.dat filter=upper\n")
+        (self.worktree / "data.dat").write_text("hello\n")
+        git("add", "-A", cwd=self.worktree)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "filtered", cwd=self.worktree)
+        self.tip = self.rev("HEAD")
+        stored = subprocess.run(["git", "show", "HEAD:data.dat"], cwd=self.worktree, capture_output=True, text=True, check=True).stdout
+        self.assertEqual((stored, (self.worktree / "data.dat").read_text()), ("HELLO\n", "hello\n"))
+        self.assertEqual(self.check(fake, "grep -q hello data.dat")[1]["verdict"], "pass")
+        (self.worktree / "data.dat").write_text("world\n")
+        self.assertEqual(self.check(fake, "true")[2]["error"]["code"], "check_dirty")
+
+    def test_ignored_build_output_is_not_a_change(self):
+        fake = FakeRex()
+        self.committed(fake)
+        (self.worktree / ".gitignore").write_text("build/\n")
+        git("add", ".gitignore", cwd=self.worktree)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "ignore", cwd=self.worktree)
+        self.tip = self.rev("HEAD")
+        out = self.check(fake, "mkdir -p build && echo out > build/artifact")[1]
+        self.assertEqual(out["verdict"], "pass")
+        self.assertTrue((self.worktree / "build" / "artifact").exists())
 
     def test_a_dirty_worktree_is_refused_and_a_clean_one_runs(self):
         fake = FakeRex()

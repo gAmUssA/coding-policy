@@ -27,6 +27,7 @@ import secrets
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -244,37 +245,64 @@ def run_check(command, cwd, log, timeout):
     return ran(code, "invalid", "exit {} is neither pass (0) nor fail (1)".format(code))
 
 
-#: Forced on every clean-tree read. `-c` reaches the status processes git
-#: runs for submodules too. Each setting could otherwise hide a change:
-#: untracked files in a submodule, an fsmonitor that reports nothing changed,
-#: a same-size rewrite with its mtime restored, and an executable-bit change.
-STATUS_CONFIG = ("status.showUntrackedFiles=all", "core.fsmonitor=false", "core.trustctime=true", "core.fileMode=true")
+#: Forced on every content read: `core.fileMode=false` would make `git add -A`
+#: keep the candidate's mode and hide an executable-bit change.
+CONTENT_CONFIG = ("core.fileMode=true",)
+SPARSE = "sparse checkout: the check cannot see the candidate's full tree"
+
+
+def sparse_checkout(root):
+    """Whether the checkout at `root` is sparse, by its own `core.sparseCheckout`."""
+    done = subprocess.run(["git", "-C", str(root), "config", "--type=bool", "--get", "core.sparseCheckout"],
+                          capture_output=True, text=True, check=False)
+    if done.returncode not in (0, 1):  # 1: the setting is unset
+        raise TeamError("git_failed", "`git config core.sparseCheckout` failed in {}: {}".format(root, done.stderr.strip()[:300]))
+    return done.stdout.strip() == "true"
+
+
+def content_diff(root):
+    """`root`'s working tree against its own HEAD, by content: HEAD is read into
+    a temporary index outside the worktree and the working tree staged into it,
+    so every tracked and untracked, non-ignored file is hashed through the
+    repository's filters. The real index and its cached stat data and flags
+    are never read or written."""
+    config = [arg for setting in CONTENT_CONFIG for arg in ("-c", setting)]
+    with tempfile.TemporaryDirectory(prefix="rex-team-index-") as tmp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+
+        def run(*args):
+            done = subprocess.run(["git", "-C", str(root)] + config + list(args), capture_output=True, text=True, check=False, env=env)
+            if done.returncode != 0:
+                raise TeamError("git_failed", "`git {}` failed in {}: {}".format(" ".join(args[:2]), root, done.stderr.strip()[:300]))
+            return done.stdout
+
+        run("read-tree", "HEAD")
+        run("add", "-A")
+        return run("diff", "--cached", "--name-status", "--no-renames", "--ignore-submodules=none", "-z", "HEAD")
 
 
 def changes(worktree, prefix=""):
-    """Every change `git status` can be made to hide, in `worktree` and each
-    populated submodule below it, one line each; empty when clean. Untracked
-    files, submodule changes and the settings in STATUS_CONFIG are forced
-    whatever the user, repository, `.gitmodules` or a submodule sets. An
-    index entry marked assume-unchanged, or skip-worktree with its file
-    present, is reported: git skips its content, so its change is unseen.
-    Ignored files stay unreported."""
+    """Every difference between `worktree` and its candidate, recursing into
+    each populated submodule against that submodule's own HEAD, one line each;
+    empty when clean. Ignored paths are exempt. A sparse checkout is reported:
+    its omitted paths cannot be compared. An unpopulated submodule, with no
+    directory or an empty one, is clean."""
     root = Path(worktree) / prefix
     where = "in {}: ".format(prefix) if prefix else ""
-    config = [arg for setting in STATUS_CONFIG for arg in ("-c", setting)]
-    found = [where + line.strip() for line in
-             git(root, *config, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none").splitlines()]
-    for entry in filter(None, git(root, "ls-files", "-v", "-z").split("\0")):
-        tag, path = entry[0], entry[2:]
-        if tag.islower():
-            found.append("{}{} is marked assume-unchanged".format(where, path))
-        elif tag == "S" and (root / path).exists():
-            found.append("{}{} is marked skip-worktree but present".format(where, path))
-    for entry in filter(None, git(root, "ls-files", "--stage", "-z").split("\0")):
-        if entry.startswith("160000 "):
-            sub = prefix + entry.split("\t", 1)[1] + "/"
-            if (Path(worktree) / sub / ".git").exists():
-                found.extend(filter(None, changes(worktree, sub).splitlines()))
+    if sparse_checkout(root):
+        return where + SPARSE
+    gitlinks = [entry.split("\t", 1)[1] for entry in filter(None, git(root, "ls-tree", "-r", "-z", "HEAD").split("\0"))
+                if entry.startswith("160000 ")]
+    populated = {path for path in gitlinks if (root / path / ".git").exists()}
+    fields = content_diff(root).split("\0")
+    found = []
+    for status, path in zip(fields[0::2], fields[1::2]):
+        if path in gitlinks and path not in populated:
+            continue  # an unpopulated submodule is clean
+        found.append("{}{} {}".format(where, status, path))
+    for path in gitlinks:
+        if path in populated:
+            found.extend(filter(None, changes(worktree, prefix + path + "/").splitlines()))
     return "\n".join(found)
 
 
@@ -504,6 +532,8 @@ class Team:
         head = git(worktree, "rev-parse", "HEAD")
         if head != candidate:
             raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
+        if sparse_checkout(worktree):
+            raise TeamError("check_dirty", "{}'s worktree {} is a {} — run the check in a full checkout of the candidate".format(role, worktree, SPARSE))
         dirty = changes(worktree)
         if dirty:
             raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
