@@ -85,10 +85,12 @@ main() {
   fi
 
   # Valid JSON is not a verdict: `{}` would default to zero findings and APPROVE.
-  # Require the schema's top-level shape (schema.json) before deriving anything.
-  if ! jq -e '(.summary | type == "string") and (.findings | type == "array")
+  # Require the schema's shape (schema.json), including the summary's load
+  # indicator — without it nothing shows the policy was read.
+  if ! jq -e '(.summary | type == "string" and test("^Policy loaded: [0-9]+ rule files from "))
+              and (.findings | type == "array")
               and all(.findings[]; type == "object")' "$result" >/dev/null; then
-    echo "error: ${result} lacks a string .summary and an array of finding objects in .findings — not a review result; refusing to post. Inspect the file and the review step logs" >&2
+    echo "error: ${result} is not a review result: it needs a .summary starting 'Policy loaded: N rule files from' and an array of finding objects in .findings; refusing to post. Inspect the file and the review step logs" >&2
     exit 1
   fi
 

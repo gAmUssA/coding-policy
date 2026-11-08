@@ -192,7 +192,7 @@ t_not_a_result() {
   local dir payload rc
   dir=$(mktemp -d) || { bad "not_a_result: mktemp -d failed"; return; }
   GH_CAPTURE="$dir/payload.json"; MOCK_422_ON_APPROVE=0
-  for payload in '{}' '{"summary":"x"}' '{"findings":[]}' '{"summary":"x","findings":{}}' '{"summary":"x","findings":["blocking"]}' '[]'; do
+  for payload in '{}' '{"summary":"x","findings":[]}' '{"summary":"x"}' '{"findings":[]}' '{"summary":"x","findings":{}}' '{"summary":"x","findings":["blocking"]}' '[]'; do
     printf '%s' "$payload" > "$dir/final.json" || fatal "cannot write $dir/final.json"
     : > "$GH_CAPTURE"
     rc=0; run_main owner repo 1 "$dir/final.json" >/dev/null 2>&1 || rc=$?
