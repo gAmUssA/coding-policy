@@ -20,6 +20,10 @@
 #   5. Missing uv      -> exit 1 naming the uv install page.
 #   6. Setup envelope  -> launcher failures are Herdr's stderr JSON, code
 #                         setup_error, even for a path holding a double quote.
+#   7. uv failure      -> uv's own unstructured failure becomes a setup_error
+#                         envelope with exit 1 and no stdout.
+#   8. Module envelope -> the module's own error envelope passes through with
+#                         its exit status.
 #
 # Run: bash skills/herdr-teamlead/tests/test_rex_herdr_launcher.sh
 set -uo pipefail
@@ -34,11 +38,16 @@ cleanup() { [[ -n "${TMP:-}" ]] && ! rm -rf "$TMP" && echo "warn: could not remo
 pass() { PASS=$((PASS+1)); }
 fail() { FAIL=$((FAIL+1)); echo "  ✗ FAIL: $1" >&2; }
 
-# A fake uv: records argv and PYTHONPATH and exits with $FAKE_UV_RC.
+# A fake uv: records argv and PYTHONPATH and exits with $FAKE_UV_RC, after
+# writing $FAKE_UV_STDERR to stderr when set.
 mk_fake_uv() { # <path>
   cat > "$1" <<'FAKE' || die "could not write the fake uv at $1"
 #!/usr/bin/env bash
 set -uo pipefail
+if [[ -n "${FAKE_UV_STDERR:-}" ]]; then
+  printf '%s\n' "$FAKE_UV_STDERR" >&2
+  exit "${FAKE_UV_RC:-0}"
+fi
 printf 'ARGV: %s\n' "$*"
 printf 'PYTHONPATH: %s\n' "${PYTHONPATH:-}"
 exit "${FAKE_UV_RC:-0}"
@@ -74,7 +83,7 @@ main() {
     pass; else fail "PYTHONPATH: expected ${skill}:/existing/path, got rc=$rc out=$out"; fi
 
   # 3. The module's own exit status reaches the caller.
-  out="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 bash "$skill/rex-herdr.sh" bogus 2>&1)"; rc=$?
+  out="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR='{"error":{"code":"usage_error","message":"unsupported command"}}' bash "$skill/rex-herdr.sh" bogus 2>&1)"; rc=$?
   if [[ $rc -eq 2 ]]; then pass; else fail "passthrough: expected exit 2, got rc=$rc out=$out"; fi
 
   # 4. A missing module names the reinstall command and never execs.
@@ -97,6 +106,17 @@ main() {
   out="$(env UV_BIN="$fakeuv" bash "$quoted/rex-herdr.sh" agent read claude 2>&1 >/dev/null)"; rc=$?
   if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e '.error.code == "setup_error" and (.error.message | contains("sk\"ill"))' >/dev/null; then
     pass; else fail "setup envelope: expected one setup_error JSON object, got rc=$rc out=$out"; fi
+
+  # 7. uv's own failure, before the module runs, becomes a setup_error envelope.
+  local stdout_only
+  stdout_only="$(env UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR="error: No interpreter found for Python >=3.11" bash "$skill/rex-herdr.sh" pane read p1 2>"$TMP/err7")"; rc=$?
+  if [[ $rc -eq 1 && -z "$stdout_only" ]] && jq -e '.error.code == "setup_error" and (.error.message | contains("No interpreter found"))' "$TMP/err7" >/dev/null; then
+    pass; else fail "uv failure: expected exit 1, no stdout and a setup_error envelope, got rc=$rc stdout=$stdout_only err=$(cat "$TMP/err7")"; fi
+
+  # 8. The module's own envelope passes through unchanged, with its status.
+  out="$(env UV_BIN="$fakeuv" FAKE_UV_RC=1 FAKE_UV_STDERR='{"error":{"code":"pane_not_found","message":"pane p1 not found"}}' bash "$skill/rex-herdr.sh" pane read p1 2>&1 >/dev/null)"; rc=$?
+  if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e '.error.code == "pane_not_found"' >/dev/null; then
+    pass; else fail "module envelope: expected the pane_not_found envelope with exit 1, got rc=$rc out=$out"; fi
 
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))

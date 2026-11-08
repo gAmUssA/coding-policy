@@ -74,23 +74,45 @@ class FakeRex:
     """The `rex` and `ps` executables. Snapshots are served from a queue (the
     last one repeats); `do` label scripts and terminal writes are recorded."""
 
-    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None):
+    def __init__(self, *snapshots, screens=None, ps=None, fail=None, on_send=None, ps_result=None, raises=None, fail_verb=None):
         self.snapshots = [copy.deepcopy(s) for s in snapshots] or [team_snapshot()]
         self.screens = screens or {}
         self.ps = ps or {}
+        self.ps_result = ps_result
+        self.raises = raises
         self.fail = fail
+        self.fail_verb = fail_verb
         self.on_send = on_send
         self.calls, self.writes = [], []
 
     def current(self):
         return self.snapshots[0]
 
+    def ps_line(self, pid):
+        """`pid ppid args`: an override from `ps`, else derived from the
+        snapshot: a foreground under a separate `child` has that child as its
+        parent, and a shell's arguments are its bare login name."""
+        if str(pid) in self.ps:
+            return "{} {}\n".format(pid, self.ps[str(pid)])
+        for b in self.current()["blocks"]:
+            process = b.get("process") or {}
+            fg, child = process.get("foreground"), process.get("child") or {}
+            if fg and fg.get("pid") == pid:
+                ppid = 1 if child.get("pid") == pid else child.get("pid")
+                args = "-" + fg["name"] if fg.get("name") in rex_herdr.SHELLS else fg.get("argv0")
+                return "{} {} {}\n".format(pid, ppid, args)
+        return None
+
     def __call__(self, argv):
         self.calls.append(list(argv))
+        if self.raises and argv[0] == self.raises[0]:
+            raise self.raises[1]
         if argv[0] == "ps":
-            line = self.ps.get(argv[-1])
-            return FakeCompleted(0 if line else 1, (line or "") + "\n", "")
-        if self.fail:
+            if self.ps_result is not None:
+                return self.ps_result
+            lines = [line for line in (self.ps_line(int(pid)) for pid in argv[-1].split(",")) if line]
+            return FakeCompleted(0 if len(lines) == len(argv[-1].split(",")) else 1, "".join(lines), "")
+        if self.fail and self.fail_verb in (None, argv[1]):
             return FakeCompleted(1, "", self.fail)
         verb = argv[1]
         if verb == "do":
@@ -187,6 +209,19 @@ class AgentListTest(unittest.TestCase):
         panes = [a["pane_id"] for a in result(run(FakeRex(snapshot), "agent", "list")[1])["agents"]]
         self.assertNotIn(STALE, panes)
 
+    def test_program_named_after_an_agent_is_not_an_agent(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = agent_process(300, 310, "vim", "vim")
+        rex = FakeRex(snapshot, ps={"310": "300 vim codex"})
+        panes = [a["pane_id"] for a in result(run(rex, "agent", "list")[1])["agents"]]
+        self.assertNotIn(SHELL, panes)
+
+    def test_malformed_block_list_fails_instead_of_reading_empty(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"] = {"block": "not an array"}
+        code, out, err = run(FakeRex(snapshot), "agent", "list")
+        self.assertEqual((code, out, error_code(err)), (1, "", "rex_malformed"))
+
     def test_rex_default_label_is_no_name(self):
         snapshot = team_snapshot()
         snapshot["blocks"][0]["label"] = "shell"
@@ -221,12 +256,12 @@ class ReadTest(unittest.TestCase):
     def test_visible_keeps_the_screen_rows_then_the_last_lines(self):
         rex = FakeRex(screens={CLAUDE: self.SCREEN})
         code, out, _ = run(rex, "agent", "read", "claude", "--source", "visible", "--lines", "3")
-        self.assertEqual((code, out), (0, "row27\nrow28\nrow29\n"))
-        self.assertEqual(run(rex, "pane", "read", CLAUDE, "--source", "visible")[1].count("\n"), 24)
+        self.assertEqual((code, result(out)), (0, {"type": "pane_text", "pane_id": CLAUDE, "text": "row27\nrow28\nrow29\n"}))
+        self.assertEqual(result(run(rex, "pane", "read", CLAUDE, "--source", "visible")[1])["text"].count("\n"), 24)
 
     def test_recent_reads_the_scrollback(self):
         out = run(FakeRex(screens={CLAUDE: self.SCREEN}), "pane", "read", CLAUDE, "--source", "recent")[1]
-        self.assertEqual(out.count("\n"), 30)
+        self.assertEqual(result(out)["text"].count("\n"), 30)
 
     def test_unwrapped_and_ansi_reach_rex_capture(self):
         rex = FakeRex(screens={CLAUDE: "x"})
@@ -398,6 +433,46 @@ class PaneTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual([b["label"] for b in rex.current()["blocks"] if b["block_id"] == SHELL], ["spare"])
 
+    def test_pane_running_a_shell_script_is_busy(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = agent_process(300, 320, "/bin/bash", "bash")
+        rex = FakeRex(snapshot, ps={"320": "300 bash ./build.sh"})
+        code, _, err = run(rex, "agent", "start", "w2", "--kind", "claude", "--pane", SHELL)
+        self.assertEqual((code, error_code(err), rex.writes), (1, "pane_busy", []))
+        info = result(run(rex, "pane", "process-info", "--pane", SHELL)[1])["process_info"]
+        self.assertEqual((info["shell_pid"], [p["pid"] for p in info["foreground_processes"]]), (300, [320]))
+
+    def test_block_whose_own_shell_runs_a_script_is_busy(self):
+        # `rex split -- bash ./build.sh`: the block's child is the script's shell.
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = {"child": {"argv0": "/bin/bash", "name": "bash", "pid": 340},
+                                            "foreground": {"argv0": "/bin/bash", "name": "bash", "pid": 340, "cwd": "/repo"}}
+        rex = FakeRex(snapshot, ps={"340": "1 /bin/bash ./build.sh"})
+        self.assertEqual(error_code(run(rex, "agent", "start", "w2", "--kind", "claude", "--pane", SHELL)[2]), "pane_busy")
+
+    def test_nested_shell_is_not_the_panes_own_shell(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = agent_process(300, 330, "bash", "bash")
+        rex = FakeRex(snapshot, ps={"330": "300 bash"})
+        self.assertEqual(error_code(run(rex, "agent", "start", "w2", "--kind", "claude", "--pane", SHELL)[2]), "pane_busy")
+
+    def test_shell_under_a_login_wrapper_is_the_panes_shell(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = {"child": {"argv0": None, "name": "login", "pid": 299},
+                                            "foreground": {"argv0": "-zsh", "name": "zsh", "pid": 300, "cwd": "/repo"}}
+        info = result(run(FakeRex(snapshot), "pane", "process-info", "--pane", SHELL)[1])["process_info"]
+        self.assertEqual(info, {"pane_id": SHELL, "shell_pid": 300, "foreground_processes": [{"pid": 300, "name": "zsh"}]})
+
+    def test_pane_rex_cannot_describe_is_busy(self):
+        snapshot = team_snapshot()
+        snapshot["blocks"][2]["process"] = None
+        self.assertEqual(error_code(run(FakeRex(snapshot), "agent", "start", "w2", "--kind", "claude", "--pane", SHELL)[2]), "pane_busy")
+
+    def test_ps_tool_failure_is_reported(self):
+        for rex in (FakeRex(ps_result=FakeCompleted(2, "", "ps: illegal option")), FakeRex(raises=("ps", FileNotFoundError("ps")))):
+            code, out, err = run(rex, "agent", "list")
+            self.assertEqual((code, out, error_code(err)), (1, "", "ps_failed"))
+
     def test_send_text_and_keys(self):
         rex = FakeRex()
         run(rex, "pane", "send-text", SHELL, "/usage")
@@ -448,6 +523,19 @@ class EnvelopeTest(unittest.TestCase):
         code, _, err = run(FakeRex(fail="Error: session not found"), "agent", "list")
         self.assertEqual((code, error_code(err)), (1, "rex_failed"))
         self.assertIn("session not found", json.loads(err)["error"]["message"])
+
+    def test_failure_diagnostics_withhold_typed_text_and_redact_stderr(self):
+        token = "ghp_" + "A" * 36
+        rex = FakeRex(fail="Error: rejected input " + token, fail_verb="send")
+        code, _, err = run(rex, "pane", "send-text", SHELL, "export GITHUB_TOKEN=" + token)
+        self.assertEqual((code, error_code(err)), (1, "rex_failed"))
+        self.assertNotIn(token, err)
+        self.assertIn("rex send -s {} -b {} <".format(SESSION, SHELL), json.loads(err)["error"]["message"])
+
+    def test_unexpected_failure_is_an_envelope_with_no_stdout(self):
+        for argv in (("agent", "read", "claude"), ("pane", "read", CLAUDE)):
+            code, out, err = run(FakeRex(raises=("rex", RuntimeError("boom"))), *argv)
+            self.assertEqual((code, out, error_code(err)), (1, "", "internal_error"), argv)
 
     def test_missing_rex_binary(self):
         def missing(argv):

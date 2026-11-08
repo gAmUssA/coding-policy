@@ -2,17 +2,18 @@
 
 Implements the subset of Herdr's command grammar this plugin calls, answers in
 Herdr's JSON envelope, and drives Rex through the `rex` CLI. Point `HERDR_BIN`
-and `TEAMLEAD_HERDR_BIN` at `skills/herdr-teamlead/rex-herdr.sh` to run the
-team-lead skills on Rex.
+and `TEAMLEAD_HERDR_BIN` at `skills/herdr-teamlead/rex-herdr.sh` and set
+`TEAMLEAD_BACKEND=rex` to run the team-lead transport on Rex.
 
 Contract:
   argv  : `agent list|get|read|prompt|send-keys|wait|start|rename`,
           `pane get|read|wait-output|send-text|send-keys|process-info|rename`,
           `workspace list|rename`, in Herdr's grammar.
-  stdout: one JSON object `{"result": ...}`, or raw text for `agent read` and
-          `pane read`.
+  stdout: one JSON object `{"result": ...}` for every command. `agent read` and
+          `pane read` answer `{"result":{"type":"pane_text","pane_id","text"}}`.
+          Nothing on failure.
   stderr: `{"error":{"code","message"}}` on every failure.
-  exit  : 0 success; 1 Rex-side failure; 2 usage error (code `usage_error`).
+  exit  : 0 success; 1 failure; 2 usage error (code `usage_error`).
   env   : REX_SESSION (required) scopes every command to one Rex session.
           TEAMLEAD_REX_BIN overrides the `rex` executable.
 
@@ -29,6 +30,8 @@ import subprocess
 import sys
 import time
 
+from .herdr import redact_secrets
+
 TERMINAL = "com.superlogical.terminal"
 DEFAULT_REX_BIN = "rex"
 REX_CALL_TIMEOUT_SEC = 30
@@ -36,12 +39,17 @@ POLL_INTERVAL_SEC = 0.25
 DEFAULT_WAIT_TIMEOUT_MS = 600_000
 DEFAULT_START_TIMEOUT_MS = 30_000
 PROMPT_STALL_MS = 5_000
+#: Bytes of a failing tool's stderr kept in a diagnostic, after redaction.
+STDERR_CAP_BYTES = 300
 
 #: OSC 7501 `app` values of the agents this plugin dispatches, mapped to the
 #: Herdr kind. Recorded from Rex 0.1.0 (1853) on 2026-11-07.
 APP_KINDS = {"claude-code": "claude", "codex": "codex", "grok-build": "grok", "opencode": "opencode", "pi": "pi"}
 #: The executable `agent start` types for each kind.
 KIND_BINARIES = {"claude": "claude", "codex": "codex", "grok": "grok", "opencode": "opencode", "pi": "pi"}
+#: Interpreters an agent CLI may run under; only behind one of these does the
+#: script argument name the agent (`node …/codex`).
+INTERPRETERS = {"node", "bun", "deno", "python", "python3"}
 #: Program status states, translated to Herdr's lifecycle vocabulary.
 STATUS_STATES = {"idle": "idle", "working": "working", "blocked": "blocked", "done": "done", "error": "done"}
 SETTLED_STATES = ("idle", "done", "blocked")
@@ -54,6 +62,9 @@ RESERVED_NAMES = {"shell"}
 READ_SOURCES = ("visible", "recent", "recent-unwrapped", "detection")
 #: Herdr key names that Rex spells differently; every other name passes through.
 KEY_NAMES = {"escape": "esc", "return": "enter", "space": "space"}
+#: `rex` argv options whose value is an identifier, kept in diagnostics; every
+#: other argument (pasted text, Lua) is withheld.
+SHOWN_OPTIONS = {"-s", "-b"}
 
 SNAPSHOT_LUA = """
 local T = "com.superlogical.terminal"
@@ -108,9 +119,32 @@ def lua_value(value):
     return "rex.json.decode([{0}[{1}]{0}])".format(eq, text)
 
 
-def as_list(value):
-    # Lua encodes an empty table as `{}`, so an empty array arrives as a dict.
-    return value if isinstance(value, list) else []
+def describe(argv):
+    """`argv` for a diagnostic: the program, its verb and identifier options;
+    payload arguments (pasted text, typed text, Lua) are withheld."""
+    shown, index = list(argv[:2]), 2
+    while index < len(argv):
+        if argv[index] in SHOWN_OPTIONS and index + 1 < len(argv):
+            shown += argv[index:index + 2]
+            index += 2
+        else:
+            shown.append("<{} bytes withheld>".format(len(argv[index].encode())))
+            index += 1
+    return " ".join(shown)
+
+
+def tool_stderr(completed):
+    return redact_secrets((completed.stderr or "").strip())[:STDERR_CAP_BYTES]
+
+
+def as_list(value, what):
+    """A Rex array. Lua encodes an empty table as `{}`; any other non-list is
+    a malformed answer, never an empty one."""
+    if isinstance(value, list):
+        return value
+    if value is None or value == {}:
+        return []
+    raise AdapterError("rex_malformed", "Rex returned {} as {} instead of an array — update Rex to 0.1.0 (1853) or later and retry".format(what, type(value).__name__))
 
 
 def basename(path):
@@ -132,9 +166,9 @@ class Rex:
         except FileNotFoundError:
             raise AdapterError("rex_not_found", "`{}` not found — install Rex or set TEAMLEAD_REX_BIN to the rex executable".format(self.binary)) from None
         except subprocess.TimeoutExpired:
-            raise AdapterError("rex_timeout", "`{}` did not answer within {}s — check the Rex server with `rex whoami`".format(shlex.join(argv), REX_CALL_TIMEOUT_SEC)) from None
+            raise AdapterError("rex_timeout", "`{}` did not answer within {}s — check the Rex server with `rex whoami`".format(describe(argv), REX_CALL_TIMEOUT_SEC)) from None
         if completed.returncode != 0:
-            raise AdapterError("rex_failed", "`{}` exited {}: {} — check the Rex server with `rex whoami` and that REX_SESSION names a live session in `rex ls`".format(shlex.join(argv), completed.returncode, (completed.stderr or "").strip()))
+            raise AdapterError("rex_failed", "`{}` exited {}: {} — check the Rex server with `rex whoami` and that REX_SESSION names a live session in `rex ls`".format(describe(argv), completed.returncode, tool_stderr(completed)))
         return completed.stdout
 
     def lua(self, script):
@@ -142,19 +176,52 @@ class Rex:
         try:
             return json.loads(out) if out.strip() else None
         except json.JSONDecodeError:
-            raise AdapterError("rex_failed", "rex do returned non-JSON output: {!r} — the adapter needs Rex 0.1.0 (1853) or later; update Rex and retry".format(out[:200])) from None
+            raise AdapterError("rex_malformed", "rex do returned {} bytes of non-JSON output — the adapter needs Rex 0.1.0 (1853) or later; update Rex and retry".format(len(out))) from None
 
     def snapshot(self):
         value = self.lua(SNAPSHOT_LUA)
         if not isinstance(value, dict):
             raise AdapterError("rex_failed", "rex returned no session snapshot for {} — set REX_SESSION to a live session from `rex ls`".format(self.session))
-        # A program Rex names only by its interpreter (Codex runs as `node`)
-        # is identified from its full command line before it reports status.
+        blocks = as_list(value.get("blocks"), "the session's blocks")
+        if any(not isinstance(b, dict) or not isinstance(b.get("block_id"), str) for b in blocks):
+            raise AdapterError("rex_malformed", "Rex returned a block without a block id — update Rex to 0.1.0 (1853) or later and retry")
+        value["blocks"] = blocks
+        for block in terminals(value):
+            block["records"] = as_list(block.get("records"), "a block's program status records")
+        # Rex names a foreground process but not its parent or arguments; one
+        # `ps` call supplies both for every terminal.
+        pids = [fg["pid"] for fg in (foreground(b) for b in terminals(value)) if fg and isinstance(fg.get("pid"), int)]
+        table = self.processes(pids)
         for block in terminals(value):
             fg = foreground(block)
-            if fg and not holds_only_shell(block) and agent_kind(block) is None and fg.get("pid"):
-                block["fg_argv"] = self.process(fg["pid"])["argv"]
+            block["fg_ps"] = table.get(fg.get("pid")) if fg else None
         return value
+
+    def processes(self, pids):
+        """`{pid: {"ppid", "argv"}}` from one `ps` call. A pid that exited is
+        absent; `argv` is None when `ps` prints arguments shlex cannot split."""
+        if not pids:
+            return {}
+        argv = ["ps", "-o", "pid=,ppid=,args=", "-p", ",".join(str(p) for p in sorted(set(pids)))]
+        try:
+            completed = self.runner(argv)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise AdapterError("ps_failed", "`ps` could not run ({}) — the adapter reads process parents with /bin/ps; restore it and retry".format(type(exc).__name__)) from None
+        # `ps -p` exits 1 when a listed pid has exited, printing the others.
+        if completed.returncode not in (0, 1) or (completed.stderr or "").strip():
+            raise AdapterError("ps_failed", "`ps` exited {}: {} — the adapter reads process parents with /bin/ps; restore it and retry".format(completed.returncode, tool_stderr(completed)))
+        table = {}
+        for line in completed.stdout.splitlines():
+            fields = line.split(None, 2)
+            if len(fields) < 2 or not fields[0].isdigit() or not fields[1].isdigit():
+                continue
+            try:
+                # `ps` prints arguments unquoted, so an unmatched quote is possible.
+                args = shlex.split(fields[2]) if len(fields) == 3 else []
+            except ValueError:
+                args = None
+            table[int(fields[0])] = {"ppid": int(fields[1]), "argv": args or None}
+        return table
 
     def capture(self, block_id, unwrap=False, vt=False):
         args = ["capture", "-s", self.session, "-b", block_id]
@@ -180,24 +247,9 @@ class Rex:
     def set_session_label(self, label):
         self.lua("return {{rex.session.set_label{{label = {}}}}}".format(lua_value(label)))
 
-    def process(self, pid):
-        """`{"ppid", "argv"}` for `pid` from `ps`; either is None when unreadable."""
-        try:
-            completed = self.runner(["ps", "-o", "ppid=", "-o", "args=", "-p", str(pid)])
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return {"ppid": None, "argv": None}
-        fields = completed.stdout.strip().split(None, 1) if completed.returncode == 0 else []
-        ppid = int(fields[0]) if fields and fields[0].isdigit() else None
-        try:
-            # `ps` prints arguments unquoted, so an unmatched quote is possible.
-            argv = shlex.split(fields[1]) if len(fields) == 2 else None
-        except ValueError:
-            argv = None
-        return {"ppid": ppid, "argv": argv or None}
-
 
 def root_record(block):
-    for record in as_list(block.get("records")):
+    for record in block.get("records") or []:
         if isinstance(record, dict) and not record.get("id"):
             return record
     return None
@@ -209,9 +261,27 @@ def foreground(block):
     return fg if isinstance(fg, dict) else None
 
 
+def is_shell(process):
+    return isinstance(process, dict) and (basename(process.get("argv0")) in SHELLS or process.get("name") in SHELLS)
+
+
 def holds_only_shell(block):
-    fg = foreground(block)
-    return fg is None or basename(fg.get("argv0")) in SHELLS or fg.get("name") in SHELLS
+    """Is the block's foreground its own interactive shell, at a prompt?
+
+    The foreground must be a bare shell (no script or `-c` command), and the
+    pane's own shell: Rex's `child` itself, or the shell directly under a
+    login wrapper `child`. A script, a nested shell, or a process Rex or `ps`
+    cannot describe is not an idle pane.
+    """
+    fg, child = foreground(block), (block.get("process") or {}).get("child")
+    ps = block.get("fg_ps")
+    if fg is None or not is_shell(fg) or ps is None or ps["argv"] is None or not isinstance(child, dict):
+        return False
+    if any(not arg.startswith("-") for arg in ps["argv"][1:]):
+        return False
+    if is_shell(child):
+        return fg.get("pid") == child.get("pid")
+    return ps["ppid"] == child.get("pid")
 
 
 def agent_kind(block):
@@ -226,8 +296,11 @@ def agent_kind(block):
     record = root_record(block)
     if record and record.get("app") in APP_KINDS and (record.get("owner") or {}).get("pid") == fg.get("pid"):
         return APP_KINDS[record["app"]], record
-    argv = block.get("fg_argv") or []
-    for candidate in (fg.get("name"), basename(fg.get("argv0")), *(basename(a) for a in argv[:2])):
+    argv = (block.get("fg_ps") or {}).get("argv") or []
+    candidates = [fg.get("name"), basename(fg.get("argv0"))] + [basename(a) for a in argv[:1]]
+    if len(argv) > 1 and basename(argv[0]) in INTERPRETERS:
+        candidates.append(basename(argv[1]))
+    for candidate in candidates:
         if candidate in KIND_BINARIES:
             return candidate, None
     return None
@@ -262,7 +335,7 @@ def agent_info(snapshot, block):
 
 
 def terminals(snapshot):
-    return [b for b in as_list(snapshot.get("blocks")) if b.get("creator") == TERMINAL]
+    return [b for b in snapshot.get("blocks") or [] if isinstance(b, dict) and b.get("creator") == TERMINAL]
 
 
 def find_pane(snapshot, pane_id):
@@ -382,7 +455,8 @@ class Adapter:
         target, = positional(opts, 1, "agent read <target> [--source S] [--lines N] [--format text|ansi]")
         block, _ = find_agent(self.rex.snapshot(), target)
         ansi = "--ansi" in opts.flags or opts.values.get("--format") == "ansi"
-        return read_text(self.rex, block, opts.values.get("--source", "visible"), opts.int_value("--lines"), ansi)
+        text = read_text(self.rex, block, opts.values.get("--source", "visible"), opts.int_value("--lines"), ansi)
+        return {"type": "pane_text", "pane_id": block["block_id"], "text": text}
 
     def agent_prompt(self, args):
         opts = Options(args, ("--timeout",), ("--wait",), ("--until",))
@@ -454,7 +528,7 @@ class Adapter:
         block = find_pane(snapshot, pane)
         check_name(snapshot, name)
         if not holds_only_shell(block):
-            raise AdapterError("pane_busy", "pane {} is running {}; start an agent only in a pane at a shell prompt".format(pane, (foreground(block) or {}).get("argv0")))
+            raise AdapterError("pane_busy", "pane {} is not at its own shell prompt (foreground: {}) — start an agent only in a pane whose shell is idle".format(pane, (foreground(block) or {}).get("argv0") or "unknown"))
         argv = [KIND_BINARIES[kind]] + opts.rest
         self.rex.set_block_label(pane, name)
         self.rex.send_text(pane, shlex.join(argv))
@@ -496,7 +570,8 @@ class Adapter:
         pane, = positional(opts, 1, "pane read <pane_id> [--source S] [--lines N] [--format text|ansi]")
         block = find_pane(self.rex.snapshot(), pane)
         ansi = "--ansi" in opts.flags or opts.values.get("--format") == "ansi"
-        return read_text(self.rex, block, opts.values.get("--source", "visible"), opts.int_value("--lines"), ansi)
+        text = read_text(self.rex, block, opts.values.get("--source", "visible"), opts.int_value("--lines"), ansi)
+        return {"type": "pane_text", "pane_id": pane, "text": text}
 
     def pane_wait_output(self, args):
         opts = Options(args, ("--match", "--regex", "--source", "--lines", "--timeout"), ("--raw",))
@@ -547,9 +622,11 @@ class Adapter:
         if holds_only_shell(block):
             entry = {"pid": fg.get("pid"), "name": fg.get("name") or basename(fg.get("argv0"))}
             return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": fg.get("pid"), "foreground_processes": [entry]}}
+        detail = block.get("fg_ps")
+        if not fg.get("pid") or detail is None:
+            raise AdapterError("process_gone", "the foreground process of pane {} exited or could not be described while it was read — read the pane again".format(pane))
         found = agent_kind(block)
-        entry = {"pid": fg.get("pid"), "name": found[0] if found else (fg.get("name") or basename(fg.get("argv0")))}
-        detail = self.rex.process(fg["pid"]) if fg.get("pid") else {"ppid": None, "argv": None}
+        entry = {"pid": fg["pid"], "name": found[0] if found else (fg.get("name") or basename(fg.get("argv0")))}
         if detail["argv"]:
             entry["argv"] = detail["argv"]
         return {"type": "process_info", "process_info": {"pane_id": pane, "shell_pid": detail["ppid"], "foreground_processes": [entry]}}
@@ -630,7 +707,14 @@ def main(argv=None, env=None, runner=None, stdout=None, stderr=None, sleep=time.
     except AdapterError as exc:
         envelope(exc.code, exc.message)
         return 1
-    stdout.write(result if isinstance(result, str) else json.dumps({"result": result}) + "\n")
+    # outer-boundary-process-contract: every caller (HerdrClient, wait-report.sh)
+    # reads a failure only as Herdr's stderr JSON envelope; this emits that
+    # envelope with code `internal_error` and no stdout, where a propagating
+    # traceback would be unparseable text that callers misread.
+    except Exception as exc:  # noqa: BLE001 — outer-boundary-process-contract
+        envelope("internal_error", "rex-herdr failed unexpectedly ({}) — rerun with the same arguments; if it repeats, report it with the command that failed".format(type(exc).__name__))
+        return 1
+    stdout.write(json.dumps({"result": result}) + "\n")
     return 0
 
 

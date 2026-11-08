@@ -20,13 +20,14 @@ import unittest
 from types import SimpleNamespace
 
 from teamlead import launch, restoration, rex_herdr
-from teamlead.herdr import HerdrClient
+from teamlead.errors import HerdrError
+from teamlead.herdr import HerdrClient, default_backend
 
 from tests.fakes import FakeCompleted
 from tests.test_rex_herdr import CLAUDE, SESSION, SHELL, Clock, FakeRex, agent_process, record, team_snapshot
 
 
-def client_over(rex):
+def client_over(rex, backend="rex"):
     clock = Clock()
 
     def bridge(argv):
@@ -35,7 +36,7 @@ def client_over(rex):
                               stdout=out, stderr=err, sleep=clock.sleep, clock=clock)
         return FakeCompleted(code, out.getvalue(), err.getvalue())
 
-    return HerdrClient(binary="rex-herdr.sh", runner=bridge)
+    return HerdrClient(binary="rex-herdr.sh", runner=bridge, backend=backend)
 
 
 def launch_into_shell(rex):
@@ -60,6 +61,27 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(proof["pane_id"], SHELL)
         typed = [w[2] for w in rex.writes if w[0] == "text"][0]
         self.assertTrue(typed.startswith("claude ") and "--model opus-5 --effort high" in typed, typed)
+
+
+class ReadTest(unittest.TestCase):
+    def test_rex_backend_reads_the_pane_text(self):
+        rex = FakeRex(screens={CLAUDE: "work\nREPORT: /r/x.md"})
+        self.assertEqual(client_over(rex).agent_read("claude", source="visible", lines=2), "work\nREPORT: /r/x.md\n")
+        self.assertEqual(client_over(rex).pane_read(CLAUDE, 1), "REPORT: /r/x.md\n")
+
+    def test_rex_backend_refuses_text_that_is_not_a_pane_text_result(self):
+        raw = HerdrClient(binary="herdr", runner=lambda argv: FakeCompleted(0, "REPORT: /r/x.md\n", ""), backend="rex")
+        with self.assertRaises(HerdrError):
+            raw.pane_read("w1:p1", 1)
+
+    def test_herdr_backend_keeps_herdr_raw_rows(self):
+        raw = HerdrClient(binary="herdr", runner=lambda argv: FakeCompleted(0, "REPORT: /r/x.md\n", ""), backend="herdr")
+        self.assertEqual(raw.pane_read("w1:p1", 1), "REPORT: /r/x.md\n")
+
+    def test_backend_setting(self):
+        self.assertEqual((default_backend({}), default_backend({"TEAMLEAD_BACKEND": "rex"})), ("herdr", "rex"))
+        with self.assertRaises(HerdrError):
+            default_backend({"TEAMLEAD_BACKEND": "tmux"})
 
 
 class RestorationTest(unittest.TestCase):
