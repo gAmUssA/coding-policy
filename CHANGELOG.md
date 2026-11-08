@@ -5,6 +5,22 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 fragments; the publish workflow writes each `## <version> — <date>` heading on merge
 (`changelog.d/README.md`).
 
+## 1.2.0 — 2026-11-08
+
+### Added
+
+- **`skills/rex-teamlead`, a Rex-native team round** (ADR 0016). A lead opens one Rex session per task with `rex-team.sh up`. It then spawns each worker as an interactive Claude Code, Codex or Grok tab in its own worktree under `~/.worktrees/`, marked with `REX_TEAM_TASK` and `REX_TEAM_ROLE`, dispatches a brief with `assign`, and blocks on `wait`, which returns within 300 seconds by default so it ends as `state: timeout` before an agent lead's shell tool would kill it. A dispatch is delivered when the worker's own OSC 7501 program status reaches `done` after the dispatch, read from Rex's `program_status_changed` events, and the report file's first line is that dispatch's nonce. No pane text is read, no screen state is guessed and no `REPORT:` line is parsed. The skill covers a developer, an independent reviewer of a different agent kind (`spawn` refuses a reviewer of the developer's kind as `not_independent`) on a read-only checkout of the exact candidate, and a bounded fix loop before the release skill. Two tested gates hold the commit identity: `candidate` refuses a reported SHA that is not the developer branch's tip, and `verdict` refuses a review that does not name exactly that candidate or carries no single verdict, a review whose read-only checkout, read live from git, is no longer detached at the candidate, and a candidate the developer's branch has since moved past, so the release ships the reviewed commit. The lead routes the round on its own blocking/advisory classification of the findings, never on the `verdict:` word alone. A live round on Rex 0.1.0 (1853) on 2026-11-07 had a Claude Code developer commit and a Codex reviewer approve that commit, each delivered on its own `done` event with the matching nonce. Every Rex object is named from the task and role so a session reads at a glance on any Rex client, the mobile apps included: the session `team-<task>`, its shell tab `shell · <repo>`, each worker tab `<role> · <agent>`, then `· #<n>` once dispatched and `· #<n> delivered`, `no report`, `blocked: <kind>` or `error` after `wait`, and each pane `<task>-<role>`. Rex draws the live working and blocked state on those tabs itself. An agent that errors at startup is reported as `agent_failed` instead of timing out as `not_ready`. Every command can be repeated or resumed: a repeated `spawn` reconnects to a live worker, a failed launch rolls its worktree and branch back, `up` after a Rex restart keeps the task's base and workers, and `down` forgets a worker whose tab was already closed, removing a reviewer checkout only while git still shows it detached at the reviewed commit and keeping the developer's worktree for the release. The design borrows from jbaruch/software-factory: scripts own transitions, one state store, explicit Rex ids. It stays on interactive workers and Tessl packaging, with no hosted routing service. Covered by `skills/rex-teamlead/tests/test_team.py`: a fake `rex` at the process boundary, a real event pipe and real `git`. The launcher is covered by `tests/test_rex_team_launcher.sh`.
+
+### Changed
+
+- **`rules/agent-team-operation.md` names a Rex team round.** Workers carry `REX_TEAM_TASK`, and `REX_SESSION` alone never marks a round, since Rex sets it in every terminal. A Rex worker's report starts with the brief's `task-nonce:` line instead of ending its chat with `REPORT:`. A Rex lead's contract is the `rex-teamlead` skill. `rules/sync-before-work.md` now says team lead and worker for the sync duties both modes share.
+
+- **`hooks/check-git-sync.sh` and `hooks/stop-handoff-hygiene.sh` recognise a Rex team worker.** `REX_TEAM_TASK` alone marks a worker, checked before any Herdr signal: such a session neither fetches the refs it shares with the lead nor gets the lead's worktree and branch cleanup orders at Stop.
+
+### Deprecated
+
+- **`herdr-teamlead`, `herdr-standup`, the ADR 0015 Rex adapter (`rex-herdr.sh`, ADR 0015 now superseded by 0016) and the Herdr hooks** are frozen and slated for removal in coding-policy 2.0.0. They stay as they are until then, and the new skill shares no code with them.
+
 ## 1.1.0 — 2026-11-08
 
 ### Added
