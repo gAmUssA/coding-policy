@@ -51,8 +51,17 @@ spawn as `not_ready` (Step 3).
 Pick a short task id (`[a-z][a-z0-9-]{0,30}`) and the agents: the reviewer is
 a different agent kind from the developer. Pick the repository's check
 commands: the test, lint and diagnostics commands its CI runs, as its
-`CLAUDE.md`, `AGENTS.md` or CI workflow names them. Proceed immediately to
-Step 2.
+`CLAUDE.md`, `AGENTS.md` or CI workflow names them. Each command honors the
+`check` exit contract:
+
+- Exit 0 only when it passed and every test command ran at least one test
+- Exit 1 on a code failure: a failing test, a lint or diagnostics finding
+- Any other exit means the check itself is broken
+- Wrap a command whose runner breaks the contract in `bash -c`
+- The wrapper maps the runner's failure exits to 1, such as `cargo test`'s 101 or `make`'s 2
+- The wrapper fails a run whose output reports zero tests
+
+Proceed immediately to Step 2.
 
 ## Step 2 — Open the Team
 
@@ -220,6 +229,8 @@ The reviewer's `verdict:` binds the round. Only the operator overrides it:
 - Carry any advisory findings into the release
 - An `approve` whose report lists a finding marked `blocking` is inconsistent
 - Route an inconsistent `approve` as `changes-requested`
+- A `changes-requested` whose report lists no finding marked `blocking` is inconsistent
+- Route an inconsistent `changes-requested` as `approve`, carrying its advisory findings into the release
 - `verdict: changes-requested` — run `down --task <task> --role <review-role>`
 - Brief the developer with the findings verbatim through Step 5
 - Confirm, check and review the new candidate under the next `<review-role>` from Step 7
