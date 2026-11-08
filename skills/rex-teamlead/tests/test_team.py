@@ -73,9 +73,11 @@ class Stream:
 class FakeRex:
     """The `rex` CLI: sessions, blocks with a current status, and recorded writes."""
 
-    def __init__(self, statuses=None, events=(), close_stream=False, live=(SESSION,), fail_run=False, new_session=SESSION):
+    def __init__(self, statuses=None, events=(), close_stream=False, live=(SESSION,), fail_run=False, new_session=SESSION, fail_label=False):
         self.statuses = dict(statuses or {})
         self.fail_run = fail_run
+        self.fail_label = fail_label
+        self.tab_labels = {}
         self.new_session_id = new_session
         self.queued = list(events)
         self.close_stream = close_stream
@@ -90,7 +92,7 @@ class FakeRex:
         if verb == "new":
             if self.new_session_id not in self.live:
                 self.live.append(self.new_session_id)
-            return Done(0, json.dumps({"session_id": self.new_session_id, "initial_windows": [{"block_ids": [LEAD]}]}))
+            return Done(0, json.dumps({"session_id": self.new_session_id, "initial_windows": [{"window_id": "window:shell", "block_ids": [LEAD]}]}))
         if verb == "run" and self.fail_run:
             return Done(1, "", "Error: launch failed")
         if verb == "run":
@@ -99,7 +101,13 @@ class FakeRex:
             self.launched.append({"cwd": argv[argv.index("-c") + 1], "label": argv[argv.index("--label") + 1],
                                   "argv": argv[argv.index("--") + 1:], "block": block})
             self.statuses.setdefault(block, status("idle", at=BEFORE))
-            return Done(0, json.dumps({"window_id": "window:x", "block_ids": [block], "revision": 2}))
+            return Done(0, json.dumps({"window_id": block.replace("block:", "window:"), "block_ids": [block], "revision": 2}))
+        if verb == "do" and "set_window_label" in argv[5]:
+            if self.fail_label:
+                return Done(1, "", "Error: window not found")
+            window, label = [json.loads(part.split("]]", 1)[0]) for part in argv[5].split("([[")[1:]]
+            self.tab_labels[window] = label
+            return Done(0, '[{"revision":3}]')
         if verb == "do" and "list_blocks" in argv[5]:
             return Done(0, json.dumps({"blocks": [{"block_id": b} for b in self.statuses] + [{"block_id": LEAD}]}))
         if verb == "do":
@@ -354,6 +362,50 @@ class WaitTest(Fixture):
         fake = FakeRex()
         self.spawned(fake)
         self.assertEqual(self.cli(fake, "wait", "--task", "t1", "--role", "dev")[2]["error"]["code"], "not_dispatched")
+
+
+class TabLabelTest(Fixture):
+    def tab(self, fake, block):
+        return fake.tab_labels[block.replace("block:", "window:")]
+
+    def test_the_session_s_own_shell_tab_names_the_repository(self):
+        fake = FakeRex()
+        code, out, _ = self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
+        self.assertEqual((code, out["tab_label"], fake.tab_labels["window:shell"]), (0, "shell · repo", "shell · repo"))
+
+    def test_the_tab_names_role_and_agent_then_the_dispatch_and_its_outcome(self):
+        fake = FakeRex()
+        block = self.spawned(fake)["block"]
+        self.assertEqual((self.tab(fake, block), fake.launched[0]["label"]), ("dev · claude", "t1-dev"))
+        sent = self.cli(fake, "assign", "--task", "t1", "--role", "dev", "--brief", str(self.brief))[1]
+        self.assertEqual((sent["tab_label"], self.tab(fake, block)), ("dev · claude · #1", "dev · claude · #1"))
+        Path(sent["report"]).write_text("task-nonce: {}\n".format(sent["nonce"]))
+        fake.queued = [event(block, status("done"))]
+        self.cli(fake, "wait", "--task", "t1", "--role", "dev", "--timeout", "5")
+        self.assertEqual(self.tab(fake, block), "dev · claude · #1 delivered")
+
+    def test_outcomes_without_delivery_are_named(self):
+        for record, label in ((status("done"), "dev · claude · #1 no report"),
+                              (status("blocked", kind="permission"), "dev · claude · #1 blocked: permission"),
+                              (status("error"), "dev · claude · #1 error")):
+            with self.subTest(label=label):
+                fake = FakeRex()
+                block = self.spawned(fake, "dev")["block"]
+                self.cli(fake, "assign", "--task", "t1", "--role", "dev", "--brief", str(self.brief))
+                fake.queued = [event(block, record)]
+                self.cli(fake, "wait", "--task", "t1", "--role", "dev", "--timeout", "5")
+                self.assertEqual(self.tab(fake, block), label)
+                self.cli(fake, "down", "--task", "t1")
+                subprocess.run(["git", "branch", "-D", "team/t1-dev"], cwd=self.repo, capture_output=True, check=False)
+                subprocess.run(["git", "worktree", "remove", "--force", str(Path(self.env["REX_TEAM_WORKTREES"]) / "repo" / "t1-dev")],
+                               cwd=self.repo, capture_output=True, check=False)
+
+    def test_a_label_failure_never_fails_the_command(self):
+        fake = FakeRex(fail_label=True)
+        code, out, _ = self.cli(fake, "up", "--task", "t1", "--repo", str(self.repo))
+        code, out, err = self.cli(fake, "spawn", "--task", "t1", "--role", "dev", "--agent", "claude")
+        self.assertEqual((code, out["tab_label"]), (0, None), err)
+        self.assertIn("window not found", out["tab_label_error"])
 
 
 class StatusDownTest(Fixture):

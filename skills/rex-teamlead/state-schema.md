@@ -26,6 +26,7 @@ Worker:
 | --- | --- | --- |
 | `agent` | string | `claude`, `codex` or `grok` |
 | `model`, `effort` | string or null, optional | Launch flags given to `spawn`; absent or null means the agent's default |
+| `window` | string | The worker's Rex window (tab) id (`window:<uuid>`) |
 | `block` | string | The worker's Rex block id (`block:<uuid>`) |
 | `worktree` | string | Absolute worktree path |
 | `branch` | string or null, optional | `team/<task>-<role>` for a writer; absent or null for a read-only checkout |
@@ -35,6 +36,29 @@ Worker:
 `sent_at` is an ISO-8601 UTC timestamp. A worker's program status counts
 toward `wait` only when its `updated_at` is at or after the current
 dispatch's `sent_at`.
+
+## Naming
+
+Every name is derived from the task id and the role, so a session opened on
+any Rex client, Rex for iOS or a remote viewer included, reads at a glance.
+Rex draws each tab's live state (working, blocked, done) itself; the labels
+add who the tab is and how its last assignment ended.
+
+| Rex object | Label | Set by |
+| --- | --- | --- |
+| Session | `team-<task>` | `up` |
+| The session's own shell tab | `shell · <repo>` | `up` |
+| Tab (window) | `<role> · <agent>` | `spawn` |
+| Tab after a dispatch | `<role> · <agent> · #<n>` | `assign`, `n` counting that worker's dispatches |
+| Tab after `wait` | `<role> · <agent> · #<n> delivered`, `· #<n> no report`, `· #<n> blocked: <kind>` or `· #<n> error` | `wait` |
+| Pane (block) | `<task>-<role>`, the stable handle for `rex -b` | `spawn` |
+| Branch | `team/<task>-<role>` (writers only) | `spawn` |
+| Worktree | `$REX_TEAM_WORKTREES/<repo>/<task>-<role>` (default `~/.worktrees/`) | `spawn` |
+
+A tab label is cosmetic: a failure to set it comes back as `tab_label_error`
+in the command's JSON and never fails the command. Roles are lowercase
+(`dev`, `review`, `review-2`), so a tab never needs more than its role, its
+agent and its latest outcome.
 
 ## Contract
 

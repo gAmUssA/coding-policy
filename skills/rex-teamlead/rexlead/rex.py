@@ -85,12 +85,18 @@ class Rex:
 
     def new_session(self, label, cwd):
         value = self.json(["new", label, "--cwd", cwd, "--json"])
-        return value["session_id"], value["initial_windows"][0]["block_ids"][0]
+        first = value["initial_windows"][0]
+        return value["session_id"], first["window_id"], first["block_ids"][0]
 
     def launch(self, session, label, cwd, argv):
-        """A new window in `session` running `argv` through the login shell."""
+        """A new window in `session` running `argv` through the login shell;
+        `label` names its block. Returns `(window_id, block_id)`."""
         value = self.json(["run", "-s", session, "-c", cwd, "--label", label, "--focus=false", "--json", "--"] + argv)
-        return value["block_ids"][0]
+        return value["window_id"], value["block_ids"][0]
+
+    def set_window_label(self, session, window, label):
+        script = "return {{rex.session.set_window_label{{window_id = {}, label = {}}}}}".format(lua_json(window), lua_json(label))
+        self.run(["do", "-s", session, "-e", script])
 
     def close(self, session, block):
         self.run(["block", "close", "-s", session, block])

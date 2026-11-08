@@ -16,7 +16,10 @@ Process steps in order. Do not skip ahead.
 Every command below runs `team`, the `rex-team.sh` launcher; its header and
 `skills/rex-teamlead/rexlead/team.py` carry the contract: one JSON object on
 stdout, `{"error":{"code","message"}}` on stderr, exit 0, 1 or 2. Worker state
-and delivery come only from the command's JSON, never from reading a tab.
+and delivery come only from the command's JSON, never from reading a tab. The
+commands name the session, tabs, panes, branches and worktrees as
+`skills/rex-teamlead/state-schema.md` Naming lists; use those names when
+pointing the operator at a tab.
 
 ## Step 1 — Confirm the Round
 

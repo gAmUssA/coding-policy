@@ -118,7 +118,9 @@ class Store:
 
 
 RECORD_FIELDS = {"task": str, "repo": str, "base": str, "session": str, "workers": dict}
-WORKER_FIELDS = {"agent": str, "block": str, "worktree": str, "commit": str, "dispatches": list}
+WORKER_FIELDS = {"agent": str, "window": str, "block": str, "worktree": str, "commit": str, "dispatches": list}
+#: What a finished `wait` shows on the worker's tab, by outcome.
+OUTCOME_LABELS = {"delivered": "delivered", "undelivered": "no report", "blocked": "blocked", "error": "error"}
 DISPATCH_FIELDS = {"nonce": str, "report": str, "sent_at": str}
 
 
@@ -173,7 +175,13 @@ class Team:
             raise TeamError("repo_mismatch", "task {} belongs to {} — use another task id for {}".format(task, record["repo"], repo))
         if record and any(s.get("session_id") == record["session"] for s in self.rex.sessions()):
             return {"task": task, "session": record["session"], "base": record["base"], "reused": True}
-        session, _ = self.rex.new_session("team-" + task, str(repo))
+        session, window, _ = self.rex.new_session("team-" + task, str(repo))
+        shell_tab = "shell · " + repo.name
+        try:
+            self.rex.set_window_label(session, window, shell_tab)
+            tab = {"tab_label": shell_tab}
+        except RexError as exc:
+            tab = {"tab_label": None, "tab_label_error": exc.message}
         if record:
             # The session died (a Rex restart): keep the base and the workers,
             # whose tabs are gone; `down` forgets them and `spawn` reuses their worktrees.
@@ -182,7 +190,7 @@ class Team:
             record = {"schema_version": SCHEMA_VERSION, "task": task, "repo": str(repo), "base": git(repo, "rev-parse", "HEAD"),
                       "session": session, "workers": {}}
         self.store.save(record)
-        return {"task": task, "session": session, "base": record["base"], "reused": False, "workers": sorted(record["workers"])}
+        return {"task": task, "session": session, "base": record["base"], "reused": False, "workers": sorted(record["workers"]), **tab}
 
     def spawn(self, task, role, agent, model=None, effort=None, ref=None, read_only=False, timeout=READY_TIMEOUT_SEC):
         check_name(role, "role")
@@ -205,19 +213,22 @@ class Team:
         # REX_TEAM_TASK/REX_TEAM_ROLE mark a Rex team worker (rules/agent-team-operation.md).
         argv = ["env", "REX_TEAM_TASK=" + task, "REX_TEAM_ROLE=" + role] + AGENTS[agent](model, effort)
         try:
-            block = self.rex.launch(record["session"], label, str(path), argv)
+            window, block = self.rex.launch(record["session"], label, str(path), argv)
         except RexError:
             if created:
                 self._unprovision(repo, path, branch)
             raise
-        worker = {"agent": agent, "model": model, "effort": effort, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "dispatches": []}
+        worker = {"agent": agent, "model": model, "effort": effort, "window": window, "block": block, "worktree": str(path),
+                  "branch": branch, "commit": commit, "dispatches": []}
         record["workers"][role] = worker
         self.store.save(record)
+        tab = self._label(record, role)
         try:
             ready = self.rex.wait_status(record["session"], block, lambda r: bool(r) and r.get("state") in READY, timeout)
         except Timeout:
             raise TeamError("not_ready", "{} in tab {} reported no ready prompt within {}s — answer its startup dialog there (trust the repository once), then `team status --task {}` shows it idle".format(agent, label, timeout, task)) from None
-        return {"task": task, "role": role, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "state": ready.get("state"), "reused": False}
+        return {"task": task, "role": role, "block": block, "worktree": str(path), "branch": branch, "commit": commit, "state": ready.get("state"),
+                "reused": False, **tab}
 
     def _provision(self, repo, path, branch, commit):
         """Create the worker's worktree, or adopt the one an interrupted spawn
@@ -264,7 +275,8 @@ class Team:
         self.store.save(record)
         self.rex.paste(record["session"], worker["block"], text)
         self.rex.keys(record["session"], worker["block"], "enter")
-        return {"task": task, "role": role, "report": str(report), "nonce": nonce}
+        tab = self._label(record, role, "#{}".format(len(worker["dispatches"])))
+        return {"task": task, "role": role, "report": str(report), "nonce": nonce, **tab}
 
     def wait(self, task, role, timeout=DEFAULT_WAIT_TIMEOUT_SEC):
         record = self.store.load(task)
@@ -284,8 +296,16 @@ class Team:
         except Timeout:
             return {"task": task, "role": role, "state": "timeout", "delivered": False, "report": dispatch["report"]}
         delivered, reason = self._delivery(dispatch)
-        return {"task": task, "role": role, "state": status.get("state"), "kind": status.get("kind"), "delivered": delivered,
-                "reason": reason, "report": dispatch["report"]}
+        state = status.get("state")
+        if state == "blocked":
+            outcome = OUTCOME_LABELS["blocked"] + (": " + status["kind"] if status.get("kind") else "")
+        elif state == "error":
+            outcome = OUTCOME_LABELS["error"]
+        else:
+            outcome = OUTCOME_LABELS["delivered" if delivered else "undelivered"]
+        tab = self._label(record, role, "#{} {}".format(len(worker["dispatches"]), outcome))
+        return {"task": task, "role": role, "state": state, "kind": status.get("kind"), "delivered": delivered,
+                "reason": reason, "report": dispatch["report"], **tab}
 
     def status(self, task):
         record = self.store.load(task)
@@ -320,6 +340,17 @@ class Team:
             self.store.save(record)
             closed.append(name)
         return {"task": task, "closed": closed, "worktrees_removed": removed, "worktrees_kept": kept}
+
+    def _label(self, record, role, suffix=None):
+        """Name the worker's tab `<role> · <agent>[ · <suffix>]` (state-schema.md
+        Naming). The label is cosmetic: a failure is reported, never raised."""
+        worker = record["workers"][role]
+        label = " · ".join([role, worker["agent"]] + ([suffix] if suffix else []))
+        try:
+            self.rex.set_window_label(record["session"], worker["window"], label)
+        except RexError as exc:
+            return {"tab_label": None, "tab_label_error": exc.message}
+        return {"tab_label": label}
 
     @staticmethod
     def _worker(record, role):
