@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 from .rex import FINISHED, READY, Rex, RexError, Timeout
 
@@ -211,19 +212,29 @@ def signal_name(number):
         return str(number)
 
 
-def require_waitid():
-    """Refuse a check on a Python without `os.waitid`: without it the leader
-    cannot be waited for unreaped, so background survivors go unseen."""
-    if not hasattr(os, "waitid"):
+def waitid() -> "Callable[[int, int, int], object] | None":
+    """`os.waitid`, or None on a Python without it (macOS before 3.13).
+    Read at call time, never cached at import."""
+    found: object = getattr(os, "waitid", None)
+    return found if callable(found) else None
+
+
+def require_waitid() -> "Callable[[int, int, int], object]":
+    """`os.waitid`, or a setup_error on a Python without it: without it the
+    leader cannot be waited for unreaped, so background survivors go unseen."""
+    found = waitid()
+    if found is None:
         raise TeamError("setup_error", "this Python ({}) has no os.waitid, which `check` needs to find a command's background processes — run the team command with Python 3.13 or later on macOS".format(sys.version.split()[0]))
+    return found
 
 
 def exited_unreaped(pid, deadline):
     """Whether the child `pid` exited before `deadline` (a `time.monotonic()`
     value). It is never reaped: an unreaped leader's pid, and so its process
     group id, cannot be reused, which keeps signalling the group safe."""
+    wait = require_waitid()
     while True:
-        if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None:
+        if wait(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None:
             return True
         if time.monotonic() >= deadline:
             return False
@@ -294,7 +305,7 @@ def run_check(command, cwd, timeout):
         proc.wait()
         return ran(None, "invalid", "could not list the command's processes ({}) — check that `ps` runs on this machine".format(exc)), \
             "not run: an earlier run's processes could not be listed"
-    stop = None
+    stop, alive = None, []
     if survivors:
         alive = kill_group(proc.pid)
         stop = "not run: an earlier run left background processes running"

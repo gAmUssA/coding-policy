@@ -720,7 +720,7 @@ class CheckTest(Fixture):
         self.committed(fake)
         marker = Path(self.tmp.name) / "ran"
         with mock.patch.dict(os.__dict__):
-            del os.waitid
+            os.__dict__.pop("waitid", None)
             code, out, err = self.check(fake, "touch {}".format(marker))
         self.assertEqual((code, out, err["error"]["code"]), (1, {}, "setup_error"))
         self.assertIn("os.waitid", err["error"]["message"])
