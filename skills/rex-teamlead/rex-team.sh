@@ -16,9 +16,7 @@
 #   env   : HOME (worktrees go under ~/.worktrees), REX_TEAM_HOME, REX_TEAM_REX_BIN, UV_BIN
 #           (default uv). The module runs through `uv run` per
 #           rules/dependency-management.md Python Execution, standard library
-#           only, Python 3.13+ on macOS (`check` needs os.waitid, which
-#           reached macOS in 3.13) and 3.11+ elsewhere, picked by `uname -s`.
-#           PYTHONPATH is prefixed, never replaced.
+#           only, Python 3.11+. PYTHONPATH is prefixed, never replaced.
 set -euo pipefail
 
 UV_BIN="${UV_BIN:-uv}"
@@ -63,22 +61,10 @@ main() {
     return 1
   fi
 
-  # One interpreter spec for the `uv run` line and its hint, so they cannot drift.
-  local platform python_spec
-  if ! platform="$(uname -s)"; then
-    setup_error "rex-team: \`uname -s\` failed — the launcher needs it to pick the Python version; make uname available on PATH"
-    return 1
-  fi
-  if [[ "$platform" == "Darwin" ]]; then
-    python_spec='>=3.13'
-  else
-    python_spec='>=3.11'
-  fi
-
   export PYTHONPATH="${skill_dir}${PYTHONPATH:+:${PYTHONPATH}}"
   local rc=0 err last
   # stdout passes straight through on fd 3; stderr is captured, never forwarded.
-  { err="$("$UV_BIN" run --no-project --no-python-downloads --python "$python_spec" python -m rexlead "$@" 2>&1 1>&3 3>&-)" || rc=$?; } 3>&1
+  { err="$("$UV_BIN" run --no-project --no-python-downloads --python '>=3.11' python -m rexlead "$@" 2>&1 1>&3 3>&-)" || rc=$?; } 3>&1
   if (( rc == 0 )); then
     return 0
   fi
@@ -89,7 +75,7 @@ main() {
     printf '%s\n' "$last" >&2
     return "$rc"
   fi
-  setup_error "rex-team: uv could not run the team command (exit ${rc}) — run \`${UV_BIN} run --no-project --no-python-downloads --python '${python_spec}' python -V\` to see uv's error, and check that Python ${python_spec#>=}+ is installed (${platform})"
+  setup_error "rex-team: uv could not run the team command (exit ${rc}) — run \`${UV_BIN} run --no-project --no-python-downloads --python '>=3.11' python -V\` to see uv's error, and check that Python 3.11+ is installed"
   return 1
 }
 

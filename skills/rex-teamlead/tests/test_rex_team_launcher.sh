@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Outcome-based tests for skills/rex-teamlead/rex-team.sh.
 #
-# The launcher is copied into a temp skill dir per run, a fake `uv`
-# records what it was handed, and a fake `uname` on PATH names the platform
-# (FAKE_UNAME), so the assertions cover the launcher alone:
+# The launcher is copied into a temp skill dir per run, and a fake `uv`
+# records what it was handed, so the assertions cover the launcher alone:
 # uv probe, module probe, argument and PYTHONPATH forwarding, exit
 # passthrough. The adapter's own behavior is tests/test_team.py.
 #
@@ -12,8 +11,8 @@
 # (rules/error-handling.md aggregate-reporting carve-out).
 #
 # Covers:
-#   1. Forwarding      -> `uv run` with the platform's constraint and no
-#                         project or download, then `-m rexlead` and every
+#   1. Forwarding      -> `uv run` with the 3.11+ constraint and no project or
+#                         download, then `-m rexlead` and every
 #                         argument, verbatim.
 #   2. PYTHONPATH      -> the skill dir is prefixed, a prior value preserved.
 #   3. Exit passthrough-> the module's usage-error 2 reaches the caller.
@@ -31,9 +30,6 @@
 #                         valid JSON envelope.
 #  10. Clean success   -> the module's stdout passes through byte for byte and
 #                         a uv warning on stderr is not forwarded.
-#  11. Platform spec   -> macOS (`uname -s` Darwin) selects `>=3.13`, any other
-#                         platform `>=3.11`, and the uv-failure hint names
-#                         the same spec and minimum.
 #
 # Run: bash skills/rex-teamlead/tests/test_rex_team_launcher.sh
 set -uo pipefail
@@ -66,18 +62,6 @@ FAKE
   chmod +x "$1" || die "could not chmod the fake uv at $1"
 }
 
-# A fake uname: prints $FAKE_UNAME for `uname -s`.
-mk_fake_uname() { # <dir>
-  mkdir -p "$1" || die "could not create $1"
-  cat > "$1/uname" <<'FAKE' || die "could not write the fake uname in $1"
-#!/usr/bin/env bash
-set -euo pipefail
-[[ "${1:-}" == "-s" ]] || { echo "fake uname: only -s is supported" >&2; exit 2; }
-printf '%s\n' "${FAKE_UNAME:?FAKE_UNAME unset}"
-FAKE
-  chmod +x "$1/uname" || die "could not chmod the fake uname in $1"
-}
-
 main() {
   local script
   script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/rex-team.sh"
@@ -91,15 +75,12 @@ main() {
   cp "$script" "$skill/rex-team.sh" || die "could not copy the launcher into $skill"
   : > "$skill/rexlead/team.py" || die "could not create the module stub"
   mk_fake_uv "$fakeuv"
-  local unamebin="$TMP/unamebin"
-  mk_fake_uname "$unamebin"
-  local on_linux=(env PATH="$unamebin:$PATH" FAKE_UNAME=Linux)
 
   FAIL=0; PASS=0
   local out rc
 
   # 1. Arguments reach the module unchanged, behind the pinned `uv run` form.
-  out="$("${on_linux[@]}" UV_BIN="$fakeuv" bash "$skill/rex-team.sh" agent prompt claude "two words" --wait 2>&1)"; rc=$?
+  out="$(env UV_BIN="$fakeuv" bash "$skill/rex-team.sh" agent prompt claude "two words" --wait 2>&1)"; rc=$?
   if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -qx -- "ARGV: run --no-project --no-python-downloads --python >=3.11 python -m rexlead agent prompt claude two words --wait"; then
     pass; else fail "forwarding: expected uv run … -m rexlead plus the argv, got rc=$rc out=$out"; fi
 
@@ -156,22 +137,9 @@ main() {
     pass; else fail "control bytes: expected one valid setup_error envelope naming the path, got rc=$rc out=$out"; fi
 
   # 10. Success: stdout intact, stderr empty even when uv warned.
-  stdout_only="$("${on_linux[@]}" UV_BIN="$fakeuv" FAKE_UV_WARN="warning: token ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" bash "$skill/rex-team.sh" agent list 2>"$TMP/err10")"; rc=$?
+  stdout_only="$(env UV_BIN="$fakeuv" FAKE_UV_WARN="warning: token ghp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" bash "$skill/rex-team.sh" agent list 2>"$TMP/err10")"; rc=$?
   if [[ $rc -eq 0 && ! -s "$TMP/err10" ]] && printf '%s' "$stdout_only" | grep -qx -- "ARGV: run --no-project --no-python-downloads --python >=3.11 python -m rexlead agent list"; then
     pass; else fail "clean success: expected stdout passthrough and empty stderr, got rc=$rc stdout=$stdout_only err=$(cat "$TMP/err10")"; fi
-
-  # 11. The platform picks the interpreter spec; the hint names the same one.
-  local platform spec
-  for platform in Darwin Linux; do
-    if [[ "$platform" == "Darwin" ]]; then spec='>=3.13'; else spec='>=3.11'; fi
-    out="$(env PATH="$unamebin:$PATH" FAKE_UNAME="$platform" UV_BIN="$fakeuv" bash "$skill/rex-team.sh" agent list 2>&1)"; rc=$?
-    if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -qx -- "ARGV: run --no-project --no-python-downloads --python ${spec} python -m rexlead agent list"; then
-      pass; else fail "platform spec ($platform): expected --python ${spec}, got rc=$rc out=$out"; fi
-    out="$(env PATH="$unamebin:$PATH" FAKE_UNAME="$platform" UV_BIN="$fakeuv" FAKE_UV_RC=2 FAKE_UV_STDERR="error: No interpreter found" bash "$skill/rex-team.sh" agent list 2>&1 >/dev/null)"; rc=$?
-    if [[ $rc -eq 1 ]] && printf '%s' "$out" | jq -e --arg spec "--python '${spec}' python -V" --arg min "Python ${spec#>=}+ is installed" \
-      '.error.code == "setup_error" and (.error.message | contains($spec)) and (.error.message | contains($min))' >/dev/null; then
-      pass; else fail "platform hint ($platform): expected the hint to name ${spec}, got rc=$rc out=$out"; fi
-  done
 
   echo "test-summary: passed=${PASS} failed=${FAIL} token=${SUMMARY_TOKEN}"
   (( FAIL == 0 ))

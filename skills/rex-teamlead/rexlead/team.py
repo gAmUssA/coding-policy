@@ -30,7 +30,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable
 
 from .rex import FINISHED, READY, Rex, RexError, Timeout
 
@@ -41,10 +40,6 @@ READY_TIMEOUT_SEC = 90
 DEFAULT_WAIT_TIMEOUT_SEC = 300
 #: Per-command budget of a `check` run; the lead's shell call needs longer.
 DEFAULT_CHECK_TIMEOUT_SEC = 1800
-#: How often a check polls a command's leader for its exit, and how long it
-#: waits for a killed process group to end.
-CHECK_POLL_SEC = 0.05
-CHECK_KILL_SETTLE_SEC = 5
 CHECK_VERDICTS = ("pass", "fail", "invalid")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
@@ -212,101 +207,21 @@ def signal_name(number):
         return str(number)
 
 
-def waitid() -> "Callable[[int, int, int], object] | None":
-    """`os.waitid`, or None on a Python without it (macOS before 3.13).
-    Read at call time, never cached at import."""
-    found: object = getattr(os, "waitid", None)
-    return found if callable(found) else None
-
-
-def require_waitid() -> "Callable[[int, int, int], object]":
-    """`os.waitid`, or a setup_error on a Python without it: without it the
-    leader cannot be waited for unreaped, so background survivors go unseen."""
-    found = waitid()
-    if found is None:
-        raise TeamError("setup_error", "this Python ({}) has no os.waitid, which `check` needs to find a command's background processes — run the team command with Python 3.13 or later on macOS".format(sys.version.split()[0]))
-    return found
-
-
-def exited_unreaped(pid, deadline):
-    """Whether the child `pid` exited before `deadline` (a `time.monotonic()`
-    value). It is never reaped: an unreaped leader's pid, and so its process
-    group id, cannot be reused, which keeps signalling the group safe."""
-    wait = require_waitid()
-    while True:
-        if wait(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is not None:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(CHECK_POLL_SEC)
-
-
-#: The process listing `check` reads: one `pid pgid stat` line per process.
-PS_COMMAND = ("ps", "-A", "-o", "pid=,pgid=,stat=")
-
-
-def process_table():
-    """`(pid, pgid, stat)` for every process PS_COMMAND lists. Raises OSError
-    when the listing cannot run, fails, or prints an unreadable line."""
-    done = subprocess.run(list(PS_COMMAND), stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
-    if done.returncode != 0:
-        raise OSError("`{}` exited {}: {}".format(" ".join(PS_COMMAND), done.returncode, done.stderr.strip()[:300]))
-    table = []
-    for line in done.stdout.splitlines():
-        fields = line.split()
-        if len(fields) < 3 or not (fields[0].isdigit() and fields[1].isdigit()):
-            raise OSError("`ps` printed an unreadable line: {!r}".format(line[:200]))
-        table.append((int(fields[0]), int(fields[1]), fields[2]))
-    return table
-
-
-def require_ps():
-    """Refuse a check when `ps` cannot list this process: without a listing,
-    background survivors go unseen."""
-    try:
-        table = process_table()
-    except OSError as exc:
-        raise TeamError("setup_error", "`ps` cannot list processes ({}) — install procps, or make `ps` available on PATH, then check again".format(exc)) from None
-    if not any(pid == os.getpid() for pid, _, _ in table):
-        raise TeamError("setup_error", "`{}` did not list this process ({}) — install procps, or make a `ps` that lists every process available on PATH, then check again".format(" ".join(PS_COMMAND), os.getpid()))
-
-
-def group_survivors(pgid):
-    """Pids of live processes in group `pgid` other than its leader `pgid`.
-    Zombies are ignored: `kill(-pgid, 0)` would count them. Raises OSError
-    when `ps` cannot list the processes."""
-    return [pid for pid, group, stat in process_table() if group == pgid and pid != pgid and not stat.startswith("Z")]
-
-
-def kill_group(pgid) -> "list[int] | None":
-    """SIGKILL group `pgid` while its leader is unreaped, then wait up to
-    CHECK_KILL_SETTLE_SEC for its other members to end. Returns the pids
-    still alive afterwards, or None when the listing failed and the
-    survivors are unknown; the kill is sent either way."""
+def kill_group(pgid):
+    """SIGKILL whatever is left in process group `pgid`."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
-        return []  # the group ended before the kill
+        pass  # the group is empty
     except PermissionError:
-        # macOS refuses to signal a group whose only member is the zombie
-        # leader; the listing below reports any member the kill missed.
-        pass
-    deadline = time.monotonic() + CHECK_KILL_SETTLE_SEC
-    while True:
-        try:
-            alive = group_survivors(pgid)
-        except OSError:
-            return None
-        if not alive or time.monotonic() >= deadline:
-            return alive
-        time.sleep(CHECK_POLL_SEC)
+        pass  # macOS refuses to signal a group whose only members are zombies
 
 
 def run_check(command, cwd, timeout):
     """Run one check command with `bash -c` in `cwd` in its own session: no
     stdin, its output discarded, its whole process group killed at `timeout`
-    seconds or when it leaves processes behind. Returns the run and, when the
-    remaining runs must stop, why; the caller checks the worktree."""
+    seconds and again once its leader exits, so nothing it started in the
+    background outlives the run. The caller checks the worktree."""
     started = time.monotonic()
 
     def ran(code, verdict, reason):
@@ -317,42 +232,20 @@ def run_check(command, cwd, timeout):
         proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as exc:
-        return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc)), None
-    if not exited_unreaped(proc.pid, started + timeout):
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass  # the group ended between the timeout and the kill
-        proc.wait()
-        return ran(None, "invalid", "timed out after {}s and was killed".format(timeout)), None
+        return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc))
     try:
-        survivors = group_survivors(proc.pid)
-    except OSError as exc:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
         kill_group(proc.pid)
         proc.wait()
-        return ran(None, "invalid", "the process listing failed ({}); its process group was sent SIGKILL and any survivors are unknown — check that `ps` runs on this machine".format(exc)), \
-            "not run: an earlier run's processes could not be listed"
-    stop: "str | None" = None
-    alive: "list[int] | None" = []
-    if survivors:
-        alive = kill_group(proc.pid)
-        stop = "not run: an earlier run left background processes running"
-    code = proc.wait()
-    reasons = []
+        return ran(None, "invalid", "timed out after {}s and was killed".format(timeout))
+    # The leader is reaped, but its group id is not reused while any member lives.
+    kill_group(proc.pid)
     if code < 0:
-        reasons.append("killed by signal {}".format(signal_name(-code)))
-    if survivors:
-        reason = "left background processes running (killed): {}".format(" ".join(map(str, survivors)))
-        if alive is None:
-            reason += "; the process listing failed after SIGKILL, so any still alive are unknown"
-        elif alive:
-            reason += "; still alive after SIGKILL: {}".format(" ".join(map(str, alive)))
-        reasons.append(reason)
-    if reasons:
-        return ran(code if code >= 0 else None, "invalid", "; ".join(reasons)), stop
+        return ran(None, "invalid", "killed by signal {}".format(signal_name(-code)))
     # Any non-zero exit is a failure, 126 and 127 included: the command
     # launched, so `bash` started and the command's own status stands.
-    return ran(code, "pass" if code == 0 else "fail", "exit {}".format(code)), None
+    return ran(code, "pass" if code == 0 else "fail", "exit {}".format(code))
 
 
 #: Forced on every content read: `core.fileMode=false` would make `git add -A`
@@ -638,8 +531,6 @@ class Team:
             raise UsageError("name at least one check command with --run")
         if timeout < 1:
             raise UsageError("--timeout must be at least 1 second")
-        require_waitid()
-        require_ps()
         record = self.store.load(task)
         worker = self._worker(record, role)
         if not worker.get("branch"):
@@ -668,7 +559,7 @@ class Team:
             if stopped:
                 runs.append({"command": command, "exit": None, "verdict": "invalid", "reason": stopped, "seconds": 0.0})
                 continue
-            run, stopped = run_check(command, worktree, timeout)
+            run = run_check(command, worktree, timeout)
             moved = worktree_change(worktree, candidate)
             if moved:
                 run.update(verdict="invalid", reason=moved if run["verdict"] != "invalid" else run["reason"] + "; " + moved)

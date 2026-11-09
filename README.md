@@ -93,7 +93,7 @@ Review the plugin hooks with `/hooks` in Codex, then start a new thread. Choose 
 
 ## Development
 
-Python tooling requires Python 3.11+ and `uv`. The Rex team launcher, `skills/rex-teamlead/rex-team.sh`, needs Python 3.13+ on macOS for `check`, since `os.waitid` reached macOS in 3.13, and 3.11+ elsewhere. `scripts/run-tests.sh` also runs each Python suite through that `uv run` form, and the tests and publish workflows install a pinned `uv` and run the command below. The Python suites use the standard library; no dependency lock file is needed for these commands.
+Python tooling requires Python 3.11+ and `uv`. `scripts/run-tests.sh` also runs each Python suite through that `uv run` form, and the tests and publish workflows install a pinned `uv` and run the command below. The Python suites use the standard library; no dependency lock file is needed for these commands.
 
 ```
 bash scripts/run-diagnostics.sh   # shellcheck + pyright at zero findings

@@ -24,6 +24,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -653,12 +654,12 @@ class CheckTest(Fixture):
     def test_bash_that_cannot_start_is_invalid(self):
         # Only the run itself sees the empty PATH: `check`'s own git reads need the real one.
         with mock.patch.dict(os.environ, {"PATH": str(Path(self.tmp.name) / "empty-path")}):
-            run, stop = teammod.run_check("true", self.tmp.name, 5)
-        self.assertEqual((run["exit"], run["verdict"], stop), (None, "invalid", None))
+            run = teammod.run_check("true", self.tmp.name, 5)
+        self.assertEqual((run["exit"], run["verdict"]), (None, "invalid"))
         self.assertIn("bash could not start", run["reason"])
         with mock.patch.dict(os.environ, {"PATH": os.environ.get("PATH", "")}):
-            run, stop = teammod.run_check("true", self.tmp.name, 5)
-        self.assertEqual((run["exit"], run["verdict"], stop), (0, "pass", None))
+            run = teammod.run_check("true", self.tmp.name, 5)
+        self.assertEqual((run["exit"], run["verdict"]), (0, "pass"))
 
     def hide_untracked(self):
         git("config", "--local", "status.showUntrackedFiles", "no", cwd=self.worktree)
@@ -694,19 +695,19 @@ class CheckTest(Fixture):
         done = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
         return done.returncode == 0 and not done.stdout.strip().startswith("Z")
 
-    def test_a_command_that_leaves_a_background_process_is_invalid_and_it_is_killed(self):
+    def test_a_command_that_leaves_a_background_process_passes_and_it_is_killed(self):
         fake = FakeRex()
         self.committed(fake)
         pidfile, marker = Path(self.tmp.name) / "background.pid", Path(self.tmp.name) / "ran"
         code, out, err = self.check(fake, "sleep 30 & echo $! > {}".format(pidfile), "touch {}".format(marker))
         pid = int(pidfile.read_text())
         self.addCleanup(lambda: self.running(pid) and os.kill(pid, signal.SIGKILL))
-        self.assertEqual((code, out.get("verdict")), (0, "invalid"), err)
-        run = out["runs"][0]
-        self.assertEqual((run["exit"], run["verdict"], run["reason"]), (0, "invalid", "left background processes running (killed): {}".format(pid)))
-        self.assertEqual((out["runs"][1]["exit"], out["runs"][1]["reason"]), (None, "not run: an earlier run left background processes running"))
-        self.assertFalse(marker.exists())
-        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
+        self.assertEqual((code, out.get("verdict")), (0, "pass"), err)
+        self.assertEqual([(r["exit"], r["verdict"]) for r in out["runs"]], [(0, "pass"), (0, "pass")])
+        self.assertTrue(marker.exists())
+        deadline = time.monotonic() + 5
+        while self.running(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
         self.assertFalse(self.running(pid))
 
     def test_a_command_that_waits_for_its_own_background_job_passes(self):
@@ -715,71 +716,17 @@ class CheckTest(Fixture):
         out = self.check(fake, "sleep 0.2 & wait")[1]
         self.assertEqual((out["verdict"], out["runs"][0]["reason"]), ("pass", "exit 0"))
 
-    def path_without_ps(self):
-        """The current PATH with every `ps` hidden: a directory holding one is
-        replaced by a mirror of symlinks to its other entries."""
-        dirs = []
-        for index, entry in enumerate(os.environ.get("PATH", "").split(os.pathsep)):
-            directory = Path(entry)
-            if not (directory / "ps").exists():
-                dirs.append(entry)
-                continue
-            mirror = Path(self.tmp.name) / "path-{}".format(index)
-            mirror.mkdir()
-            for child in directory.iterdir():
-                if child.name != "ps":
-                    (mirror / child.name).symlink_to(child)
-            dirs.append(str(mirror))
-        path = os.pathsep.join(dirs)
-        self.assertIsNone(shutil.which("ps", path=path))
-        self.assertIsNotNone(shutil.which("bash", path=path))
-        return path
-
-    def test_a_ps_that_cannot_list_is_a_setup_error_before_any_run(self):
-        fake = FakeRex()
-        self.committed(fake)
-        marker = Path(self.tmp.name) / "ran"
-        with mock.patch.dict(os.environ, {"PATH": self.path_without_ps()}):
-            code, out, err = self.check(fake, "touch {}".format(marker))
-        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "setup_error"))
-        self.assertIn("install procps, or make `ps` available on PATH", err["error"]["message"])
-        self.assertFalse(marker.exists())
-        self.assertIsNone(self.state()["workers"]["dev"]["check"])
-        code, out, err = self.check(fake, "touch {}".format(marker))
-        self.assertEqual((code, out.get("verdict")), (0, "pass"), err)
-        self.assertTrue(marker.exists())
-
-    def test_a_process_listing_that_fails_mid_run_is_invalid_and_recorded(self):
-        fake = FakeRex()
-        self.committed(fake)
-        marker = Path(self.tmp.name) / "ran"
-        without_ps, preflight = self.path_without_ps(), teammod.require_ps
-
-        def preflight_then_lose_ps():
-            preflight()  # the real preflight passes with `ps` on PATH
-            os.environ["PATH"] = without_ps
-
-        with mock.patch.dict(os.environ), mock.patch.object(teammod, "require_ps", preflight_then_lose_ps):
-            code, out, err = self.check(fake, "true", "touch {}".format(marker))
-        self.assertEqual((code, out.get("verdict")), (0, "invalid"), err)
-        first, second = out["runs"]
-        self.assertEqual((first["exit"], first["verdict"]), (None, "invalid"))
-        self.assertIn("the process listing failed", first["reason"])
-        self.assertEqual((second["verdict"], second["reason"]), ("invalid", "not run: an earlier run's processes could not be listed"))
-        self.assertFalse(marker.exists())
-        self.assertEqual(self.state()["workers"]["dev"]["check"]["verdict"], "invalid")
-
-    def test_a_python_without_waitid_is_a_setup_error_before_any_run(self):
-        fake = FakeRex()
-        self.committed(fake)
-        marker = Path(self.tmp.name) / "ran"
-        with mock.patch.dict(os.__dict__):
-            os.__dict__.pop("waitid", None)
-            code, out, err = self.check(fake, "touch {}".format(marker))
-        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "setup_error"))
-        self.assertIn("os.waitid", err["error"]["message"])
-        self.assertFalse(marker.exists())
-        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+    def test_killing_a_group_whose_only_member_is_its_zombie_leader_does_not_raise(self):
+        # On macOS `killpg` refuses such a group with EPERM: the case where a
+        # command exits just as its timeout fires, and every run's final kill.
+        proc = subprocess.Popen(["bash", "-c", "true"], stdin=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(proc.wait)
+        deadline = time.monotonic() + 5
+        while self.running(proc.pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(self.running(proc.pid))
+        teammod.kill_group(proc.pid)
+        self.assertEqual(proc.wait(), 0)
 
     def test_invalid_outranks_fail_and_a_changed_worktree_stops_the_rest(self):
         fake = FakeRex()
