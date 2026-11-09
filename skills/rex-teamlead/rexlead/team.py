@@ -220,8 +220,8 @@ def kill_group(pgid):
 def run_check(command, cwd, timeout):
     """Run one check command with `bash -c` in `cwd` in its own session: no
     stdin, its output discarded, its whole process group killed at `timeout`
-    seconds and again once its leader exits, so nothing it started in the
-    background outlives the run. The caller checks the worktree."""
+    seconds and again once its leader exits. A process that left the group
+    with `setsid` is not killed. The caller checks the worktree."""
     started = time.monotonic()
 
     def ran(code, verdict, reason):
