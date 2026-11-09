@@ -12,7 +12,7 @@ current directory is a read-only, detached checkout of candidate
 
 1. Confirm `git rev-parse HEAD` is `{{CANDIDATE}}`.
 2. Read the change against its base: `git diff {{BASE}}..HEAD`.
-3. Run the repository's tests and checks that cover the change.
+3. The lead ran these checks on the candidate itself and they passed: {{CHECKS}}. Rely on that run; you need not rerun the full suite. Run any narrower test or check your judgment of the change needs.
 4. Judge the change against the task and the repository's rules.
 
 ## Report

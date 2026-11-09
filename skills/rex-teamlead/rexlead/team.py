@@ -1,13 +1,15 @@
 """Rex-native team rounds: one session, one tab per worker, one state file.
 
 Contract:
-  argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `verdict`, `status`,
-          `down` (see `--help`).
+  argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `check`, `verdict`,
+          `status`, `down` (see `--help`).
   stdout: one JSON object per command.
   stderr: `{"error":{"code","message"}}` on failure.
-  exit  : 0 success; 1 failure; 2 usage error.
+  exit  : 0 success; 1 failure; 2 usage error. `check` exits 0 once its runs
+          are classified, whatever the verdict: the verdict is data.
   state : `$REX_TEAM_HOME/<task>.json` (default `~/.rex-team`), schema in
-          skills/rex-teamlead/state-schema.md. Reports live beside it.
+          skills/rex-teamlead/state-schema.md. Reports live beside it,
+          under `$REX_TEAM_HOME/<task>/`. `check` keeps no command output.
 
 Workers are interactive agent TUIs in their own Rex tab. A worker's state is
 its own OSC 7501 program status, read from Rex events; delivery is that
@@ -21,17 +23,28 @@ import json
 import os
 import re
 import secrets
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 from .rex import FINISHED, READY, Rex, RexError, Timeout
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 READY_TIMEOUT_SEC = 90
 # Below the shell-tool limit of an agent lead (Claude Code's Bash caps at 600 s),
 # so a long turn ends as `state: timeout`, never as a killed command.
 DEFAULT_WAIT_TIMEOUT_SEC = 300
+#: Per-command budget of a `check` run; the lead's shell call needs longer.
+DEFAULT_CHECK_TIMEOUT_SEC = 1800
+#: How often a refused group kill is retried, and for how long: macOS refuses
+#: a group whose only members are zombies until they are reaped.
+CHECK_POLL_SEC = 0.05
+CHECK_KILL_SETTLE_SEC = 1
+CHECK_VERDICTS = ("pass", "fail", "invalid")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
     "claude": lambda model, effort: ["claude"] + (["--model", model] if model else []) + (["--effort", effort] if effort else []),
@@ -101,12 +114,18 @@ class Store:
             version = None  # JSON `true` would otherwise compare equal to 1
         if version is not None and version > SCHEMA_VERSION:
             raise TeamError("state_newer", "{} has schema_version {}, newer than this plugin reads ({}) — update coding-policy and retry".format(path, version, SCHEMA_VERSION))
-        if version != SCHEMA_VERSION:
+        if version not in (1, SCHEMA_VERSION):
             # Version 1 has no predecessor, so any other value is corrupt, not older.
             raise TeamError("state_corrupt", "{} has schema_version {!r}, which no writer produced — restore it, or remove it and run `team up` again".format(path, version))
-        problem = invalid(record) or (None if record["task"] == task else "it records task {!r}".format(record["task"]))
+        problem = invalid(record, version) or (None if record["task"] == task else "it records task {!r}".format(record["task"]))
         if problem:
             raise TeamError("state_corrupt", "{} is malformed: {} — restore it, or remove it and run `team up` again".format(path, problem))
+        if version == 1:
+            # The owner migrates: version 2 only adds the optional worker `check`.
+            record["schema_version"] = SCHEMA_VERSION
+            for worker in record["workers"].values():
+                worker["check"] = None
+            self.save(record)
         return record
 
     def save(self, record):
@@ -129,7 +148,13 @@ OUTCOME_LABELS = {"delivered": "delivered", "undelivered": "no report", "blocked
 DISPATCH_FIELDS = {"nonce": str, "report": str, "sent_at": str}
 
 
-def invalid(record):
+def utc_stamp(text):
+    """Whether `text` is an ISO-8601 date and time at offset +00:00."""
+    stamp = parse_time(text)
+    return stamp is not None and stamp.utcoffset() == dt.timedelta(0) and "T" in text
+
+
+def invalid(record, version=SCHEMA_VERSION):
     """The first contract violation in a task record, or None (state-schema.md)."""
     for field, kind in RECORD_FIELDS.items():
         if not isinstance(record.get(field), kind):
@@ -146,9 +171,15 @@ def invalid(record):
         for dispatch in worker["dispatches"]:
             if not isinstance(dispatch, dict) or any(not isinstance(dispatch.get(f), k) for f, k in DISPATCH_FIELDS.items()):
                 return "worker {} has a dispatch without nonce, report and sent_at".format(role)
-            sent = parse_time(dispatch["sent_at"])
-            if sent is None or sent.utcoffset() != dt.timedelta(0) or "T" not in dispatch["sent_at"]:
+            if not utc_stamp(dispatch["sent_at"]):
                 return "worker {} has a dispatch whose sent_at is not an ISO-8601 UTC timestamp".format(role)
+        check = worker.get("check")
+        if "check" in worker and version < 2:
+            return "worker {} field check predates schema_version 2".format(role)
+        if check is not None and (not isinstance(check, dict) or not isinstance(check.get("candidate"), str)
+                                  or check.get("verdict") not in CHECK_VERDICTS or not isinstance(check.get("checked_at"), str)
+                                  or not utc_stamp(check["checked_at"])):
+            return "worker {} field check is not {{candidate, verdict, checked_at}} with a UTC checked_at".format(role)
     return None
 
 
@@ -166,6 +197,161 @@ def detached_at(repo, path, commit):
     entry = worktree_entry(git(repo, "worktree", "list", "--porcelain"), path)
     lines = entry.splitlines() if entry else []
     return "detached" in lines and "HEAD {}".format(commit) in lines
+
+
+def signal_name(number):
+    """The signal's name, or its number when the platform defines no name.
+
+    Linux real-time signals (SIGRTMIN..SIGRTMAX) have no `signal.Signals`
+    member, and a ValueError here would lose runs already classified.
+    """
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return str(number)
+
+
+def kill_group(pgid):
+    """SIGKILL whatever is left in process group `pgid`. Returns False when
+    the kill is still refused after CHECK_KILL_SETTLE_SEC: a member this user
+    cannot signal may be alive."""
+    deadline = time.monotonic() + CHECK_KILL_SETTLE_SEC
+    while True:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            return True
+        except ProcessLookupError:
+            return True  # the group is empty
+        except PermissionError:
+            # macOS also refuses a group whose only members are zombies, until
+            # they are reaped; a refusal that outlasts the deadline is reported.
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(CHECK_POLL_SEC)
+
+
+def run_check(command, cwd, timeout):
+    """Run one check command with `bash -c` in `cwd` in its own session: no
+    stdin, its output discarded, its whole process group killed at `timeout`
+    seconds and again once its leader exits. A process that left the group
+    with `setsid` is not killed. A refused kill makes the run `invalid`.
+    The caller checks the worktree."""
+    started = time.monotonic()
+
+    def ran(code, verdict, reason):
+        return {"command": command, "exit": code, "verdict": verdict, "reason": reason,
+                "seconds": round(time.monotonic() - started, 2)}
+
+    try:
+        proc = subprocess.Popen(["bash", "-c", command], cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc))
+    reasons = []
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_group(proc.pid)
+        try:
+            proc.wait(timeout=CHECK_KILL_SETTLE_SEC)
+        except subprocess.TimeoutExpired:
+            return ran(None, "invalid", "timed out after {}s and could not be killed; its process group {} may still be running".format(timeout, proc.pid))
+        code, reasons = None, ["timed out after {}s and was killed".format(timeout)]
+    # The leader is reaped, but its group id is not reused while any member lives.
+    if not kill_group(proc.pid):
+        reasons.append("the kill of its process group {} was refused, so a process it left running may still be alive".format(proc.pid))
+    if code is not None and code < 0:
+        reasons.append("killed by signal {}".format(signal_name(-code)))
+    if reasons:
+        return ran(code if code is not None and code >= 0 else None, "invalid", "; ".join(reasons))
+    # Any non-zero exit is a failure, 126 and 127 included: the command
+    # launched, so `bash` started and the command's own status stands.
+    return ran(code, "pass" if code == 0 else "fail", "exit {}".format(code))
+
+
+#: Forced on every content read: `core.fileMode=false` would make `git add -A`
+#: keep the candidate's mode and hide an executable-bit change.
+CONTENT_CONFIG = ("core.fileMode=true",)
+SPARSE = "sparse checkout: the check cannot see the candidate's full tree"
+
+
+def sparse_checkout(root):
+    """Whether the checkout at `root` is sparse, by its own `core.sparseCheckout`."""
+    done = subprocess.run(["git", "-C", str(root), "config", "--type=bool", "--get", "core.sparseCheckout"],
+                          capture_output=True, text=True, check=False)
+    if done.returncode not in (0, 1):  # 1: the setting is unset
+        raise TeamError("git_failed", "`git config core.sparseCheckout` failed in {}: {}".format(root, done.stderr.strip()[:300]))
+    return done.stdout.strip() == "true"
+
+
+def gitlinks(root):
+    """Paths of the submodules in `root`'s HEAD tree, never read from the index."""
+    return [entry.split("\t", 1)[1] for entry in filter(None, git(root, "ls-tree", "-r", "-z", "HEAD").split("\0"))
+            if entry.startswith("160000 ")]
+
+
+def content_diff(root):
+    """`root`'s working tree against its own HEAD, by content, one line each:
+    HEAD is read into a temporary index in the checkout's own git directory,
+    which git never lists as worktree content, and the working tree staged
+    into it, so every tracked and untracked, non-ignored file is hashed
+    through the repository's filters. An untracked nested repository is
+    reported by path and kept out of the staging. The real index and its
+    cached stat data and flags are never read or written."""
+    config = [arg for setting in CONTENT_CONFIG for arg in ("-c", setting)]
+    tmp = tempfile.mkdtemp(prefix="rex-team-index-", dir=git(root, "rev-parse", "--absolute-git-dir"))
+    try:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(tmp) / "index"))
+
+        def run(*args):
+            done = subprocess.run(["git", "-C", str(root)] + config + list(args), capture_output=True, text=True, check=False, env=env)
+            if done.returncode != 0:
+                raise TeamError("git_failed", "`git {}` failed in {}: {}".format(" ".join(args[:2]), root, done.stderr.strip()[:300]))
+            return done.stdout
+
+        run("read-tree", "HEAD")
+        # `ls-files --others` lists a nested repository as `<path>/`, never its files.
+        nested = [path for path in run("ls-files", "--others", "--exclude-standard", "-z").split("\0") if path.endswith("/")]
+        run("add", "-A", "--", ".", *[":(exclude,literal)" + path for path in nested])
+        fields = run("diff", "--cached", "--name-status", "--no-renames", "--ignore-submodules=none", "-z", "HEAD").split("\0")
+    finally:
+        shutil.rmtree(tmp)
+    return ["{} {}".format(status, path) for status, path in zip(fields[0::2], fields[1::2])] + \
+        ["A {} (nested repository)".format(path) for path in nested]
+
+
+def changes(worktree):
+    """Every difference between `worktree` and its candidate, one line each;
+    empty when clean. Ignored paths are exempt. A sparse checkout is reported:
+    its omitted paths cannot be compared."""
+    if sparse_checkout(worktree):
+        return SPARSE
+    return "\n".join(content_diff(worktree))
+
+
+def unsupported(worktree):
+    """Why `check` cannot vouch for this checkout, or None: a sparse checkout,
+    or a candidate holding submodules."""
+    if sparse_checkout(worktree):
+        return SPARSE
+    paths = gitlinks(worktree)
+    if paths:
+        return "the candidate has submodules at {}: the check does not support submodules".format(", ".join(paths))
+    return None
+
+
+def worktree_change(worktree, candidate):
+    """Why `worktree` is no longer a clean checkout of `candidate`, or None."""
+    try:
+        head = git(worktree, "rev-parse", "HEAD")
+        dirty = changes(worktree)
+    except TeamError as exc:
+        return "the worktree is unreadable after the run: " + exc.message
+    if head != candidate:
+        return "the run moved HEAD to {}".format(head)
+    if dirty:
+        return "the run left uncommitted or untracked changes: {}".format("; ".join(dirty.splitlines()[:3]))
+    return None
 
 
 def check_name(value, what):
@@ -251,7 +437,7 @@ class Team:
                 raise RexError("{} (cleanup also failed: {})".format(exc.message, undo.message)) from None
             raise
         worker = {"agent": agent, "model": model, "effort": effort, "window": window, "block": block, "worktree": str(path),
-                  "branch": branch, "commit": commit, "dispatches": []}
+                  "branch": branch, "commit": commit, "dispatches": [], "check": None}
         record["workers"][role] = worker
         self.store.save(record)
         tab = self._label(record, role)
@@ -359,6 +545,58 @@ class Team:
             raise TeamError("candidate_mismatch", "{} is not the tip of {} ({}) — use the branch tip as the candidate, or ask the developer why its report differs".format(sha, worker["branch"], tip))
         return {"task": task, "role": role, "branch": worker["branch"], "candidate": tip}
 
+    def check(self, task, role, sha, commands, timeout=DEFAULT_CHECK_TIMEOUT_SEC):
+        """Run the lead's own check commands in the writer's worktree at the
+        candidate and classify each run `pass`, `fail` or `invalid`."""
+        if not commands:
+            raise UsageError("name at least one check command with --run")
+        if timeout < 1:
+            raise UsageError("--timeout must be at least 1 second")
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        if not worker.get("branch"):
+            raise TeamError("check_mismatch", "{} is a read-only worker — run the checks in the developer's worktree, `--role` of the writer".format(role))
+        try:
+            candidate = self.candidate(task, role, sha)["candidate"]
+        except TeamError as exc:
+            if exc.code != "candidate_mismatch":
+                raise
+            raise TeamError("check_mismatch", exc.message) from None
+        worktree = Path(worker["worktree"])
+        head = git(worktree, "rev-parse", "HEAD")
+        if head != candidate:
+            raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
+        reason = unsupported(worktree)
+        if reason == SPARSE:
+            raise TeamError("check_unsupported", "{}'s worktree {} is a {} — run the check in a full checkout of the candidate".format(role, worktree, SPARSE))
+        if reason:
+            raise TeamError("check_unsupported", "{}'s worktree {}: {} — run the checks yourself and continue the round by hand, or remove the submodule".format(role, worktree, reason))
+        dirty = changes(worktree)
+        if dirty:
+            raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
+                role, worktree, "; ".join(dirty.splitlines()[:3])))
+        runs, stopped = [], None
+        for command in commands:
+            if stopped:
+                runs.append({"command": command, "exit": None, "verdict": "invalid", "reason": stopped, "seconds": 0.0})
+                continue
+            run = run_check(command, worktree, timeout)
+            moved = worktree_change(worktree, candidate)
+            if moved:
+                run.update(verdict="invalid", reason=moved if run["verdict"] != "invalid" else run["reason"] + "; " + moved)
+                stopped = "not run: an earlier run changed the worktree"
+            runs.append(run)
+        verdicts = {run["verdict"] for run in runs}
+        verdict = next(v for v in ("invalid", "fail", "pass") if v in verdicts)
+        # Re-read before writing: the runs may have taken long.
+        record = self.store.load(task)
+        worker = self._worker(record, role)
+        worker["check"] = {"candidate": candidate, "verdict": verdict, "checked_at": self.now().isoformat()}
+        self.store.save(record)
+        n = len(worker["dispatches"])
+        tab = self._label(record, role, ("#{} ".format(n) if n else "") + "checks " + verdict)
+        return {"task": task, "role": role, "candidate": candidate, "verdict": verdict, "runs": runs, **tab}
+
     def verdict(self, task, role, sha):
         """Read the reviewer's current report: it must review `sha` and give a verdict."""
         record = self.store.load(task)
@@ -393,7 +631,8 @@ class Team:
         for role, worker in record["workers"].items():
             state = (self.rex.status(record["session"], worker["block"]) or {}).get("state", "unknown")
             last = worker["dispatches"][-1] if worker["dispatches"] else None
-            out[role] = {"agent": worker["agent"], "state": state, "delivered": self._delivery(last)[0] if last else None}
+            out[role] = {"agent": worker["agent"], "state": state, "delivered": self._delivery(last)[0] if last else None,
+                         "check": worker.get("check")}
         return {"task": task, "session": record["session"], "workers": out}
 
     def down(self, task, role=None):
@@ -501,6 +740,12 @@ def parser():
     cd.add_argument("--task", required=True)
     cd.add_argument("--role", required=True)
     cd.add_argument("--sha", required=True)
+    ck = sub.add_parser("check")
+    ck.add_argument("--task", required=True)
+    ck.add_argument("--role", required=True)
+    ck.add_argument("--candidate", required=True)
+    ck.add_argument("--run", action="append", required=True, help="a check command, run with `bash -c`; repeat for more")
+    ck.add_argument("--timeout", type=int, default=DEFAULT_CHECK_TIMEOUT_SEC, help="seconds per command")
     vd = sub.add_parser("verdict")
     vd.add_argument("--task", required=True)
     vd.add_argument("--role", required=True)
@@ -548,6 +793,8 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow, no
             result = team.status(args.task)
         elif args.command == "candidate":
             result = team.candidate(args.task, args.role, args.sha)
+        elif args.command == "check":
+            result = team.check(args.task, args.role, args.candidate, args.run, args.timeout)
         elif args.command == "verdict":
             result = team.verdict(args.task, args.role, args.candidate)
         else:
