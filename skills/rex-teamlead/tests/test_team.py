@@ -716,17 +716,18 @@ class CheckTest(Fixture):
         out = self.check(fake, "sleep 0.2 & wait")[1]
         self.assertEqual((out["verdict"], out["runs"][0]["reason"]), ("pass", "exit 0"))
 
-    def test_killing_a_group_whose_only_member_is_its_zombie_leader_does_not_raise(self):
-        # On macOS `killpg` refuses such a group with EPERM: the case where a
-        # command exits just as its timeout fires, and every run's final kill.
+    def test_a_group_kill_still_refused_after_the_settle_time_is_reported(self):
+        # A group whose only member is its unreaped, exited leader: macOS
+        # refuses the kill with EPERM until it is reaped, Linux signals it.
         proc = subprocess.Popen(["bash", "-c", "true"], stdin=subprocess.DEVNULL, start_new_session=True)
         self.addCleanup(proc.wait)
         deadline = time.monotonic() + 5
         while self.running(proc.pid) and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertFalse(self.running(proc.pid))
-        teammod.kill_group(proc.pid)
+        self.assertEqual(teammod.kill_group(proc.pid), sys.platform != "darwin")
         self.assertEqual(proc.wait(), 0)
+        self.assertTrue(teammod.kill_group(proc.pid))
 
     def test_invalid_outranks_fail_and_a_changed_worktree_stops_the_rest(self):
         fake = FakeRex()

@@ -40,6 +40,10 @@ READY_TIMEOUT_SEC = 90
 DEFAULT_WAIT_TIMEOUT_SEC = 300
 #: Per-command budget of a `check` run; the lead's shell call needs longer.
 DEFAULT_CHECK_TIMEOUT_SEC = 1800
+#: How often a refused group kill is retried, and for how long: macOS refuses
+#: a group whose only members are zombies until they are reaped.
+CHECK_POLL_SEC = 0.05
+CHECK_KILL_SETTLE_SEC = 1
 CHECK_VERDICTS = ("pass", "fail", "invalid")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
@@ -208,20 +212,30 @@ def signal_name(number):
 
 
 def kill_group(pgid):
-    """SIGKILL whatever is left in process group `pgid`."""
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass  # the group is empty
-    except PermissionError:
-        pass  # macOS refuses to signal a group whose only members are zombies
+    """SIGKILL whatever is left in process group `pgid`. Returns False when
+    the kill is still refused after CHECK_KILL_SETTLE_SEC: a member this user
+    cannot signal may be alive."""
+    deadline = time.monotonic() + CHECK_KILL_SETTLE_SEC
+    while True:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            return True
+        except ProcessLookupError:
+            return True  # the group is empty
+        except PermissionError:
+            # macOS also refuses a group whose only members are zombies, until
+            # they are reaped; a refusal that outlasts the deadline is reported.
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(CHECK_POLL_SEC)
 
 
 def run_check(command, cwd, timeout):
     """Run one check command with `bash -c` in `cwd` in its own session: no
     stdin, its output discarded, its whole process group killed at `timeout`
     seconds and again once its leader exits. A process that left the group
-    with `setsid` is not killed. The caller checks the worktree."""
+    with `setsid` is not killed. A refused kill makes the run `invalid`.
+    The caller checks the worktree."""
     started = time.monotonic()
 
     def ran(code, verdict, reason):
@@ -233,16 +247,23 @@ def run_check(command, cwd, timeout):
                                 stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as exc:
         return ran(None, "invalid", "bash could not start: {}".format(exc.strerror or exc))
+    reasons = []
     try:
         code = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_group(proc.pid)
-        proc.wait()
-        return ran(None, "invalid", "timed out after {}s and was killed".format(timeout))
+        try:
+            proc.wait(timeout=CHECK_KILL_SETTLE_SEC)
+        except subprocess.TimeoutExpired:
+            return ran(None, "invalid", "timed out after {}s and could not be killed; its process group {} may still be running".format(timeout, proc.pid))
+        code, reasons = None, ["timed out after {}s and was killed".format(timeout)]
     # The leader is reaped, but its group id is not reused while any member lives.
-    kill_group(proc.pid)
-    if code < 0:
-        return ran(None, "invalid", "killed by signal {}".format(signal_name(-code)))
+    if not kill_group(proc.pid):
+        reasons.append("the kill of its process group {} was refused, so a process it left running may still be alive".format(proc.pid))
+    if code is not None and code < 0:
+        reasons.append("killed by signal {}".format(signal_name(-code)))
+    if reasons:
+        return ran(code if code is not None and code >= 0 else None, "invalid", "; ".join(reasons))
     # Any non-zero exit is a failure, 126 and 127 included: the command
     # launched, so `bash` started and the command's own status stands.
     return ran(code, "pass" if code == 0 else "fail", "exit {}".format(code))
