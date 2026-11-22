@@ -217,6 +217,19 @@ class UpTest(Fixture):
         code, _, err = self.cli(FakeRex(), "up", "--task", "t1", "--repo", self.tmp.name)
         self.assertEqual((code, err["error"]["code"]), (1, "git_failed"))
 
+    def test_git_failure_withholds_stderr(self):
+        token = "ghp_" + "0" * 36  # Synthetic token; never a credential.
+        git("config", "--local", "core.bare", token, cwd=self.repo)
+        failed = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=self.repo,
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(token, failed.stderr)
+        code, out, err = self.cli(FakeRex(), "up", "--task", "t1", "--repo", str(self.repo))
+        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "git_failed"))
+        self.assertNotIn(token, json.dumps(err))
+        self.assertIn("`git rev-parse --git-dir` failed in {}".format(self.repo.resolve()), err["error"]["message"])
+        self.assertIn("check the repository path, permissions and Git configuration, then retry", err["error"]["message"])
+
 
 class SpawnTest(Fixture):
     def test_writer_gets_its_own_branch_worktree_and_a_marked_agent(self):
@@ -1040,6 +1053,35 @@ class CheckTest(Fixture):
         git("sparse-checkout", "disable", cwd=self.worktree)
         self.accepted(fake)
 
+    def test_sparse_checkout_git_failure_withholds_stderr(self):
+        fake = FakeRex()
+        self.committed(fake)
+        token = "ghp_" + "0" * 36  # Synthetic token; never a credential.
+        git("config", "--local", "core.sparseCheckout", token, cwd=self.worktree)
+        failed = subprocess.run(["git", "config", "--type=bool", "--get", "core.sparseCheckout"],
+                                cwd=self.worktree, capture_output=True, text=True, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(token, failed.stderr)
+        git("config", "--local", "--unset", "core.sparseCheckout", cwd=self.worktree)
+        real_run = subprocess.run
+
+        def runner(argv, **kwargs):
+            # Replay the real Git failure only at the config process boundary;
+            # an invalid setting on disk also breaks earlier rev-parse calls.
+            if argv[3:] == ["config", "--type=bool", "--get", "core.sparseCheckout"]:
+                return failed
+            return real_run(argv, **kwargs)
+
+        marker = Path(self.tmp.name) / "ran"
+        with mock.patch("subprocess.run", side_effect=runner):
+            code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "git_failed"))
+        self.assertNotIn(token, json.dumps(err))
+        self.assertIn("`git config core.sparseCheckout` failed in {}".format(self.worktree), err["error"]["message"])
+        self.assertIn("check repository permissions and the core.sparseCheckout boolean setting, then retry", err["error"]["message"])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
+
     def test_a_run_that_makes_the_checkout_sparse_is_invalid(self):
         fake = FakeRex()
         self.committed(fake)
@@ -1079,6 +1121,27 @@ class CheckTest(Fixture):
         self.assertEqual(self.check(fake, "grep -q hello data.dat")[1]["verdict"], "pass")
         (self.worktree / "data.dat").write_text("world\n")
         self.assertEqual(self.check(fake, "true")[2]["error"]["code"], "check_dirty")
+
+    def test_clean_filter_git_failure_withholds_stderr(self):
+        fake = FakeRex()
+        self.committed(fake)
+        token = "ghp_" + "0" * 36  # Synthetic token; never a credential.
+        git("config", "--local", "filter.leaky.clean", "echo {} >&2; exit 1".format(token), cwd=self.worktree)
+        git("config", "--local", "filter.leaky.required", "true", cwd=self.worktree)
+        (self.worktree / ".gitattributes").write_text("*.dat filter=leaky\n")
+        (self.worktree / "data.dat").write_text("hello\n")
+        failed = subprocess.run(["git", "hash-object", "--path=data.dat", "data.dat"], cwd=self.worktree,
+                                capture_output=True, text=True, check=False)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(token, failed.stderr)
+        marker = Path(self.tmp.name) / "ran"
+        code, out, err = self.check(fake, "touch {}".format(marker))
+        self.assertEqual((code, out, err["error"]["code"]), (1, {}, "git_failed"))
+        self.assertNotIn(token, json.dumps(err))
+        self.assertIn("`git add -A` failed in {}".format(self.worktree), err["error"]["message"])
+        self.assertIn("check repository permissions and clean-filter configuration, then retry", err["error"]["message"])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(self.state()["workers"]["dev"]["check"])
 
     def test_ignored_build_output_is_not_a_change(self):
         fake = FakeRex()
