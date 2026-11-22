@@ -148,18 +148,30 @@ than the commands' total budget, or run it in the background.
 `check_mismatch` or `check_dirty` means the worktree is not a clean checkout
 of the candidate; send the developer one correction brief through Step 5.
 `check_unsupported` means the check cannot vouch for this checkout: a
-candidate with submodules, or a sparse checkout. It never goes to the
-developer as a correction:
+candidate with submodules, or a sparse checkout. Do not send it to the
+developer as a correction without the operator's instruction:
 
 - Tell the operator the check cannot run on this candidate, quoting the `message`
-- Continue only on the operator's instruction
+- Stop for the operator's decision
+- If the operator requests a supported checkout or candidate, send the developer a correction brief through Step 5
+- If the operator supplies a supported checkout of the same candidate, proceed immediately to Step 8
+- If the operator ends the round, run the Step 14 closure command and finish here without proceeding to Step 15
+
+`check_interrupted` means no verdict was reached. Stop and report its `message`
+to the operator. If the operator requests a rerun, proceed immediately to
+Step 8. If the operator ends the round, run the Step 14 closure command and
+finish here without proceeding to Step 15.
 
 Route on `verdict`:
 
 - `pass` — proceed immediately to Step 9
-- `fail` — send the developer one correction brief through Step 5, naming each failed command and its `exit`
+- First `fail` — send the developer one correction brief through Step 5, naming each failed command and its `exit`
 - The brief tells the developer to rerun each failed command in its own worktree to see its output
-- A second `fail` in a row goes to the operator with each failed command and its `exit`
+- A second or later `fail` in a row — report each failed command and its `exit` to the operator
+- Stop for the operator's decision
+- If the operator authorizes another correction, send the developer a correction brief through Step 5
+- If the operator requests a rerun, proceed immediately to Step 8
+- If the operator ends the round, run the Step 14 closure command and finish here without proceeding to Step 15
 - `invalid` — the check itself is broken, never a code defect for the fix loop
 - Tell the operator each invalid command and its `reason`
 - Stop until the operator reports the environment repaired

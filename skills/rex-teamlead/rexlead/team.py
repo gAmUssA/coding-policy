@@ -233,9 +233,10 @@ def kill_group(pgid):
 def run_check(command, cwd, timeout):
     """Run one check command with `bash -c` in `cwd` in its own session: no
     stdin, its output discarded, its whole process group killed at `timeout`
-    seconds and again once its leader exits. A process that left the group
-    with `setsid` is not killed. A refused kill makes the run `invalid`.
-    The caller checks the worktree."""
+    seconds, once its leader exits, or when the wait is interrupted. The CLI
+    turns SIGTERM and SIGHUP into interrupts while checking. SIGKILL cannot
+    trigger cleanup; a process that left the group with `setsid` is not killed.
+    A refused kill makes the run `invalid`. The caller checks the worktree."""
     started = time.monotonic()
 
     def ran(code, verdict, reason):
@@ -257,9 +258,10 @@ def run_check(command, cwd, timeout):
         except subprocess.TimeoutExpired:
             return ran(None, "invalid", "timed out after {}s and could not be killed; its process group {} may still be running".format(timeout, proc.pid))
         code, reasons = None, ["timed out after {}s and was killed".format(timeout)]
-    # The leader is reaped, but its group id is not reused while any member lives.
-    if not kill_group(proc.pid):
-        reasons.append("the kill of its process group {} was refused, so a process it left running may still be alive".format(proc.pid))
+    finally:
+        # The group remains ours while any member lives, even after its leader exits.
+        if not kill_group(proc.pid):
+            reasons.append("the kill of its process group {} was refused, so a process it left running may still be alive".format(proc.pid))
     if code is not None and code < 0:
         reasons.append("killed by signal {}".format(signal_name(-code)))
     if reasons:
@@ -568,9 +570,9 @@ class Team:
             raise TeamError("check_mismatch", "{}'s worktree {} is at {}, not the candidate {} — ask the developer to check out its branch tip, then check again".format(role, worktree, head, candidate))
         reason = unsupported(worktree)
         if reason == SPARSE:
-            raise TeamError("check_unsupported", "{}'s worktree {} is a {} — run the check in a full checkout of the candidate".format(role, worktree, SPARSE))
+            raise TeamError("check_unsupported", "{}'s worktree {} is a {} — stop and report this to the operator for a decision".format(role, worktree, SPARSE))
         if reason:
-            raise TeamError("check_unsupported", "{}'s worktree {}: {} — run the checks yourself and continue the round by hand, or remove the submodule".format(role, worktree, reason))
+            raise TeamError("check_unsupported", "{}'s worktree {}: {} — stop and report this to the operator for a decision".format(role, worktree, reason))
         dirty = changes(worktree)
         if dirty:
             raise TeamError("check_dirty", "{}'s worktree {} has uncommitted or untracked changes ({}) — the run would not test the candidate; ask the developer to commit or remove them, then confirm the new tip as the candidate".format(
@@ -794,7 +796,15 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow, no
         elif args.command == "candidate":
             result = team.candidate(args.task, args.role, args.sha)
         elif args.command == "check":
-            result = team.check(args.task, args.role, args.candidate, args.run, args.timeout)
+            # Only check owns these handlers; embedded callers keep theirs afterward.
+            handlers = {sig: signal.signal(sig, signal.default_int_handler) for sig in (signal.SIGTERM, signal.SIGHUP)}
+            try:
+                result = team.check(args.task, args.role, args.candidate, args.run, args.timeout)
+            except KeyboardInterrupt:
+                raise TeamError("check_interrupted", "check was interrupted without a verdict — stop and report this to the operator before rerunning the check") from None
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
         elif args.command == "verdict":
             result = team.verdict(args.task, args.role, args.candidate)
         else:

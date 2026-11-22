@@ -99,25 +99,27 @@ main() {
   # 3. A standup is worth less than somebody's turn.
   run FAKE_STATUS=working
   if [[ $RC -eq 3 ]] && printf '%s' "$OUT" | jq -e '.sent == false and .state == "working"' >/dev/null 2>&1 \
-     && ! printf '%s' "$ARGVTEXT" | grep -q "agent prompt"; then
+     && ! grep -q "agent prompt" <<< "$ARGVTEXT"; then
     pass; else fail "working: expected exit 3 with nothing sent, got RC=$RC ARGV=$ARGVTEXT"; fi
 
   # 4. Same for a worker at a dialog.
   run FAKE_STATUS=blocked
-  if [[ $RC -eq 3 ]] && ! printf '%s' "$ARGVTEXT" | grep -q "agent prompt"; then
+  if [[ $RC -eq 3 ]] && ! grep -q "agent prompt" <<< "$ARGVTEXT"; then
     pass; else fail "blocked: expected exit 3 with nothing sent, got RC=$RC ARGV=$ARGVTEXT"; fi
 
   # 5. The question goes as a MESSAGE, and carries the contract it asks for.
   run FAKE_STATUS=idle
-  if printf '%s' "$ARGVTEXT" | grep -q "agent prompt worker"; then
+  # A quiet grep may close a small pipe before printf finishes, yielding
+  # SIGPIPE under pipefail even when the expected text matches.
+  if grep -q "agent prompt worker" <<< "$ARGVTEXT"; then
     pass; else fail "delivery: expected an agent prompt call, got ARGV=$ARGVTEXT"; fi
-  if ! printf '%s' "$ARGVTEXT" | grep -qE 'agent prompt worker /|pane send-text'; then
+  if ! grep -qE 'agent prompt worker /|pane send-text' <<< "$ARGVTEXT"; then
     pass; else fail "delivery: a standup question must not go as a slash command"; fi
   local field ok=1
   for field in "DONE:" "PLAN:" "BLOCKED:" "REPORT:"; do
-    printf '%s' "$ARGVTEXT" | grep -q "$field" || ok=0
+    grep -q "$field" <<< "$ARGVTEXT" || ok=0
   done
-  if [[ $ok -eq 1 ]] && printf '%s' "$ARGVTEXT" | grep -q "$REPORT"; then
+  if [[ $ok -eq 1 ]] && grep -q "$REPORT" <<< "$ARGVTEXT"; then
     pass; else fail "prompt text: expected the four fields and the report path, got ARGV=$ARGVTEXT"; fi
 
   # 6. A relative report path resolves in the WORKER's cwd, not the lead's.
