@@ -14,7 +14,7 @@ A fork-in-spirit of [jbaruch/coding-policy](https://github.com/jbaruch/coding-po
 tessl install gamussa/coding-policy
 ```
 
-To wire a repository fully (plugin at `latest`, per-repo Codex policy reviewer, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
+To wire a repository (plugin at `latest`, per-repo Codex policy reviewer, `.tessl/` hygiene), run the `onboard-repo` skill from that repository. See [docs/consumer-setup.md](docs/consumer-setup.md).
 
 ### Codex personal marketplace
 
