@@ -5,6 +5,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 fragments; the publish workflow writes each `## <version> — <date>` heading on merge
 (`changelog.d/README.md`).
 
+## 1.3.1 — 2026-11-23
+
+### Fixed
+
+- **Remove a noise intensifier from README onboarding**. Drop "fully" without changing the onboarding requirements, following the context-artifacts writing style. A README scan found no other listed noise intensifiers.
+
 ## 1.3.0 — 2026-11-09
 
 ### Added
