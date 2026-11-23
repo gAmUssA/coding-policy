@@ -282,7 +282,7 @@ def sparse_checkout(root):
     done = subprocess.run(["git", "-C", str(root), "config", "--type=bool", "--get", "core.sparseCheckout"],
                           capture_output=True, text=True, check=False)
     if done.returncode not in (0, 1):  # 1: the setting is unset
-        raise TeamError("git_failed", "`git config core.sparseCheckout` failed in {}: {}".format(root, done.stderr.strip()[:300]))
+        raise TeamError("git_failed", "`git config core.sparseCheckout` failed in {} — check repository permissions and the core.sparseCheckout boolean setting, then retry".format(root))
     return done.stdout.strip() == "true"
 
 
@@ -308,7 +308,7 @@ def content_diff(root):
         def run(*args):
             done = subprocess.run(["git", "-C", str(root)] + config + list(args), capture_output=True, text=True, check=False, env=env)
             if done.returncode != 0:
-                raise TeamError("git_failed", "`git {}` failed in {}: {}".format(" ".join(args[:2]), root, done.stderr.strip()[:300]))
+                raise TeamError("git_failed", "`git {}` failed in {} — check repository permissions and clean-filter configuration, then retry".format(" ".join(args[:2]), root))
             return done.stdout
 
         run("read-tree", "HEAD")
@@ -364,7 +364,7 @@ def check_name(value, what):
 def git(repo, *args):
     done = subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, text=True, check=False)
     if done.returncode != 0:
-        raise TeamError("git_failed", "`git {}` failed in {}: {}".format(" ".join(args[:2]), repo, done.stderr.strip()[:300]))
+        raise TeamError("git_failed", "`git {}` failed in {} — check the repository path, permissions and Git configuration, then retry".format(" ".join(args[:2]), repo))
     return done.stdout.strip()
 
 
