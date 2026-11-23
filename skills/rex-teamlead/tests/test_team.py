@@ -19,11 +19,13 @@ import io
 import itertools
 import json
 import os
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -59,22 +61,35 @@ class Done:
 
 
 class Stream:
-    """A real pipe: queued lines are readable at once; with `close=False`
+    """A real pipe: queued lines are fed concurrently; with `close=False`
     the write end stays open, so a wait blocks until its deadline."""
 
     def __init__(self, lines, close):
         read, write = os.pipe()
         self.stdout = os.fdopen(read, "rb")
-        self._write = os.fdopen(write, "w")
-        self._write.write("".join(lines))
-        self._write.flush()
-        if close:
-            self._write.close()
+        self._write, self._close = write, close
+
+        def feed():
+            # A pipe may hold less than one event; writing before the reader
+            # starts deadlocks on macOS when pipe buffers shrink to 512 bytes.
+            pending = "".join(lines).encode()
+            try:
+                while pending:
+                    pending = pending[os.write(write, pending):]
+            except BrokenPipeError:
+                pass  # The consumer reached its verdict and closed the stream.
+            finally:
+                if close:
+                    os.close(write)
+
+        self._writer = threading.Thread(target=feed, daemon=True)
+        self._writer.start()
 
     def terminate(self):
-        if not self._write.closed:
-            self._write.close()
         self.stdout.close()
+        self._writer.join()
+        if not self._close:
+            os.close(self._write)
 
 
 class FakeRex:
@@ -821,7 +836,7 @@ class CheckTest(Fixture):
         self.refused(fake, "check_unsupported")
         message = self.check(fake, "true")[2]["error"]["message"]
         self.assertIn("submodules at sub", message)
-        self.assertIn("the check does not support submodules — run the checks yourself and continue the round by hand, or remove the submodule", message)
+        self.assertIn("the check does not support submodules — stop and report this to the operator for a decision", message)
 
     def test_a_candidate_with_a_submodule_is_unsupported_and_one_without_passes(self):
         fake = FakeRex()
@@ -1019,6 +1034,7 @@ class CheckTest(Fixture):
         code, out, err = self.check(fake, "touch {}".format(marker))
         self.assertEqual((code, err["error"]["code"], out), (1, "check_unsupported", {}))
         self.assertIn("sparse checkout: the check cannot see the candidate's full tree", err["error"]["message"])
+        self.assertIn("stop and report this to the operator for a decision", err["error"]["message"])
         self.assertFalse(marker.exists())
         self.assertIsNone(self.state()["workers"]["dev"]["check"])
         git("sparse-checkout", "disable", cwd=self.worktree)
@@ -1257,6 +1273,51 @@ class StateTest(Fixture):
 
 
 class EntryPointTest(unittest.TestCase):
+    def test_interrupting_check_kills_its_command_and_background_process(self):
+        fixture = Fixture("run")
+        fixture.setUp()
+        self.addCleanup(fixture.tmp.cleanup)
+        worktree = fixture.spawned(FakeRex())["worktree"]
+        tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, capture_output=True, text=True, check=True).stdout.strip()
+        env = {"PATH": os.environ.get("PATH", ""), **fixture.env}
+        skill = Path(__file__).resolve().parent.parent
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig.name):
+                pidfile = Path(fixture.tmp.name) / (sig.name + ".pid")
+                command = "sleep 300 & printf '%s %s\\n' \"$$\" \"$!\" > {}; wait".format(shlex.quote(str(pidfile)))
+                proc = subprocess.Popen([sys.executable, "-m", "rexlead", "check", "--task", "t1", "--role", "dev",
+                                         "--candidate", tip, "--run", command], cwd=skill, env=env,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                pids = []
+                try:
+                    # Wait for the command to publish both PIDs before interrupting its supervisor.
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if pidfile.exists():
+                            pids = [int(pid) for pid in pidfile.read_text().split()]
+                            if len(pids) == 2:
+                                break
+                        time.sleep(0.05)
+                    self.assertEqual(len(pids), 2, "check command did not publish its PIDs")
+                    self.assertTrue(all(CheckTest.running(pid) for pid in pids))
+                    proc.send_signal(sig)
+                    out, err = proc.communicate(timeout=10)
+                    deadline = time.monotonic() + 5
+                    while any(CheckTest.running(pid) for pid in pids) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    self.assertFalse(any(CheckTest.running(pid) for pid in pids), "interrupted check left its command running")
+                    self.assertEqual((proc.returncode, out, json.loads(err)["error"]["code"]), (1, "", "check_interrupted"))
+                    self.assertIsNone(fixture.state()["workers"]["dev"]["check"])
+                finally:
+                    # Clean up even when exercising the unfixed implementation.
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.communicate(timeout=10)
+                    if pidfile.exists():
+                        pids = [int(pid) for pid in pidfile.read_text().split()]
+                        if pids:
+                            teammod.kill_group(pids[0])
+
     def test_python_m_rexlead_keeps_the_json_and_exit_code_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": tmp, "REX_TEAM_HOME": str(Path(tmp) / "state")}
