@@ -5,6 +5,12 @@ Every entry carries the motivation and worked examples stripped from the rule bo
 fragments; the publish workflow writes each `## <version> — <date>` heading on merge
 (`changelog.d/README.md`).
 
+## 1.3.3 — 2026-11-23
+
+### Fixed
+
+- **Keep Git stderr out of Rex team error messages.** All three `git_failed` paths now identify the failed command and repository path with fixed recovery guidance, preventing credentials printed by clean filters or Git configuration errors from reaching the JSON envelope. Regression tests cover the shared Git helper, sparse-checkout detection and a real failing clean filter, and fail when raw stderr is restored.
+
 ## 1.3.2 — 2026-11-23
 
 ### Fixed
