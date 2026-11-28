@@ -33,6 +33,7 @@ skills/rex-teamlead/state-schema.md
 | `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
 | `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `seconds`; `tab_label` | Runs each command in the writer's worktree, keeps none of its output, kills what is left in its process group (a process that left the group with `setsid` survives), records the check; exit 1 `check_mismatch`, `check_unsupported` or `check_dirty` before any run; exit 1 `check_interrupted` if interrupted, including during a run |
 | `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict`, `not_delivered`, or `candidate_mismatch` once the developer's branch moved |
+| `package` | `--task`, `--candidate` | `package`, `base`, `candidate` | Writes `review-<base7>..<candidate7>.diff` under the task's reports directory; exit 1 `candidate_mismatch` unless `--candidate` is the developer's branch tip, `package_conflict` if a different file holds the name |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered`, `check` | None |
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
@@ -155,12 +156,12 @@ developer as a correction without the operator's instruction:
 - Stop for the operator's decision
 - If the operator requests a supported checkout or candidate, send the developer a correction brief through Step 5
 - If the operator supplies a supported checkout of the same candidate, proceed immediately to Step 8
-- If the operator ends the round, run the Step 14 closure command and finish here without proceeding to Step 15
+- If the operator ends the round, run the Step 19 closure command and finish here without proceeding to Step 20
 
 `check_interrupted` means no verdict was reached. Stop and report its `message`
 to the operator. If the operator requests a rerun, proceed immediately to
-Step 8. If the operator ends the round, run the Step 14 closure command and
-finish here without proceeding to Step 15.
+Step 8. If the operator ends the round, run the Step 19 closure command and
+finish here without proceeding to Step 20.
 
 Route on `verdict`:
 
@@ -171,7 +172,7 @@ Route on `verdict`:
 - Stop for the operator's decision
 - If the operator authorizes another correction, send the developer a correction brief through Step 5
 - If the operator requests a rerun, proceed immediately to Step 8
-- If the operator ends the round, run the Step 14 closure command and finish here without proceeding to Step 15
+- If the operator ends the round, run the Step 19 closure command and finish here without proceeding to Step 20
 - `invalid` — the check itself is broken, never a code defect for the fix loop
 - Tell the operator each invalid command and its `reason`
 - Stop until the operator reports the environment repaired
@@ -254,7 +255,80 @@ The reviewer's classification of each finding binds (`rules/review-severity.md` 
 - Without approval, the finding stays blocking
 - A `changes-requested` whose every blocking finding the operator reclassified proceeds as an `approve`
 
-## Step 14 — Close the Round
+## Step 14 — Build the Review Package
+
+Writes the immutable package for the base and the candidate under the task's
+reports directory, `package` in the JSON; the tester reads it in Step 16:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh package --task <task> --candidate <candidate>
+```
+
+`candidate_mismatch` means the developer's branch moved; return to Step 7.
+`package_conflict` means a different file holds the package's name: report it
+to the operator and stop. Run this step again once they have moved the file.
+Proceed to Step 15 only after `package` succeeds.
+
+## Step 15 — Spawn the Tester
+
+`<test-role>` is `test` for the first test and `test-<n>` for the `n`th. The
+tester gets a read-only checkout of the candidate, from an agent kind other
+than the developer's:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh spawn --task <task> --role <test-role> --agent <other-kind> --ref <candidate-sha> --read-only
+```
+
+Handle `not_ready`, `agent_failed` and `not_independent` as in Step 9. Once
+`state` is `idle` or `done`, proceed immediately to Step 16.
+
+## Step 16 — Dispatch the Tester
+
+Fill `.tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/templates/brief-tester.md` with the task, the
+candidate SHA, the base, the package path and the check commands that passed
+in Step 8 into a file outside the repository, then send it:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh assign --task <task> --role <test-role> --brief <brief-file>
+```
+
+Proceed immediately to Step 17.
+
+## Step 17 — Wait for the Tester
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh wait --task <task> --role <test-role>
+```
+
+Route `blocked`, `timeout`, `error` and an undelivered report as in Step 6,
+with the correction brief through Step 16. On `delivered: true`, proceed
+immediately to Step 18.
+
+## Step 18 — Gate the Tests
+
+Check the report tests exactly the candidate and carries one verdict, then
+read it in full:
+
+```bash
+bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh verdict --task <task> --role <test-role> --candidate <candidate>
+```
+
+`review_mismatch` or `no_verdict` sends the tester one correction brief
+through Step 16. `candidate_mismatch` means the developer's branch moved: run
+`down --task <task> --role <test-role>`, then restart from Step 7 on the new
+tip.
+
+The tester's classification of each finding binds as in Step 13:
+
+- `verdict: pass` with no finding marked `blocking` — proceed immediately to Step 19
+- `verdict: fail` — run `down --task <task> --role <test-role>`
+- Brief the developer with the findings verbatim through Step 5
+- Confirm, check, review and test the new candidate from Step 7
+- These loops count with Step 13's, three in all
+- A `pass` listing a `blocking` finding is routed as `fail`
+- A `fail` listing no `blocking` finding is routed as `pass`
+
+## Step 19 — Close the Round
 
 Close the worker tabs. Reviewer checkouts are removed; the developer's
 worktree stays for the release:
@@ -263,9 +337,9 @@ worktree stays for the release:
 bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh down --task <task>
 ```
 
-Proceed immediately to Step 15.
+Proceed immediately to Step 20.
 
-## Step 15 — Release the Branch
+## Step 20 — Release the Branch
 
 Ship `team/<task>-dev` from the developer's worktree through the release
 skill, whose cleanup removes that worktree and branch:

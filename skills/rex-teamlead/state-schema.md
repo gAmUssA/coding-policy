@@ -43,6 +43,13 @@ offset. The record's `task` must equal the task it is stored under. A worker's p
 toward `wait` only when its `updated_at` is at or after the current
 dispatch's `sent_at`.
 
+Files under `$REX_TEAM_HOME/<task>/reports/`: `<role>-<n>.md` (a dispatch's
+report) and `review-<base7>..<candidate7>.diff` (the package `package` writes;
+rebuilt identically, never overwritten with different content). `team.py`
+owns the package format, `Format: 1` on its second line, then `BASE:`, `HEAD:`,
+`## Commits`, `## Stat` and `## Diff`. Only `package` writes it; the tester
+reads it, refuses a missing or other `Format:` as BLOCKED, and never upgrades it.
+
 ## Naming
 
 Every name is derived from the task id and the role, so a session opened on
