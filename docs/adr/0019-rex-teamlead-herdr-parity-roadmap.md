@@ -52,4 +52,4 @@ Close the gap in the slices below, one PR and one ADR each, in dependency order.
 - Each slice ships a `schema_version` bump of the task record when it adds fields, with the owner migration `rules/stateful-artifacts.md` requires.
 - `rules/agent-team-operation.md` and `skills/rex-teamlead/SKILL.md` grow per slice; the Rex lead stays a step-by-step skill rather than a contract read on demand.
 - Parity is reached when slice 9 merges. Slices 1 and 2 are prerequisites for 4; slice 5 is a prerequisite for 6 and 9.
-- Removing Herdr in 2.0.0 is blocked until slice 9 merges or the operator waives a slice by superseding this ADR.
+- This ADR does not set the Herdr removal date. The skills' "removed in coding-policy 2.0.0" notice stands until the operator decides otherwise; slices not yet merged by then stay Herdr-only gaps.
