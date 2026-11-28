@@ -2,7 +2,7 @@
 
 Contract:
   argv  : `up`, `spawn`, `assign`, `wait`, `candidate`, `check`, `verdict`,
-          `status`, `down` (see `--help`).
+          `package`, `status`, `down` (see `--help`).
   stdout: one JSON object per command.
   stderr: `{"error":{"code","message"}}` on failure.
   exit  : 0 success; 1 failure; 2 usage error. `check` exits 0 once its runs
@@ -47,6 +47,7 @@ CHECK_KILL_SETTLE_SEC = 1
 CHECK_VERDICTS = ("pass", "fail", "invalid")
 REVIEW_VERDICTS = ("approve", "changes-requested")
 TEST_VERDICTS = ("pass", "fail")
+TESTER_ROLE = re.compile(r"test(-[0-9]+)?")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
     "claude": lambda model, effort: ["claude"] + (["--model", model] if model else []) + (["--effort", effort] if effort else []),
@@ -363,6 +364,14 @@ def check_name(value, what):
         raise UsageError("{} must match [a-z][a-z0-9-]{{0,30}}".format(what))
 
 
+def git_bytes(repo, *args):
+    """Raw git stdout: a diff may hold text in any encoding, which `git` would refuse to decode."""
+    done = subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, check=False)
+    if done.returncode != 0:
+        raise TeamError("git_failed", "`git {}` failed in {} — check the repository path, permissions and Git configuration, then retry".format(" ".join(args[:2]), repo))
+    return done.stdout.rstrip(b"\n")
+
+
 def git(repo, *args):
     done = subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, text=True, check=False)
     if done.returncode != 0:
@@ -626,7 +635,7 @@ class Team:
         if len(reviewed) != 1 or reviewed[0].strip("`") != candidate:
             raise TeamError("review_mismatch", "{}'s report does not review exactly {} (found {}) — brief a fresh reviewer on the candidate".format(role, candidate, reviewed or "no `reviewed:` line"))
         # A role named `test`, `test-2`, ... is a tester; every other read-only role is a reviewer.
-        accepted = TEST_VERDICTS if role == "test" or role.startswith("test-") else REVIEW_VERDICTS
+        accepted = TEST_VERDICTS if TESTER_ROLE.fullmatch(role) else REVIEW_VERDICTS
         if len(verdicts) != 1 or verdicts[0] not in accepted:
             raise TeamError("no_verdict", "{}'s report has no single {} line — send it one correction brief".format(role, " or ".join("`verdict: {}`".format(v) for v in accepted)))
         return {"task": task, "role": role, "reviewed": candidate, "verdict": verdicts[0], "report": dispatch["report"]}
@@ -640,16 +649,17 @@ class Team:
         candidate = self.candidate(task, writers[0], sha)["candidate"]
         repo, base = Path(record["repo"]), record["base"]
         rng = "{}..{}".format(base, candidate)
-        text = "Review package\nBASE: {}\nHEAD: {}\n\n## Commits\n{}\n\n## Stat\n{}\n\n## Diff\n{}\n".format(
-            base, candidate,
-            git(repo, "log", "--no-color", "--no-decorate", "--reverse", "--topo-order", "--format=%H %s", rng, "--"),
-            git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--stat=80", "--stat-count=0", rng, "--"),
-            git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--full-index", "-U10", rng, "--"))
+        diff = ["--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"]
+        text = b"\n".join([
+            "Review package\nBASE: {}\nHEAD: {}\n\n## Commits".format(base, candidate).encode(),
+            git_bytes(repo, "log", "--no-color", "--no-decorate", "--reverse", "--topo-order", "--format=%H %s", rng, "--"),
+            b"\n## Stat", git_bytes(repo, "diff", *diff, "--stat=80", "--stat-count=0", rng, "--"),
+            b"\n## Diff", git_bytes(repo, "diff", *diff, "--binary", "--full-index", "-U10", rng, "--")]) + b"\n"
         path = self.store.reports(task) / "review-{}..{}.diff".format(base[:7], candidate[:7])
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.read_text() != text:
+        if path.exists() and path.read_bytes() != text:
             raise TeamError("package_conflict", "{} exists with different content — move it away, then build the package again".format(path))
-        path.write_text(text)
+        path.write_bytes(text)
         return {"task": task, "package": str(path), "base": base, "candidate": candidate}
 
     def status(self, task):

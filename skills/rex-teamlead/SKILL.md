@@ -33,6 +33,7 @@ skills/rex-teamlead/state-schema.md
 | `candidate` | `--task`, `--role`, `--sha` | `branch`, `candidate` | None; exit 1 `candidate_mismatch` unless `--sha` is the branch tip |
 | `check` | `--task`, `--role`, `--candidate`, one or more `--run`, optional `--timeout` | `candidate`, `verdict`, `runs[]`: `command`, `exit`, `verdict`, `reason`, `seconds`; `tab_label` | Runs each command in the writer's worktree, keeps none of its output, kills what is left in its process group (a process that left the group with `setsid` survives), records the check; exit 1 `check_mismatch`, `check_unsupported` or `check_dirty` before any run; exit 1 `check_interrupted` if interrupted, including during a run |
 | `verdict` | `--task`, `--role`, `--candidate` | `reviewed`, `verdict`, `report` | None; exit 1 `review_mismatch`, `no_verdict`, `not_delivered`, or `candidate_mismatch` once the developer's branch moved |
+| `package` | `--task`, `--candidate` | `package`, `base`, `candidate` | Writes `review-<base7>..<candidate7>.diff` under the task's reports directory; exit 1 `candidate_mismatch` unless `--candidate` is the developer's branch tip, `package_conflict` if a different file holds the name |
 | `status` | `--task` | `workers.<role>`: `agent`, `state`, `delivered`, `check` | None |
 | `down` | `--task`, optional `--role` | `closed`, `worktrees_removed`, `worktrees_kept` | Closes tabs, removes reviewer checkouts, forgets workers; exit 1 `worktree_remove_failed` keeps the worker for a retry |
 
@@ -264,8 +265,9 @@ bash .tessl/plugins/gamussa/coding-policy/skills/rex-teamlead/rex-team.sh packag
 ```
 
 `candidate_mismatch` means the developer's branch moved; return to Step 7.
-`package_conflict` means a different file holds the package's name; report it
-to the operator. Proceed immediately to Step 15.
+`package_conflict` means a different file holds the package's name: report it
+to the operator and stop. Run this step again once they have moved the file.
+Proceed to Step 15 only after `package` succeeds.
 
 ## Step 15 — Spawn the Tester
 
@@ -321,8 +323,10 @@ The tester's classification of each finding binds as in Step 13:
 - `verdict: pass` with no finding marked `blocking` — proceed immediately to Step 19
 - `verdict: fail` — run `down --task <task> --role <test-role>`
 - Brief the developer with the findings verbatim through Step 5
-- Confirm, check, review and test the new candidate from Step 7; these loops count with Step 13's, three in all
-- A `pass` listing a `blocking` finding is routed as `fail`; a `fail` listing none is routed as `pass`
+- Confirm, check, review and test the new candidate from Step 7
+- These loops count with Step 13's, three in all
+- A `pass` listing a `blocking` finding is routed as `fail`
+- A `fail` listing no `blocking` finding is routed as `pass`
 
 ## Step 19 — Close the Round
 

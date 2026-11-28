@@ -554,6 +554,18 @@ class GateTest(Fixture):
         code, _, err = self.run_tester("reviewed: {sha}\nverdict: approve\n")
         self.assertEqual((code, err["error"]["code"]), (1, "no_verdict"))
 
+    def test_a_role_that_only_starts_with_test_is_a_reviewer_and_a_numbered_tester_is_not(self):
+        fake = FakeRex()
+        tip = self.reviewed(fake, "reviewed: {sha}\nverdict: pass\n", role="test-foo")
+        code, _, err = self.cli(fake, "verdict", "--task", "t1", "--role", "test-foo", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "no_verdict"))
+
+    def test_a_numbered_tester_role_reads_pass_and_fail(self):
+        fake = FakeRex()
+        tip = self.reviewed(fake, "reviewed: {sha}\nverdict: fail\n", role="test-2")
+        code, out, _ = self.cli(fake, "verdict", "--task", "t1", "--role", "test-2", "--candidate", tip)
+        self.assertEqual((code, out["verdict"]), (0, "fail"))
+
     def test_a_reviewer_report_refuses_a_tester_verdict(self):
         self.refused("reviewed: {sha}\nverdict: pass\n", "no_verdict")
 
@@ -569,6 +581,15 @@ class GateTest(Fixture):
         self.assertEqual(base, 0)
         again = self.cli(fake, "package", "--task", "t1", "--candidate", tip)
         self.assertEqual((again[0], again[1]["package"]), (0, out["package"]))
+
+    def test_a_package_holds_a_change_to_a_non_utf8_text_file(self):
+        fake = FakeRex()
+        dev = self.spawned(fake)
+        (Path(dev["worktree"]) / "lib.py").write_bytes(b"x = '\xe9'\n")
+        git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "latin-1", cwd=dev["worktree"])
+        tip = subprocess.run(["git", "rev-parse", "HEAD"], cwd=dev["worktree"], capture_output=True, text=True, check=True).stdout.strip()
+        code, out, err = self.cli(fake, "package", "--task", "t1", "--candidate", tip)
+        self.assertEqual((code, b"+x = '\xe9'" in Path(out["package"]).read_bytes()), (0, True), err)
 
     def test_a_package_for_a_commit_that_is_not_the_branch_tip_is_refused(self):
         fake = FakeRex()
