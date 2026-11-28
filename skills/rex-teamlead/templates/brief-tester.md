@@ -12,7 +12,7 @@ no subagents.
 ## Test
 
 1. Confirm `git rev-parse HEAD` is `{{CANDIDATE}}`.
-2. Read the review package in full: `{{PACKAGE}}`. Its BASE is `{{BASE}}` and its HEAD is `{{CANDIDATE}}`; any other pair is a `## BLOCKED` report.
+2. Read the review package in full: `{{PACKAGE}}`. Its second line must be `Format: 1`, its BASE `{{BASE}}` and its HEAD `{{CANDIDATE}}`; any other format or pair is a `## BLOCKED` report.
 3. The lead ran these checks on the candidate and they passed: {{CHECKS}}. Run every gate `CONTRIBUTING.md` names that they do not cover.
 4. Map each acceptance criterion of the task to the test that proves it, and run it. Add the adversarial cases the task omits: empty input, an absent file, a malformed payload, a second run of an idempotent operation, a boundary value.
 5. For a bug fix, show the reproduction failing at `{{BASE}}` and passing at the candidate where feasible; say what any substitute cannot prove.

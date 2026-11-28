@@ -45,7 +45,10 @@ dispatch's `sent_at`.
 
 Files under `$REX_TEAM_HOME/<task>/reports/`: `<role>-<n>.md` (a dispatch's
 report) and `review-<base7>..<candidate7>.diff` (the package `package` writes;
-rebuilt identically, never overwritten with different content).
+rebuilt identically, never overwritten with different content). `team.py`
+owns the package format, `Format: 1` on its second line, then `BASE:`, `HEAD:`,
+`## Commits`, `## Stat` and `## Diff`. Only `package` writes it; the tester
+reads it, refuses a missing or other `Format:` as BLOCKED, and never upgrades it.
 
 ## Naming
 

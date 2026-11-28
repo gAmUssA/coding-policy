@@ -576,7 +576,7 @@ class GateTest(Fixture):
         self.assertEqual(code, 0)
         base = self.cli(fake, "status", "--task", "t1")[0]
         text = Path(out["package"]).read_text()
-        self.assertEqual((out["candidate"], text.splitlines()[1:3]), (tip, ["BASE: " + out["base"], "HEAD: " + tip]))
+        self.assertEqual((out["candidate"], text.splitlines()[1:4]), (tip, ["Format: 1", "BASE: " + out["base"], "HEAD: " + tip]))
         self.assertIn("## Diff", text)
         self.assertEqual(base, 0)
         again = self.cli(fake, "package", "--task", "t1", "--candidate", tip)

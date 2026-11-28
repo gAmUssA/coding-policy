@@ -47,6 +47,7 @@ CHECK_KILL_SETTLE_SEC = 1
 CHECK_VERDICTS = ("pass", "fail", "invalid")
 REVIEW_VERDICTS = ("approve", "changes-requested")
 TEST_VERDICTS = ("pass", "fail")
+PACKAGE_FORMAT = 1
 TESTER_ROLE = re.compile(r"test(-[0-9]+)?")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
@@ -651,7 +652,7 @@ class Team:
         rng = "{}..{}".format(base, candidate)
         diff = ["--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"]
         text = b"\n".join([
-            "Review package\nBASE: {}\nHEAD: {}\n\n## Commits".format(base, candidate).encode(),
+            "Review package\nFormat: {}\nBASE: {}\nHEAD: {}\n\n## Commits".format(PACKAGE_FORMAT, base, candidate).encode(),
             git_bytes(repo, "log", "--no-color", "--no-decorate", "--reverse", "--topo-order", "--format=%H %s", rng, "--"),
             b"\n## Stat", git_bytes(repo, "diff", *diff, "--stat=80", "--stat-count=0", rng, "--"),
             b"\n## Diff", git_bytes(repo, "diff", *diff, "--binary", "--full-index", "-U10", rng, "--")]) + b"\n"
@@ -659,7 +660,9 @@ class Team:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and path.read_bytes() != text:
             raise TeamError("package_conflict", "{} exists with different content — move it away, then build the package again".format(path))
-        path.write_bytes(text)
+        partial = path.with_name(path.name + ".tmp")
+        partial.write_bytes(text)
+        os.replace(partial, path)
         return {"task": task, "package": str(path), "base": base, "candidate": candidate}
 
     def status(self, task):
