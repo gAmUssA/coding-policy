@@ -33,6 +33,12 @@ Gap, by Herdr contract section (`skills/herdr-teamlead/references/team-operation
 | Retrospectives | saved notes, curated lessons | none |
 | Standup | `herdr-standup` | none |
 
+Options considered:
+
+- **Port Herdr's capabilities in one change.** One review, but a reviewer cannot hold nine capabilities and their schema bumps in one diff.
+- **Nine slices in dependency order.** Each slice is reviewable and revertible on its own.
+- **Stop at the lean lead.** Keeps Rex small but leaves Herdr-only capabilities unreachable once Herdr is removed.
+
 ## Decision
 
 Close the gap in the slices below, one PR and one ADR each, in dependency order. Every slice keeps ADR 0016's principles: scripts own deterministic transitions, one JSON store owned by `rexlead/team.py`, results bound to exact inputs, no pane parsing, no code shared with the Herdr skills.
@@ -49,6 +55,8 @@ Close the gap in the slices below, one PR and one ADR each, in dependency order.
 
 ## Consequences
 
+- Easier: each capability ships, reviews and reverts alone; the gap table gives a checklist for judging parity.
+- Harder: nine PRs with review rounds each, and `skills/rex-teamlead/SKILL.md` grows with every slice.
 - Each slice ships a `schema_version` bump of the task record when it adds fields, with the owner migration `rules/stateful-artifacts.md` requires.
 - `rules/agent-team-operation.md` and `skills/rex-teamlead/SKILL.md` grow per slice; the Rex lead stays a step-by-step skill rather than a contract read on demand.
 - Parity is reached when slice 9 merges. Slices 1 and 2 are prerequisites for 4; slice 5 is a prerequisite for 6 and 9.
