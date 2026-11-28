@@ -43,6 +43,10 @@ offset. The record's `task` must equal the task it is stored under. A worker's p
 toward `wait` only when its `updated_at` is at or after the current
 dispatch's `sent_at`.
 
+Files under `$REX_TEAM_HOME/<task>/reports/`: `<role>-<n>.md` (a dispatch's
+report) and `review-<base7>..<candidate7>.diff` (the package `package` writes;
+rebuilt identically, never overwritten with different content).
+
 ## Naming
 
 Every name is derived from the task id and the role, so a session opened on

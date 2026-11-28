@@ -45,6 +45,8 @@ DEFAULT_CHECK_TIMEOUT_SEC = 1800
 CHECK_POLL_SEC = 0.05
 CHECK_KILL_SETTLE_SEC = 1
 CHECK_VERDICTS = ("pass", "fail", "invalid")
+REVIEW_VERDICTS = ("approve", "changes-requested")
+TEST_VERDICTS = ("pass", "fail")
 #: Interactive launch per agent kind: the executable and its model/effort flags.
 AGENTS = {
     "claude": lambda model, effort: ["claude"] + (["--model", model] if model else []) + (["--effort", effort] if effort else []),
@@ -623,9 +625,32 @@ class Team:
             raise TeamError("review_mismatch", "{}'s checkout at {} is no longer a detached checkout of the candidate {} — spawn a fresh reviewer with `--ref {}`".format(role, worker["worktree"], candidate, candidate))
         if len(reviewed) != 1 or reviewed[0].strip("`") != candidate:
             raise TeamError("review_mismatch", "{}'s report does not review exactly {} (found {}) — brief a fresh reviewer on the candidate".format(role, candidate, reviewed or "no `reviewed:` line"))
-        if len(verdicts) != 1 or verdicts[0] not in ("approve", "changes-requested"):
-            raise TeamError("no_verdict", "{}'s report has no single `verdict: approve` or `verdict: changes-requested` line — send it one correction brief".format(role))
+        # A role named `test`, `test-2`, ... is a tester; every other read-only role is a reviewer.
+        accepted = TEST_VERDICTS if role == "test" or role.startswith("test-") else REVIEW_VERDICTS
+        if len(verdicts) != 1 or verdicts[0] not in accepted:
+            raise TeamError("no_verdict", "{}'s report has no single {} line — send it one correction brief".format(role, " or ".join("`verdict: {}`".format(v) for v in accepted)))
         return {"task": task, "role": role, "reviewed": candidate, "verdict": verdicts[0], "report": dispatch["report"]}
+
+    def package(self, task, sha):
+        """Write the review package for base..`sha`: commits, stat and diff, named by both commits."""
+        record = self.store.load(task)
+        writers = [name for name, w in record["workers"].items() if w.get("branch")]
+        if len(writers) != 1:
+            raise TeamError("candidate_mismatch", "the task has {} writers ({}), not one — the package needs exactly one developer branch".format(len(writers), ", ".join(writers) or "none"))
+        candidate = self.candidate(task, writers[0], sha)["candidate"]
+        repo, base = Path(record["repo"]), record["base"]
+        rng = "{}..{}".format(base, candidate)
+        text = "Review package\nBASE: {}\nHEAD: {}\n\n## Commits\n{}\n\n## Stat\n{}\n\n## Diff\n{}\n".format(
+            base, candidate,
+            git(repo, "log", "--no-color", "--no-decorate", "--reverse", "--topo-order", "--format=%H %s", rng, "--"),
+            git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--stat=80", "--stat-count=0", rng, "--"),
+            git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--full-index", "-U10", rng, "--"))
+        path = self.store.reports(task) / "review-{}..{}.diff".format(base[:7], candidate[:7])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text() != text:
+            raise TeamError("package_conflict", "{} exists with different content — move it away, then build the package again".format(path))
+        path.write_text(text)
+        return {"task": task, "package": str(path), "base": base, "candidate": candidate}
 
     def status(self, task):
         record = self.store.load(task)
@@ -752,6 +777,9 @@ def parser():
     vd.add_argument("--task", required=True)
     vd.add_argument("--role", required=True)
     vd.add_argument("--candidate", required=True)
+    pk = sub.add_parser("package")
+    pk.add_argument("--task", required=True)
+    pk.add_argument("--candidate", required=True)
     st = sub.add_parser("status")
     st.add_argument("--task", required=True)
     dn = sub.add_parser("down")
@@ -807,6 +835,8 @@ def main(argv=None, rex=None, stdout=None, stderr=None, env=None, now=utcnow, no
                     signal.signal(sig, handler)
         elif args.command == "verdict":
             result = team.verdict(args.task, args.role, args.candidate)
+        elif args.command == "package":
+            result = team.package(args.task, args.candidate)
         else:
             result = team.down(args.task, args.role)
     except UsageError as exc:

@@ -516,13 +516,13 @@ class GateTest(Fixture):
             code, _, err = self.cli(fake, "candidate", "--task", "t1", "--role", "dev", "--sha", sha)
             self.assertEqual((code, err["error"]["code"]), (1, "candidate_mismatch"), sha)
 
-    def reviewed(self, fake, body):
+    def reviewed(self, fake, body, role="review"):
         tip = self.committed(fake)
-        block = self.cli(fake, "spawn", "--task", "t1", "--role", "review", "--agent", "codex", "--ref", tip, "--read-only")[1]["block"]
-        sent = self.cli(fake, "assign", "--task", "t1", "--role", "review", "--brief", str(self.brief))[1]
+        block = self.cli(fake, "spawn", "--task", "t1", "--role", role, "--agent", "codex", "--ref", tip, "--read-only")[1]["block"]
+        sent = self.cli(fake, "assign", "--task", "t1", "--role", role, "--brief", str(self.brief))[1]
         Path(sent["report"]).write_text("task-nonce: {}\n\n{}".format(sent["nonce"], body.format(sha=tip)))
         fake.queued = [event(block, status("done"))]
-        self.cli(fake, "wait", "--task", "t1", "--role", "review", "--timeout", "5")
+        self.cli(fake, "wait", "--task", "t1", "--role", role, "--timeout", "5")
         return tip
 
     def test_a_review_of_the_candidate_with_a_verdict_passes(self):
@@ -536,6 +536,53 @@ class GateTest(Fixture):
         tip = self.reviewed(fake, body)
         result = self.cli(fake, "verdict", "--task", "t1", "--role", "review", "--candidate", tip)
         self.assertEqual((result[0], result[2].get("error", {}).get("code")), (1, code), result)
+
+    def run_tester(self, body):
+        fake = FakeRex()
+        tip = self.reviewed(fake, body, role="test")
+        return self.cli(fake, "verdict", "--task", "t1", "--role", "test", "--candidate", tip)
+
+    def test_a_tester_report_with_pass_passes(self):
+        code, out, _ = self.run_tester("reviewed: {sha}\nverdict: pass\n")
+        self.assertEqual((code, out["verdict"]), (0, "pass"))
+
+    def test_a_tester_report_with_fail_is_read_as_fail(self):
+        code, out, _ = self.run_tester("reviewed: {sha}\nverdict: fail\n")
+        self.assertEqual((code, out["verdict"]), (0, "fail"))
+
+    def test_a_tester_report_with_a_review_verdict_is_refused(self):
+        code, _, err = self.run_tester("reviewed: {sha}\nverdict: approve\n")
+        self.assertEqual((code, err["error"]["code"]), (1, "no_verdict"))
+
+    def test_a_reviewer_report_refuses_a_tester_verdict(self):
+        self.refused("reviewed: {sha}\nverdict: pass\n", "no_verdict")
+
+    def test_the_package_holds_base_to_candidate_and_is_rebuilt_identically(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        code, out, _ = self.cli(fake, "package", "--task", "t1", "--candidate", tip)
+        self.assertEqual(code, 0)
+        base = self.cli(fake, "status", "--task", "t1")[0]
+        text = Path(out["package"]).read_text()
+        self.assertEqual((out["candidate"], text.splitlines()[1:3]), (tip, ["BASE: " + out["base"], "HEAD: " + tip]))
+        self.assertIn("## Diff", text)
+        self.assertEqual(base, 0)
+        again = self.cli(fake, "package", "--task", "t1", "--candidate", tip)
+        self.assertEqual((again[0], again[1]["package"]), (0, out["package"]))
+
+    def test_a_package_for_a_commit_that_is_not_the_branch_tip_is_refused(self):
+        fake = FakeRex()
+        self.committed(fake)
+        code, _, err = self.cli(fake, "package", "--task", "t1", "--candidate", "0" * 40)
+        self.assertEqual((code, err["error"]["code"]), (1, "candidate_mismatch"))
+
+    def test_a_package_that_differs_from_the_one_on_disk_is_refused(self):
+        fake = FakeRex()
+        tip = self.committed(fake)
+        path = Path(self.cli(fake, "package", "--task", "t1", "--candidate", tip)[1]["package"])
+        path.write_text("tampered\n")
+        code, _, err = self.cli(fake, "package", "--task", "t1", "--candidate", tip)
+        self.assertEqual((code, err["error"]["code"]), (1, "package_conflict"))
 
     def test_a_review_of_another_commit_is_refused(self):
         self.refused("reviewed: " + "0" * 40 + "\nverdict: approve\n", "review_mismatch")
